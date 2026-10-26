@@ -1,0 +1,20 @@
+{
+    "name": "siensis/kpcrudy",
+    "description": "Generador automàtic de CRUD per a CodeIgniter 4",
+    "type": "library",
+    "license": "MIT",
+    "keywords": ["codeigniter", "codeigniter4", "crud", "admin", "grocerycrud"],
+    "require": {
+        "php": "^8.1",
+        "codeigniter4/framework": "^4.4"
+    },
+    "autoload": {
+        "psr-4": {
+            "Kpcrudy\\": "src/"
+        }
+    },
+    "archive": {
+        "exclude": ["/demo"]
+    },
+    "minimum-stability": "stable"
+}

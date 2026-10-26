@@ -1,0 +1,767 @@
+# kpcrudy
+
+[English](README_EN.md) · **Català**
+
+Generador automàtic de CRUD per a **CodeIgniter 4** (4.4 o superior, PHP 8.1+), a l'estil de GroceryCRUD.
+
+Crees una instància, li indiques la taula (o el model) i què vols mostrar, i la llibreria s'encarrega de tota la interacció amb l'usuari. Només cal una ruta i un mètode al controlador.
+
+Funcionalitats:
+
+- Llistat amb **paginació**, **cerca**, **ordenació per columna** i **filtres**
+- **Exportació a CSV** del llistat filtrat o dels registres seleccionats
+- **Importació des de CSV** amb previsualització: afegir o actualitzar registres, amb la mateixa validació que el formulari
+- **Paperera** amb els *soft deletes* de CodeIgniter: restaurar, esborrar definitivament, buidar
+- **Fitxa de detall** de cada registre
+- **Enllaços personalitzats** a cada fila amb l'`id` (o qualsevol camp), tants com calgui
+- Formularis d'alta i edició amb **validació** (regles de CodeIgniter i deduïdes de la taula)
+- **Relacions 1-N** (desplegable) i **N-N** (selecció múltiple amb taula intermèdia)
+- Tipus de camp: text, textarea, número, decimal, email, url, data, data i hora, hora, color, booleà, enum/select, contrasenya, ocult, només lectura, **pujada de fitxers i imatges**
+- **Callbacks** de columna, de camp i d'exportació, i **hooks** abans i després de desar o esborrar
+- **Accions massives** (esborrar, restaurar, exportar i les teves pròpies)
+- **Permisos** per operació, globals o registre a registre
+- **Plantilles intercanviables** (tema Bootstrap 5 per defecte) i layout configurable
+- Textos en **català, castellà, anglès, francès, portuguès i alemany**
+
+---
+
+## Documentació
+
+- [docs/functions_CA.md](docs/functions_CA.md): referència de totes les funcions i propietats públiques, amb exemples.
+- [docs/howto_CA.md](docs/howto_CA.md): receptes per a casos habituals (contrasenyes, enllaços amb l'id, id emmascarat, permisos, relacions, fitxers, integració...).
+- [docs/new_theme_CA.md](docs/new_theme_CA.md): com crear un tema, amb els exemples de W3.CSS i Tailwind CSS.
+
+## Demo
+
+La llibreria inclou una aplicació completa de gestió d'esdeveniments que fa servir totes les funcionalitats. S'instal·la al teu projecte amb `php spark kpcrudy:demo install` i es desinstal·la sense deixar rastre. Els passos són a [Instal·lar la demo al projecte](#installar-la-demo-al-projecte), i a [screenshots](screenshots/README_CA.md) en tens un recorregut amb captures.
+
+![Llistat d'esdeveniments de la demo](screenshots/04-esdeveniments-filtres.png)
+
+---
+
+## Instal·lació
+
+La llibreria no és a Packagist. Afegeix el repositori al `composer.json` del projecte:
+
+```json
+"repositories": [
+    { "type": "vcs", "url": "https://github.com/SIENSIS/kpcrudy" }
+]
+```
+
+i instal·la-la:
+
+```bash
+composer require siensis/kpcrudy:dev-main
+```
+
+Per desenvolupar-la en local pots fer servir un repositori de tipus `path`:
+
+```json
+"repositories": [
+    { "type": "path", "url": "../kpcrudy", "options": { "symlink": true } }
+]
+```
+
+CodeIgniter detecta sol el namespace `Kpcrudy` (vistes, idiomes i configuració) gràcies a l'autoload de Composer.
+
+> Els missatges de validació (p. ex. "The Nom field is required") són de CodeIgniter, no de kpcrudy. El paquet `composer require codeigniter4/translations` els tradueix a molts idiomes (castellà, francès, portuguès, alemany...), però **no al català**: per tenir-los en català, crea `app/Language/ca/Validation.php` amb les traduccions (pots partir de `vendor/codeigniter4/translations/Language/es/Validation.php`).
+
+---
+
+## Instal·lar la demo al projecte
+
+La demo és una aplicació de gestió d'esdeveniments (usuaris, categories, esdeveniments i inscripcions) on cada pantalla és un CRUD de kpcrudy. Cada pàgina té un botó **Code for this page** que mostra el codi del controlador que la genera i les funcionalitats que s'hi veuen. La demo és en anglès (dades i textos), per poder-la integrar en qualsevol projecte.
+
+Ve dins de la llibreria (a `src/Demo`) i s'instal·la al projecte on ja tens kpcrudy amb una comanda de `spark`. **No copia ni modifica cap fitxer del projecte**, i en desinstal·lar-la el projecte queda exactament com estava.
+
+### Requisits
+
+- kpcrudy instal·lat al projecte (vegeu [Instal·lació](#installació)).
+- La base de dades configurada a `.env` (grup `default`) i accessible.
+- Permís d'escriptura a `public/` i `writable/`.
+- Opcional: l'extensió `gd` de PHP, per generar les imatges d'exemple. Sense GD, la demo s'instal·la igualment, però sense avatars ni cartells.
+
+### Pas 1. Comprova que la comanda hi és
+
+```bash
+php spark list
+```
+
+A la llista hi ha d'aparèixer el grup **Kpcrudy** amb la comanda `kpcrudy:demo`. Per veure'n l'ajuda:
+
+```bash
+php spark help kpcrudy:demo
+```
+
+```
+Usage:
+  kpcrudy:demo <install|uninstall|reset|status> [options]
+
+Arguments:
+  action  install: creates tables, data and images | uninstall: removes everything | reset: back to the initial data | status: current state
+
+Options:
+  --force             install: drops the tables left by a previous installation and starts again
+  --yes               Do not ask for confirmation (uninstall and reset)
+  --allow-production  install and reset: run even if ENVIRONMENT is "production"; install also serves the demo routes there (anyone can log in as an administrator!)
+```
+
+### Pas 2. Instal·la la demo
+
+```bash
+php spark kpcrudy:demo install
+```
+
+```
+Installing the kpcrudy demo...
+Done!
+
+  Tables:   kpdemo_categories, kpdemo_users, kpdemo_user_interests, kpdemo_events, kpdemo_attendances
+  Images:   public/uploads/kpcrudy-demo
+  URL:      http://localhost:8080/kpcrudy-demo
+
+To remove it: php spark kpcrudy:demo uninstall
+```
+
+Si alguna cosa falla a mig camí, la comanda desfà el que hagi creat i mostra l'error.
+
+### Pas 3. Obre-la
+
+Arrenca el projecte com sempre (amb Apache o amb `php spark serve`) i obre l'adreça que ha mostrat la comanda:
+
+```bash
+php spark serve
+# http://localhost:8080/kpcrudy-demo
+```
+
+La pàgina d'entrada mostra la llista d'usuaris de prova: **fes clic en un per entrar**, sense contrasenya.
+
+- `admin` o `john.smith`: administradors, amb accés a totes les pàgines.
+- `alice` o qualsevol altre: usuaris, amb l'agenda, les seves inscripcions i el seu perfil.
+
+### Què crea la instal·lació
+
+| Què | On |
+|---|---|
+| 5 taules amb dades de prova (25 usuaris, 6 categories, 36 esdeveniments, 353 inscripcions) | `kpdemo_categories`, `kpdemo_users`, `kpdemo_user_interests`, `kpdemo_events`, `kpdemo_attendances` |
+| Avatars i cartells d'exemple, i els fitxers que pugis des de la demo | `public/uploads/kpcrudy-demo/` |
+| Fitxer de marca que activa la demo | `writable/kpcrudy-demo.json` |
+| Pàgines de la demo | `/kpcrudy-demo/...` |
+
+Els prefixos `kpdemo_` i `kpcrudy-demo` eviten qualsevol col·lisió amb el projecte: no es toca cap taula pròpia (per exemple, una taula `users` o la de Shield), cap ruta, cap fitxer ni el login del projecte, perquè la demo fa servir una clau de sessió pròpia.
+
+**Com s'activen les rutes.** CodeIgniter descobreix sol el fitxer `src/Config/Routes.php` de la llibreria (és el mecanisme de mòduls, actiu per defecte). Aquest fitxer només registra les rutes de la demo si existeix `writable/kpcrudy-demo.json`; sense la demo instal·lada, no afegeix res. Amb `CI_ENVIRONMENT = production` tampoc no les registra (vegeu **Producció** més avall).
+
+### Consultar l'estat
+
+```bash
+php spark kpcrudy:demo status
+```
+
+```
+kpcrudy demo
+  Installed: yes
+  Date:      2026-10-23T17:18:28+02:00
+  URL:       http://localhost:8080/kpcrudy-demo
+  Routes:    active
+  Tables:
+    kpdemo_categories       6 rows
+    kpdemo_users            25 rows
+    kpdemo_user_interests   48 rows
+    kpdemo_events           36 rows
+    kpdemo_attendances      353 rows
+  Files:     52 in public/uploads/kpcrudy-demo
+```
+
+### Tornar a les dades inicials
+
+Després de fer proves (esborrar, editar, pujar imatges...), pots tornar a l'estat inicial:
+
+```bash
+php spark kpcrudy:demo reset          # demana confirmació
+php spark kpcrudy:demo reset --yes    # sense confirmació
+```
+
+També es pot fer des de la mateixa demo: a la pàgina d'inici, un administrador té el botó **Reset data** (excepte en producció, on aquest botó i la seva ruta no existeixen). Si el reset falla, la demo continua instal·lada i es pot tornar a provar.
+
+### Desinstal·lar la demo
+
+```bash
+php spark kpcrudy:demo uninstall
+```
+
+```
+The demo will be removed:
+  - Tables: kpdemo_categories, kpdemo_users, kpdemo_user_interests, kpdemo_events, kpdemo_attendances
+  - Files:  public/uploads/kpcrudy-demo
+  - Routes: /kpcrudy-demo
+Continue? [n, y]: y
+The demo has been removed. The project is back to how it was.
+```
+
+S'esborren les taules `kpdemo_*`, la carpeta `public/uploads/kpcrudy-demo` (i `public/uploads`, si l'havia creat la demo i ha quedat buida) i el fitxer de marca, amb la qual cosa les rutes `/kpcrudy-demo` deixen d'existir. Amb `--yes` no es demana confirmació, per exemple en un script:
+
+```bash
+php spark kpcrudy:demo uninstall --yes
+```
+
+### Resum de comandes
+
+| Comanda | Què fa |
+|---|---|
+| `php spark kpcrudy:demo install` | Crea les taules, les dades i les imatges, i activa `/kpcrudy-demo` |
+| `php spark kpcrudy:demo install --force` | El mateix, però abans esborra les taules que hagin quedat d'una instal·lació anterior |
+| `php spark kpcrudy:demo status` | Mostra si està instal·lada, els registres de cada taula i els fitxers |
+| `php spark kpcrudy:demo reset [--yes]` | Torna a les dades inicials |
+| `php spark kpcrudy:demo uninstall [--yes]` | Ho esborra tot i deixa el projecte com estava |
+| `php spark help kpcrudy:demo` | Ajuda de la comanda |
+
+### Situacions especials
+
+**"La demo ja està instal·lada".** `install` no es pot executar dues vegades. Per tornar a començar, fes servir `reset`.
+
+**"Ja existeixen taules de la demo".** Han quedat taules d'una instal·lació anterior que no es va acabar o es va esborrar a mà (`status` ho avisa). Tens dues opcions:
+
+```bash
+php spark kpcrudy:demo uninstall          # les esborra
+php spark kpcrudy:demo install --force    # les esborra i torna a instal·lar
+```
+
+**El projecte té desactivat el descobriment de rutes.** Si a `app/Config/Modules.php` l'array `$aliases` no inclou `'routes'`, la comanda ho detecta i t'indica la línia que has d'afegir a `app/Config/Routes.php`:
+
+```php
+\Kpcrudy\Demo\Demo::routes($routes);
+```
+
+La línia és inofensiva: només registra rutes mentre la demo està instal·lada (i mai en producció, llevat de `--allow-production`). Tot i així, treu-la quan desinstal·lis la demo; `uninstall` t'ho recorda.
+
+**Migracions.** Les taules de la demo es creen amb migracions de CodeIgniter ([src/Demo/Database/Migrations](src/Demo/Database/Migrations)), però les executa l'instal·lador i **no queden a l'historial de migracions del projecte**. Així `php spark migrate`, `migrate:rollback` o `migrate:refresh` del projecte no les toquen mai, i desinstal·lar la demo no afecta les migracions pròpies.
+
+**Idioma.** La demo (dades, textos i missatges de la comanda) és en **anglès**, per poder-la integrar en qualsevol projecte. Es mostra en anglès encara que el projecte faci servir un altre idioma, incloent-hi els textos de la llibreria.
+
+**CSRF.** Les rutes de la demo verifiquen el token CSRF tant si el projecte té el filtre `csrf` actiu com si no (si ja és actiu, no el verifiquen dues vegades).
+
+**URL, port i `index.php`.** Totes les adreces de la demo (enllaços, formularis, accions i imatges) es construeixen a cada petició amb `site_url()` i `base_url()`, i a la base de dades només es guarden rutes relatives. Per tant, la demo segueix funcionant si canvies `app.baseURL`, el port, la carpeta on és el projecte o `app.indexPage`, sense tornar-la a instal·lar. L'URL que mostren `install` i `status` es calcula amb la configuració del moment.
+
+**Producció.** La demo és per aprendre i provar: entra sense contrasenya, i qualsevol pot entrar com a administrador. Per això, amb `CI_ENVIRONMENT = production`:
+
+- `install` i `reset` es neguen a funcionar i ho avisen.
+- Les rutes `/kpcrudy-demo` no es registren, encara que existeixi `writable/kpcrudy-demo.json` (per exemple, si s'ha pujat per error).
+- El peu de la demo no mostra les versions de CodeIgniter i PHP.
+
+Si de debò la vols en un entorn de producció (una màquina de proves, per exemple), instal·la-la amb `php spark kpcrudy:demo install --allow-production`: queda anotat al fitxer de marca i només llavors s'hi registren les rutes (sense el reset des del web). `reset` també necessita `--allow-production`. No la instal·lis mai en un servidor públic, i **no pugis `writable/kpcrudy-demo.json`** al repositori. Si ja hi és, `uninstall` ho deixa net.
+
+Per saber què demostra cada pàgina i com està feta per dins, vegeu el [README de la demo](demo/README_CA.md).
+
+---
+
+## Ús ràpid
+
+**Ruta** (`app/Config/Routes.php`):
+
+```php
+\Kpcrudy\Crud::routes($routes, 'admin/clients', 'Admin::clients');
+```
+
+Això registra `admin/clients` i `admin/clients/(:any)` per a GET i POST. També accepta opcions de ruta, com ara un filtre d'autenticació:
+
+```php
+\Kpcrudy\Crud::routes($routes, 'admin/clients', 'Admin::clients', ['filter' => 'session']);
+```
+
+**Controlador**:
+
+```php
+<?php
+
+namespace App\Controllers;
+
+use Kpcrudy\Crud;
+
+class Admin extends BaseController
+{
+    public function clients()
+    {
+        $crud = new Crud();
+        $crud->setTable('clients')
+             ->setSubject('Client', 'Clients');
+
+        return $crud->render();
+    }
+}
+```
+
+Amb això ja tens llistat, alta, edició, detall, esborrat, cerca, exportació i, si la taula té el camp `deleted_at`, paperera.
+
+### Generar-lo amb una comanda
+
+La comanda `kpcrudy:make` llegeix l'estructura d'una taula i escriu el mètode del controlador i la ruta:
+
+```bash
+php spark kpcrudy:make                     # pregunta la taula, el controlador, el mètode, la ruta...
+php spark kpcrudy:make clients             # amb els valors per defecte
+php spark kpcrudy:make clients --controller Admin/Clients --route admin/clients --filter auth --model
+```
+
+```
+Table clients: 12 fields, primary key id
+  1-N  city_id -> cities (name)
+  N-N  tags -> tags through client_tag
+  unique  email
+
+Model:      app/Models/ClientModel.php
+Controller: app/Controllers/Admin/Clients.php (created index())
+Route:      \Kpcrudy\Crud::routes($routes, 'admin/clients', 'Admin\Clients::index', ['filter' => 'auth']);
+```
+
+El codi generat ja inclou:
+
+- les **relacions 1-N**, a partir de les claus foranes, amb el camp que descriu millor l'altra taula (`name`, `title`, `{first_name} {last_name}`...);
+- les **relacions N-N**, a partir de les taules intermèdies;
+- les **etiquetes** (`displayAs`) i les **columnes** del llistat, sense els textos llargs;
+- el **tipus de camp** dels que s'endevinen pel nom: `photo`/`avatar`/`image` (imatge), `document`/`file` (fitxer), `color`, contrasenyes;
+- les **regles `is_unique`** dels camps amb índex únic.
+
+| Opció | Descripció |
+|---|---|
+| `--controller` | Classe, relativa a `App\Controllers` (`Admin/Clients`). Si ja existeix, s'hi afegeix el mètode |
+| `--method` | Nom del mètode (per defecte, `index`) |
+| `--route` | Ruta (per defecte, a partir del controlador: `admin/clients`) |
+| `--filter` | Filtre de la ruta (`auth`, `session`, `auth:admin`...) |
+| `--model` | Genera també un model a `app/Models` (amb `allowedFields`, timestamps, soft deletes i regles) i fa servir `setModel()` |
+| `--dry-run` | Mostra el codi sense escriure cap fitxer |
+| `--force` | Reemplaça el mètode (i el model) si ja existeixen |
+
+És un punt de partida: obre el controlador i adapta-hi el que calgui (etiquetes en el teu idioma, filtres, accions, permisos...).
+
+### URL que gestiona
+
+| URL                         | Mètode | Operació                         |
+|-----------------------------|--------|----------------------------------|
+| `base`                      | GET    | Llistat                          |
+| `base/trash`                | GET    | Paperera                         |
+| `base/add`                  | GET/POST | Formulari d'alta               |
+| `base/edit/{id}`            | GET/POST | Formulari d'edició             |
+| `base/show/{id}`            | GET    | Fitxa de detall                  |
+| `base/export`               | GET    | Exportació CSV                   |
+| `base/import`               | GET/POST | Importació CSV (si s'ha activat amb `enableImport()`) |
+| `base/delete/{id}`          | POST   | Esborrar (a la paperera si n'hi ha) |
+| `base/restore/{id}`         | POST   | Restaurar de la paperera         |
+| `base/purge/{id}`           | POST   | Esborrar definitivament          |
+| `base/emptytrash`           | POST   | Buidar la paperera               |
+| `base/bulk`                 | POST   | Acció massiva                    |
+
+La URL base es dedueix sola. Si la ruta acaba amb una d'aquestes paraules (p. ex. `admin/trash`), indica-la amb `setBaseUrl(site_url('admin/trash'))`.
+
+Totes les operacions que modifiquen dades van per POST i inclouen el token CSRF. Si el filtre `csrf` de CodeIgniter està actiu per a la ruta, és ell qui el comprova; si no, el CRUD verifica el token pel seu compte (es pot desactivar amb `$csrfProtection = false` a la [configuració](#configuració)).
+
+---
+
+## Exemple complet
+
+```php
+public function clients()
+{
+    $crud = new Crud();
+
+    $crud->setTable('clients')
+        ->setSubject('Client', 'Clients')
+
+        // Què es veu on
+        ->columns(['id', 'photo', 'name', 'email', 'city_id', 'status', 'active', 'tags'])
+        ->fields(['name', 'email', 'city_id', 'status', 'active', 'birthdate', 'notes', 'photo', 'password', 'tags'])
+        ->showFields(['name', 'email', 'city_id', 'status', 'tags', 'notes', 'created_at'])
+        ->displayAs(['name' => 'Nom', 'city_id' => 'Ciutat', 'tags' => 'Etiquetes'])
+
+        // Relacions
+        ->setRelation('city_id', 'cities', '{name} ({province})')
+        ->setRelationNN('tags', 'client_tag', 'tags', 'client_id', 'tag_id', 'name')
+
+        // Tipus i validació
+        ->fieldType('photo', 'image', ['maxSize' => 1024])
+        ->fieldType('status', 'select', ['options' => ['lead' => 'Potencial', 'active' => 'Actiu']])
+        ->setRules('email', 'permit_empty|valid_email|is_unique[clients.email,id,{id}]')
+        ->requiredFields(['city_id'])
+        ->readonlyFields(['email'])
+        ->setHelp('notes', 'Informació interna, el client no la veu.')
+
+        // Llistat
+        ->filters(['city_id', 'status', 'active', 'tags', 'birthdate'])
+        ->defaultOrder('name')
+        ->setPerPage(25, [10, 25, 50])
+
+        // Enllaços a cada fila
+        ->addAction('Factures', 'factures/client/{id}', ['icon' => 'bi bi-receipt', 'class' => 'btn-outline-info'])
+        ->addAction('Escriu-li', fn ($row) => 'mailto:' . $row['email'], [
+            'icon'    => 'bi bi-envelope',
+            'visible' => fn ($row) => ! empty($row['email']),
+        ])
+
+        // Acció massiva pròpia
+        ->addBulkAction('activate', 'Activa', function (array $ids) {
+            db_connect()->table('clients')->whereIn('id', $ids)->update(['active' => 1]);
+
+            return count($ids) . ' clients activats';
+        })
+
+        // Permisos
+        ->unsetPurge()
+        ->setPermission('delete', fn (?array $row) => $row === null || $row['status'] !== 'active');
+
+    return $crud->render();
+}
+```
+
+---
+
+## Referència
+
+### Origen de dades
+
+| Mètode | Descripció |
+|---|---|
+| `setTable(string $table)` | Treballa directament amb la taula. Es crea un model dinàmic que detecta la clau primària, els timestamps (`created_at`, `updated_at`) i els soft deletes (`deleted_at`). |
+| `setModel(Model\|string $model)` | Treballa amb un model de CodeIgniter. Es fan servir la seva taula, clau primària, `allowedFields`, validació, timestamps, soft deletes i callbacks. |
+| `setDatabase(string\|BaseConnection $db)` | Grup o connexió de base de dades (mode taula). |
+| `setPrimaryKey(string $key)` | Força la clau primària. |
+| `softDeletes(bool $enabled = true, string $field = 'deleted_at')` | Activa o desactiva la paperera (mode taula). En mode model, mana el model. |
+| `where(string\|array $field, $value = null)` | Limita els registres que gestiona el CRUD. S'aplica al llistat, al detall, a l'edició, a l'esborrat i a les accions massives. |
+| `setSubject(string $singular, ?string $plural)` | Noms que surten als títols i missatges. |
+
+> **Model amb `{id}` a les regles**: a CodeIgniter 4.5+ el camp de la clau primària ha de tenir una regla pròpia per poder fer servir `{id}`, per exemple `'id' => 'permit_empty|is_natural_no_zero'`. Kpcrudy hi afegeix l'identificador automàticament en editar.
+
+### Camps i columnes
+
+Per defecte:
+
+- **Llistat**: tots els camps menys `deleted_at` i els camps secrets (contrasenyes, tokens...).
+- **Formularis**: tots menys la clau primària, els camps de timestamp i els camps secrets que no són contrasenyes, més les relacions N-N.
+- **Detall**: tots menys `deleted_at` i els camps secrets, més les relacions N-N.
+
+Els camps secrets són els que tenen un nom de `$sensitiveFields` (`password`, `token`, `secret`, `hash`, `apikey`...), sencer o com a part separada per `_` (`api_token`). Si en necessites algun, posa'l explícitament a `columns()`, `showFields()`, `fields()`...
+
+| Mètode | Descripció |
+|---|---|
+| `columns(array)` | Columnes del llistat. Pots afegir columnes virtuals amb `callbackColumn()`. |
+| `fields(array)` | Camps d'alta i d'edició. |
+| `addFields(array)` / `editFields(array)` | Camps diferents per a l'alta i per a l'edició. |
+| `showFields(array)` | Camps de la fitxa de detall. |
+| `searchFields(array)` | Camps on busca el cercador. Per defecte, els camps de text i les relacions del llistat que no tenen `callbackColumn`. |
+| `filters(array)` | Camps amb filtre. Per defecte, les columnes relació, enum, select i booleà. |
+| `exportColumns(array)` | Columnes del CSV. Per defecte, les del llistat. |
+| `unsortable(array)` | Columnes que no es poden ordenar. |
+| `displayAs(string\|array $field, ?string $label)` | Etiquetes. |
+| `setRules(string\|array $field, string\|array $rules)` | Regles de validació de CodeIgniter. `{id}` és l'identificador en edició. |
+| `requiredFields(array)` | Camps obligatoris. |
+| `readonlyFields(array)` | Camps que es veuen però no es poden modificar en edició. |
+| `setDefault(string $field, $value)` | Valor inicial a l'alta. |
+| `setHelp(string $field, string $text)` | Text d'ajuda sota el camp. |
+| `fieldType(string $field, string $type, array $options = [])` | Força el tipus d'un camp (vegeu la taula següent). |
+
+Si no hi defineixes regles, Kpcrudy en dedueix a partir de l'estructura de la taula: `NOT NULL` sense valor per defecte → `required`, `VARCHAR(n)` → `max_length[n]`, enter → `integer`, decimal → `decimal`, data → `valid_date`, hora → `HH:MM[:SS]`, color → `#rrggbb`, i email o url (només `http`/`https`) segons el nom. Es pot desactivar amb `$inferRules = false` a la configuració.
+
+#### Tipus de camp
+
+El tipus es dedueix de la base de dades i del nom del camp (`email`, `password`, `url`...), però es pot forçar:
+
+| Tipus | Opcions | Notes |
+|---|---|---|
+| `text`, `textarea`, `email`, `url`, `color` | | |
+| `number`, `decimal` | | `decimal` accepta decimals |
+| `date`, `datetime`, `time` | | Es mostren amb `$dateFormat` i `$datetimeFormat` |
+| `boolean` | | Interruptor. `TINYINT(1)` es detecta sol |
+| `enum` | `options` | Els `ENUM` de MySQL es detecten sols |
+| `select` | `options` => `[valor => etiqueta]` | |
+| `password` | `hash` (per defecte `true`) | Es desa amb `password_hash()`. En edició, si es deixa en blanc no canvia |
+| `hidden` | `value` | Amb `value` es desa sempre aquest valor (p. ex. l'usuari actual) |
+| `readonly` | | Només es mostra |
+| `upload` | `path`, `url`, `allowed`, `maxSize` (KB), `deleteFiles`, `subdir` | Desa la ruta del fitxer relativa a `path`. Per defecte a `public/uploads/{taula}` |
+| `image` | igual que `upload` | Només imatges, amb miniatura al llistat |
+
+**Fitxers en subcarpetes.** Amb `subdir`, cada fitxer nou es desa en una subcarpeta de `path`, i el camp guarda la ruta relativa (`2026/10/abc123.png`). Pot ser un string amb `{camp}` o una closure que rep les dades que es desaran i el registre actual:
+
+```php
+$crud->fieldType('poster', 'image', [
+    'path'   => FCPATH . 'uploads/posters',
+    'url'    => base_url('uploads/posters'),
+    // public/uploads/posters/2026/10/abc123.png
+    'subdir' => fn (array $data) => date('Y/m', strtotime($data['starts_at'])),
+]);
+
+$crud->fieldType('document', 'upload', ['subdir' => 'clients/{client_id}']);
+```
+
+Les carpetes es creen soles. Per seguretat, només s'hi admeten lletres, números, guions i barres (mai `..`). Si el valor canvia més endavant, els fitxers ja desats es queden on eren: la ruta és al registre.
+
+Qualsevol tipus accepta `attrs` => `[atribut => valor]` per afegir atributs a l'input (`placeholder`, `min`, `pattern`...).
+
+### Relacions
+
+```php
+// 1-N: clients.city_id -> cities.id
+$crud->setRelation('city_id', 'cities', 'name');
+$crud->setRelation('city_id', 'cities', '{name} ({province})', [
+    'where' => ['active' => 1],   // només aquestes opcions
+    'order' => 'name',
+    'pk'    => 'id',
+]);
+
+// N-N: clients <-> client_tag <-> tags
+$crud->setRelationNN('tags', 'client_tag', 'tags', 'client_id', 'tag_id', 'name');
+```
+
+`tags` és un camp virtual que pots posar a `columns()`, `fields()`, `showFields()` i `filters()`. Les relacions es poden cercar, ordenar (les 1-N) i filtrar. Els valors desats es validen contra les opcions permeses.
+
+### Callbacks
+
+```php
+// Com es mostra una columna (HTML; l'has d'escapar tu)
+$crud->callbackColumn('credit', fn ($value, array $row) => esc(number_format((float) $value, 2, ',', '.')) . ' €');
+
+// Columna virtual
+$crud->columns(['name', 'total'])
+     ->callbackColumn('total', fn ($value, array $row) => esc(model('InvoiceModel')->totalFor($row['id'])));
+
+// Input personalitzat al formulari (ha de fer servir name="camp")
+$crud->callbackField('color', fn ($value, ?array $row, array $field) =>
+    '<input type="color" name="color" class="form-control form-control-color" value="' . esc($value ?? '#000000', 'attr') . '">');
+
+// Valor al CSV (si no n'hi ha, es fa servir el de callbackColumn sense HTML)
+$crud->callbackExport('credit', fn ($value, array $row) => (string) $value);
+```
+
+### Hooks
+
+```php
+$crud->beforeInsert(function (array $data) {
+    $data['created_by'] = session('user_id');
+    return $data;            // dades modificades
+});
+
+$crud->beforeUpdate(function (array $data, string $id, array $old) {
+    if ($old['locked']) {
+        return 'Aquest registre està bloquejat.';   // missatge d'error: no es desa
+    }
+    return null;             // null: continua sense canvis
+});
+
+$crud->beforeDelete(fn (string $id, array $row, bool $purge) => $row['invoices'] > 0 ? 'Té factures.' : null);
+
+$crud->afterInsert(fn (string $id, array $data) => log_message('info', "Client {$id} creat"));
+$crud->afterUpdate(fn (string $id, array $data, array $old) => null);
+$crud->afterDelete(fn (string $id, array $row, bool $purge) => null);
+$crud->afterRestore(fn (string $id, array $row) => null);
+```
+
+Els hooks `before*` poden retornar un array (dades noves), `null` (sense canvis), un string (missatge d'error) o `false` (cancel·lar).
+
+### Accions
+
+```php
+// A cada fila del llistat i a la fitxa. {id} i {qualsevol_camp} es substitueixen.
+$crud->addAction('Factures', 'factures/client/{id}', [
+    'icon'    => 'bi bi-receipt',          // Bootstrap Icons
+    'class'   => 'btn-outline-info',
+    'target'  => '_blank',
+    'confirm' => 'Vols obrir les factures?',
+    'visible' => fn (array $row) => $row['active'] == 1,
+]);
+
+// Accions que modifiquen dades: per POST (amb el token CSRF)
+$crud->addAction('Duplica', 'admin/events-duplicate/{id}', ['method' => 'post', 'confirm' => 'Segur?']);
+
+// La URL també pot ser una closure
+$crud->addAction('Mapa', fn (array $row) => 'https://maps.google.com/?q=' . urlencode($row['address']));
+
+// Botons a la capçalera
+$crud->addHeaderAction('Importa', 'admin/clients/import', ['icon' => 'bi bi-upload']);
+
+// Accions massives sobre la selecció. Reben els id (ja filtrats per l'abast del CRUD).
+$crud->addBulkAction('newsletter', 'Envia butlletí', function (array $ids, Crud $crud) {
+    // ...
+    return 'Butlletí enviat a ' . count($ids) . ' clients';   // o una ResponseInterface
+}, ['confirm' => 'Segur?', 'trash' => false]);
+```
+
+Les URL relatives passen per `site_url()`.
+
+### Importació CSV
+
+La importació s'activa a cada CRUD amb `enableImport()`. Al llistat apareix el botó **Importa CSV**, que porta a un procés en tres passos:
+
+1. **Pujar el fitxer** i triar què cal fer amb cada fila (*afegir sempre* o *actualitzar si ja existeix*) i amb les files amb errors (*no importar res* o *saltar-les*).
+2. **Previsualització**: com s'han associat les columnes, quantes files són noves, quantes s'actualitzaran i quines tenen errors (per línia).
+3. **Confirmar**. Es mostra el resum, o un informe amb les files que no s'han pogut importar.
+
+```php
+$crud->enableImport();                                   // clau: la clau primària
+$crud->enableImport(['key' => 'email']);                 // actualitza els registres que tinguin el mateix email
+$crud->enableImport([
+    'fields'  => ['name', 'email', 'city_id', 'tags'],   // només aquestes columnes
+    'maxRows' => 500,
+    'maxSize' => 1024,                                   // KB
+]);
+
+// Transformar un valor abans de validar-lo
+$crud->callbackImport('phone', fn (string $value, array $row) => preg_replace('/\D/', '', $value));
+```
+
+Cada fila passa per la mateixa conversió, validació, hooks i permisos que el formulari, i les contrasenyes es desen amb hash. Les columnes es reconeixen pel **nom del camp o per l'etiqueta**, i els valors de relacions i desplegables, **per l'id o pel text** que es mostra. Així, un CSV exportat es pot editar amb un full de càlcul i tornar a importar tal qual. Es detecten soles la codificació (UTF-8 o Windows-1252) i el separador (`;`, `,` o tabulador), i hi ha un botó per descarregar una plantilla amb les columnes.
+
+![Previsualització d'una importació CSV](screenshots/16-importacio-previsualitzacio.png)
+
+### Permisos
+
+Operacions: `list`, `add`, `edit`, `show`, `delete`, `export`, `import`, `trash`, `restore`, `purge`, `search`, `filters`, `bulk`.
+
+```php
+$crud->unsetAdd()->unsetExport();       // també unsetEdit, unsetDelete, unsetShow,
+                                        // unsetTrash, unsetPurge, unsetSearch,
+                                        // unsetFilters, unsetBulk
+$crud->readOnly();                      // sense add, edit, delete, restore ni purge
+
+// Registre a registre: $row és null quan no hi ha cap registre concret
+// (p. ex. per decidir si es mostra el botó o l'acció massiva)
+$crud->setPermission('edit', fn (?array $row) => $row === null || $row['owner_id'] == session('user_id'));
+```
+
+Els permisos es comproven també al servidor, no només a la interfície. La closure d'`edit` es torna a avaluar en desar (formulari i importació) amb el registre tal com quedaria després del canvi: si retorna `false`, no es desa. L'exportació necessita, a més d'`export`, el permís `list`.
+
+### Presentació
+
+| Mètode | Descripció |
+|---|---|
+| `setPerPage(int $n, ?array $options)` | Registres per pàgina i opcions del selector. |
+| `defaultOrder(string $field, string $dir = 'asc')` | Ordre inicial. |
+| `setTheme(string $theme)` | Tema de plantilles. |
+| `setLayout(string\|false $layout)` | `'default'`, `false` o una vista del projecte. |
+| `setBaseUrl(string $url)` | URL base del CRUD. |
+| `setBackUrl(string $url)` | On es torna després de desar, esborrar o cancel·lar (per defecte, el llistat tal com l'havies deixat). |
+
+---
+
+## Configuració
+
+Crea `app/Config/Kpcrudy.php`:
+
+```php
+<?php
+
+namespace Config;
+
+class Kpcrudy extends \Kpcrudy\Config\Kpcrudy
+{
+    public int $perPage            = 25;
+    public array $perPageOptions   = [10, 25, 50, 100];
+    public string $dateFormat      = 'd/m/Y';
+    public string $datetimeFormat  = 'd/m/Y H:i';
+    public string $csvDelimiter    = ';';
+    public int $importMaxRows      = 1000;
+    public int $exportMaxRows      = 100000;   // 0 = sense límit
+    public bool $csrfProtection    = true;     // verifica el token si el filtre csrf no és actiu
+    public string|false $layout    = 'layouts/admin';
+    public array $themes           = ['admin' => APPPATH . 'Views/kpcrudy/admin'];
+    public string $theme           = 'admin';
+}
+```
+
+Totes les opcions estan documentades a [src/Config/Kpcrudy.php](src/Config/Kpcrudy.php). Entre les de seguretat hi ha `$csrfProtection`, `$exportMaxRows` i `$sensitiveFields` (noms de camps secrets que no es mostren per defecte; si l'amplies, parteix de la llista original).
+
+## Layouts i temes
+
+**Layout.** Per defecte el CRUD es mostra en una pàgina completa amb Bootstrap 5 i Bootstrap Icons des de CDN. Per integrar-lo a la plantilla del projecte:
+
+```php
+$crud->setLayout('layouts/admin');
+```
+
+La vista `app/Views/layouts/admin.php` rep `$kpcrudy` (l'HTML del CRUD) i `$title`:
+
+```php
+<!doctype html>
+<html>
+<head>
+    <title><?= esc($title) ?></title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+</head>
+<body>
+    <?= view('partials/menu') ?>
+    <main class="container py-4"><?= $kpcrudy ?></main>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>
+```
+
+Amb `setLayout(false)`, `render()` retorna només el fragment HTML.
+
+**Temes.** La llibreria inclou tres temes: `bootstrap5` (per defecte), `w3css` ([W3.CSS](https://www.w3schools.com/w3css/)) i `tailwind` ([Tailwind CSS](https://tailwindcss.com/)).
+
+```php
+$crud->setTheme('w3css');
+```
+
+Les plantilles de cada tema són a `src/Views/{tema}`:
+
+```
+layout.php          pàgina completa (layout 'default')
+list.php            llistat i paperera
+form.php            alta i edició
+show.php            detall
+import.php          importació CSV
+partials/
+    assets.php      CSS i JS propis
+    button.php      botó d'acció
+    field.php       un camp del formulari
+    filters.php     panell de filtres
+    flash.php       missatges
+    pagination.php  paginació
+```
+
+Per fer un tema propi, registra'n el directori a `$themes` i copia-hi **només les plantilles que vulguis canviar**: les que falten es carreguen del tema pare (si n'hi ha) i, al final, de `bootstrap5`. Dins de les plantilles, `$this` és un `Kpcrudy\Renderer`, amb `render()` per incloure parcials, `renderParent()` per ampliar la plantilla del tema pare, `hidden()` i `attrs()`. Les variables que rep cada plantilla estan documentades a la capçalera de la versió de `bootstrap5`.
+
+```php
+// app/Config/Kpcrudy.php
+public array $themes = [
+    'admin'  => APPPATH . 'Views/kpcrudy/admin',                                  // pare: bootstrap5
+    'w3teal' => ['path' => APPPATH . 'Views/kpcrudy/w3teal', 'parent' => 'w3css'], // amplia w3css
+];
+```
+
+La guia [docs/new_theme_CA.md](docs/new_theme_CA.md) explica pas a pas com fer un tema, amb els exemples de W3.CSS i Tailwind.
+
+| W3.CSS (`w3css`) | Tailwind CSS (`tailwind`) |
+|---|---|
+| ![Tema W3.CSS](screenshots/18-tema-w3css-llistat.png) | ![Tema Tailwind](screenshots/20-tema-tailwind-llistat.png) |
+
+## Idiomes
+
+Idiomes inclosos:
+
+| Codi | Idioma |
+|------|--------|
+| `ca` | Català |
+| `es` | Castellà |
+| `en` | Anglès |
+| `fr` | Francès |
+| `pt` | Portuguès |
+| `de` | Alemany |
+
+Els textos són a `src/Language/{codi}/Kpcrudy.php` i segueixen el locale de la petició (`app.defaultLocale`, o el que negociï CodeIgniter si tens `negotiateLocale` activat i el codi a `supportedLocales`). Per canviar-ne algun, crea `app/Language/{codi}/Kpcrudy.php` amb les claus que vulguis sobreescriure.
+
+Per afegir-hi un idioma nou, copia `src/Language/en/Kpcrudy.php` a la carpeta del codi corresponent i tradueix-ne els valors. Els `{0}`, `{1}`... són paràmetres i s'han de mantenir. El portuguès és el de Portugal: per al del Brasil, crea `app/Language/pt-BR/Kpcrudy.php`.
+
+## Notes de seguretat
+
+- Tot el text s'escapa a les plantilles. Els callbacks `callbackColumn` i `callbackField` retornen HTML tal qual: escapa-hi les dades.
+- **CSRF**: totes les peticions POST del CRUD comproven el token. Si el filtre `csrf` de CodeIgniter (o una subclasse de `CodeIgniter\Filters\CSRF`) està actiu per a la petició, ho fa el filtre; si no, ho fa el CRUD mateix. Es pot desactivar amb `$csrfProtection = false` si el projecte protegeix les peticions d'una altra manera.
+- **Abast de `where()`**: les condicions d'igualtat simples (`camp => valor`) també s'apliquen en desar: el camp no surt al formulari, es desa sempre amb aquest valor (també a la importació) i, si després de desar el registre queda fora de l'abast, es desfà el canvi.
+- **Camps secrets**: les columnes amb noms com `password`, `token`, `secret`, `salt`, `hash`, `apikey`... (`$sensitiveFields`) no surten per defecte al llistat, la fitxa, la cerca, l'ordenació, els filtres, l'exportació ni els formularis (les contrasenyes sí que surten al formulari, i es desen amb hash). Només es mostren si les indiques explícitament.
+- Les columnes amb `callbackColumn` no es fan servir per cercar si no les poses a `searchFields()`, perquè el callback pot amagar el valor real.
+- Els valors de relacions, enum i select es validen contra les opcions permeses. Els valors de filtre no vàlids s'ignoren, els comodins `%` i `_` de la cerca es busquen literalment i un id que no pot ser una clau primària vàlida es tracta com a inexistent.
+- Les URL (camps `url` i URL d'accions retornades per closures) només es fan servir si són relatives o `http`, `https`, `mailto` o `tel`; els enllaços amb `target` porten `rel="noopener noreferrer"`.
+- Els fitxers pujats es validen per extensió (la real i la declarada), tipus MIME (imatges) i mida, i es desen amb un nom aleatori. En substituir-los o esborrar-los, només s'esborren fitxers que siguin dins del directori de pujada del camp.
+- L'exportació CSV neutralitza els valors que comencen per `=`, `+`, `-` o `@` (també amb espais o salts de línia al davant, i les variants d'amplada completa) per evitar la injecció de fórmules. Té un límit de files (`$exportMaxRows`) i llegeix els registres per blocs.
+- El fitxer temporal de la importació és privat i s'esborra en tornar a la pàgina de pujada o al cap d'una hora.
+- Fora de `production`, els errors de base de dades es mostren al missatge; en producció només es registren al log.
