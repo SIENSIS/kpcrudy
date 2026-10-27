@@ -70,6 +70,8 @@ return [
     'noSelection'      => 'No has seleccionado ningún registro.',
     'notFound'         => 'No se ha encontrado el registro.',
     'notAllowed'       => 'No tienes permiso para realizar esta operación.',
+    'linkInvalid'      => 'Este enlace no es válido.',
+    'linkExpired'      => 'Este enlace ha caducado.',
     'exportTooMany'    => 'Hay demasiados registros para exportar (máximo {0}). Filtra el listado y vuelve a intentarlo.',
     'invalidRequest'   => 'Petición no válida.',
     'invalidOption'    => 'El valor del campo {0} no es válido.',

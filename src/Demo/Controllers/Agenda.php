@@ -73,7 +73,7 @@ class Agenda extends BaseController
 
                 return $status === null ? '' : '<span class="badge text-bg-' . Attendances::STATUS_COLORS[$status] . '">' . esc(Attendances::STATUSES[$status]) . '</span>';
             })
-            ->addAction('Join', 'kpcrudy-demo/agenda-join/{id}', [
+            ->addAction('Join', 'kpcrudy-demo/agenda-join/{kp_id}', [
                 'icon'    => 'bi bi-person-plus',
                 'class'   => 'btn-success',
                 'method'  => 'post',
@@ -91,8 +91,9 @@ class Agenda extends BaseController
     /**
      * Registers the logged-in user to an event (row action, POST).
      */
-    public function join(int $id)
+    public function join(string $code)
     {
+        $id    = Demo::unmaskId('kpdemo_events', $code) ?? 0;
         $db    = db_connect();
         $me    = $this->user();
         $event = $db->table('kpdemo_events')

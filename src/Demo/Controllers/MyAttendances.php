@@ -6,6 +6,7 @@ use CodeIgniter\Database\BaseBuilder;
 use Kpcrudy\Crud;
 use Kpcrudy\Demo\Config\CrudConfig;
 use Kpcrudy\Demo\Controllers\Admin\Attendances;
+use Kpcrudy\Demo\Demo;
 
 /**
  * The logged-in user's own registrations.
@@ -44,7 +45,7 @@ class MyAttendances extends BaseController
             ->unsetDelete()
             ->filters(['status'])
             ->defaultOrder('registered_at', 'desc')
-            ->addAction('Cancel', 'kpcrudy-demo/my/cancel/{id}', [
+            ->addAction('Cancel', 'kpcrudy-demo/my/cancel/{kp_id}', [
                 'icon'    => 'bi bi-x-circle',
                 'class'   => 'btn-outline-danger',
                 'method'  => 'post',
@@ -61,8 +62,9 @@ class MyAttendances extends BaseController
         return $crud->render();
     }
 
-    public function cancel(int $id)
+    public function cancel(string $code)
     {
+        $id = Demo::unmaskId('kpdemo_attendances', $code) ?? 0;
         $owned = db_connect()->table('kpdemo_attendances')->where('id', $id)->where('user_id', $this->user()['id'])->countAllResults();
 
         return $owned > 0 && $this->cancelFuture([$id]) > 0

@@ -21,7 +21,7 @@ class Profile extends BaseController
 
         // There is no list: the profile page is the detail of the current user
         if (uri_string() === Demo::PREFIX . '/profile') {
-            return redirect()->to(Demo::url('profile/show/' . $me['id']));
+            return redirect()->to(Demo::url('profile/show/' . Demo::maskId('kpdemo_users', $me['id'])));
         }
 
         $crud = new Crud(new CrudConfig());
@@ -29,7 +29,7 @@ class Profile extends BaseController
             ->setSubject('profile', 'My profile')
             ->where('id', $me['id'])
             ->setTheme('profile')
-            ->setBackUrl(Demo::url('profile/show/' . $me['id']))
+            ->setBackUrl(Demo::url('profile/show/' . Demo::maskId('kpdemo_users', $me['id'])))
             ->unsetAdd()
             ->unsetDelete()
             ->unsetTrash()

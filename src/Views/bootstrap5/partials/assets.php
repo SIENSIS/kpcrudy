@@ -60,7 +60,8 @@
             var params = new URLSearchParams();
             form.querySelectorAll('input[name="ids[]"]:checked').forEach(function (box) { params.append('ids[]', box.value); });
             if (form.querySelector('input[name="trash"]')) { params.append('trash', '1'); }
-            window.location.href = option.dataset.url + '?' + params.toString();
+            // La URL pot portar ja paràmetres (p. ex. la signatura)
+            window.location.href = option.dataset.url + (option.dataset.url.indexOf('?') === -1 ? '?' : '&') + params.toString();
         }
     });
 })();

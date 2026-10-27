@@ -70,6 +70,8 @@ return [
     'noSelection'      => 'Es wurde kein Datensatz ausgewählt.',
     'notFound'         => 'Datensatz nicht gefunden.',
     'notAllowed'       => 'Sie haben keine Berechtigung für diesen Vorgang.',
+    'linkInvalid'      => 'Dieser Link ist ungültig.',
+    'linkExpired'      => 'Dieser Link ist abgelaufen.',
     'exportTooMany'    => 'Es gibt zu viele Datensätze für den Export (maximal {0}). Filtern Sie die Liste und versuchen Sie es erneut.',
     'invalidRequest'   => 'Ungültige Anfrage.',
     'invalidOption'    => 'Der Wert des Feldes {0} ist ungültig.',

@@ -159,6 +159,51 @@ class Crud
 
     protected ?string $baseUrl = null;
     protected ?string $backUrl = null;
+    protected bool $maskIds;
+    protected ?string $maskContext = null;
+    protected ?IdMasker $masker    = null;
+
+    /**
+     * Operacions que només s'obren amb una URL signada (requireSignature()).
+     *
+     * @var list<string>
+     */
+    protected array $signedOperations = [];
+
+    /**
+     * Durada (segons) dels enllaços que el CRUD signa quan la petició actual no
+     * és signada; null = no caduquen.
+     */
+    protected ?int $signTtl = null;
+
+    /**
+     * Caducitat dels enllaços que signa el CRUD en aquesta petició: la de la
+     * URL signada amb què s'ha entrat (així navegar no allarga la validesa).
+     */
+    protected ?int $signExpires = null;
+
+    protected bool $signatureChecked = false;
+
+    /**
+     * Si en aquesta petició el CRUD pot signar els enllaços que genera. Només ho
+     * fa si s'hi ha entrat amb una URL signada d'un llistat, o per una operació
+     * de $signFrom: compartir una fitxa no dona accés al llistat, i una petició
+     * sense signatura no aconsegueix mai enllaços signats.
+     */
+    protected bool $signAllowed = false;
+
+    /**
+     * Operacions que, obertes sense signatura, poden repartir enllaços signats.
+     *
+     * @var list<string>
+     */
+    protected array $signFrom = [];
+    protected ?UrlSigner $signer      = null;
+
+    /**
+     * Si ja s'han comprovat les rutes dels CRUD en aquesta petició (checkRoutes()).
+     */
+    protected static bool $routesChecked = false;
     protected string $theme;
     protected string|false $layout;
 
@@ -184,6 +229,7 @@ class Crud
         $this->perPageOptions = $this->config->perPageOptions;
         $this->theme          = $this->config->theme;
         $this->layout         = $this->config->layout;
+        $this->maskIds        = $this->config->maskIds;
 
         helper('url');
     }
@@ -886,8 +932,367 @@ class Crud
         // de l'operació són el grup següent
         $next = preg_match_all('/\((?!\?)/', $path) + 1;
 
+        // La marca 'kpcrudy' permet trobar aquestes rutes a checkRoutes()
+        $options['kpcrudy'] = true;
+
         $routes->match(['GET', 'POST'], $path, $handler, $options);
         $routes->match(['GET', 'POST'], $path . '/(:any)', $handler . '/$' . $next, $options);
+    }
+
+    /**
+     * En desenvolupament, avisa (amb una excepció) de les rutes que xoquen amb
+     * les d'un CRUD:
+     *  - definides DESPRÉS de Crud::routes() amb el mateix prefix: no s'hi arriba
+     *    mai, perquè "prefix/(:any)" les captura abans;
+     *  - definides ABANS que capturen URL del CRUD (add, edit/5...): el CRUD
+     *    deixa de funcionar per a aquestes URL.
+     * Una ruta pròpia (p. ex. per a un enllaç públic) ha d'anar amb un altre prefix.
+     */
+    public static function checkRoutes(): void
+    {
+        if (static::$routesChecked) {
+            return;
+        }
+
+        static::$routesChecked = true;
+        $collection            = service('routes');
+        $samples               = ['add', 'trash', 'export', 'import', 'bulk', 'emptytrash', 'edit/1', 'show/1', 'delete/1', 'restore/1', 'purge/1'];
+
+        // CodeIgniter 4.4 desa els verbs en minúscules; a partir de la 4.5, en majúscules
+        foreach (['GET', 'POST', 'get', 'post'] as $verb) {
+            $keys = array_map('strval', array_keys($collection->getRoutes($verb)));
+            $own  = array_values(array_filter($keys, static fn (string $key): bool => ! empty($collection->getRoutesOptions($key, $verb)['kpcrudy'])));
+
+            foreach ($own as $key) {
+                // Si "prefix/(:any)" ja existia, CodeIgniter ignora la del CRUD
+                if (! str_ends_with($key, '/(.*)')) {
+                    if (in_array($key . '/(.*)', $keys, true) && ! in_array($key . '/(.*)', $own, true)) {
+                        throw new RuntimeException("Kpcrudy: la ruta {$verb} '{$key}/(.*)' s'ha definit abans de Crud::routes() i substitueix la del CRUD '{$key}'. Fes-la servir amb un altre prefix.");
+                    }
+
+                    continue;
+                }
+
+                $base     = substr($key, 0, -5);
+                $position = array_search($key, $keys, true);
+
+                foreach ($keys as $index => $other) {
+                    if (in_array($other, $own, true)) {
+                        // Un altre CRUD definit després dins d'aquest prefix (p. ex. "admin" i "admin/users")
+                        if ($index > $position && $other !== $key && str_starts_with($other, $base . '/')) {
+                            throw new RuntimeException("Kpcrudy: el CRUD '{$other}' no s'executarà mai: el CRUD '{$key}' es defineix abans i el captura. Defineix primer el CRUD amb el prefix més llarg.");
+                        }
+
+                        continue;
+                    }
+
+                    // Una ruta posterior amb el mateix prefix no s'executarà mai
+                    if ($index > $position && str_starts_with($other, $base . '/')) {
+                        throw new RuntimeException("Kpcrudy: la ruta {$verb} '{$other}' no s'executarà mai: la ruta del CRUD '{$key}' es defineix abans i la captura. Fes-la servir amb un altre prefix (p. ex. per a enllaços públics amb l'id emmascarat).");
+                    }
+
+                    // Una ruta anterior que captura URL del CRUD
+                    if ($index < $position && ! str_contains($base, '(')) {
+                        foreach ($samples as $sample) {
+                            if (@preg_match('#^' . $other . '$#u', $base . '/' . $sample) === 1) {
+                                throw new RuntimeException("Kpcrudy: la ruta {$verb} '{$other}' captura '{$base}/{$sample}', que és una URL del CRUD '{$base}'. Fes-la servir amb un altre prefix.");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Identificadors emmascarats
+    // ------------------------------------------------------------------
+
+    /**
+     * Emmascara els identificadors de les URL del CRUD: edit/Xk3f9Qa... en lloc
+     * d'edit/5. Els hooks, els permisos i els callbacks continuen rebent l'id real.
+     *
+     * $context: per defecte, el nom de la taula (el mateix id dona codis diferents
+     * a cada taula). Cal fer servir el mateix context per desfer el codi fora del CRUD.
+     * $masker: una instància o classe de Kpcrudy\IdMasker (per defecte, Config::$idMasker).
+     */
+    public function maskIds(bool $enabled = true, ?string $context = null, IdMasker|string|null $masker = null): static
+    {
+        $this->maskIds     = $enabled;
+        $this->maskContext = $context;
+
+        if ($masker !== null) {
+            $this->masker = is_string($masker) ? new $masker($this->config) : $masker;
+        }
+
+        return $this;
+    }
+
+    /**
+     * Id tal com surt a les URL d'aquest CRUD: emmascarat si maskIds() és actiu.
+     */
+    public function encodeId(int|string $id): string
+    {
+        return $this->maskIds ? $this->masker()->encode((string) $id, $this->maskContextName()) : (string) $id;
+    }
+
+    /**
+     * Id real a partir del que surt a les URL, o null si el codi no és vàlid.
+     */
+    public function decodeId(string $value): ?string
+    {
+        return $this->maskIds ? $this->masker()->decode($value, $this->maskContextName()) : $value;
+    }
+
+    /**
+     * Emmascara un id fora d'un CRUD (p. ex. per fer un enllaç públic). El
+     * context ha de ser el mateix que el del CRUD: per defecte, el nom de la taula.
+     */
+    public static function maskId(int|string $id, string $context, ?KpcrudyConfig $config = null): string
+    {
+        return static::defaultMasker($config)->encode((string) $id, $context);
+    }
+
+    /**
+     * Id real d'un codi fet amb maskId() o per un CRUD, o null si no és vàlid.
+     */
+    public static function unmaskId(string $code, string $context, ?KpcrudyConfig $config = null): ?string
+    {
+        return static::defaultMasker($config)->decode($code, $context);
+    }
+
+    /**
+     * Id real a partir del valor d'una URL pròpia (p. ex. una ruta amb (:segment)
+     * que rep {kp_id}), tant si els ids estan emmascarats com si no: amb
+     * emmascarament desfà el codi; sense, retorna el valor tal qual. Null si no és vàlid.
+     *
+     * $masked: null = segons Config::$maskIds; true/false si el CRUD ho decideix amb maskIds().
+     */
+    public static function idFromUrl(string $value, string $context, ?bool $masked = null, ?KpcrudyConfig $config = null): ?string
+    {
+        $config = static::resolveConfig($config);
+
+        if ($masked ?? $config->maskIds) {
+            return static::unmaskId($value, $context, $config);
+        }
+
+        return $value === '' ? null : $value;
+    }
+
+    /**
+     * Valor que va a la URL per a un id real: el codi si els ids estan
+     * emmascarats, l'id tal qual si no. És el que posa {kp_id} a les accions.
+     *
+     * $masked: null = segons Config::$maskIds; true/false si el CRUD ho decideix amb maskIds().
+     */
+    public static function idForUrl(int|string $id, string $context, ?bool $masked = null, ?KpcrudyConfig $config = null): string
+    {
+        $config = static::resolveConfig($config);
+
+        return ($masked ?? $config->maskIds) ? static::maskId($id, $context, $config) : (string) $id;
+    }
+
+    protected static function defaultMasker(?KpcrudyConfig $config): IdMasker
+    {
+        $config = static::resolveConfig($config);
+        $class  = $config->idMasker;
+        $masker = new $class($config);
+
+        if (! $masker instanceof IdMasker) {
+            throw new RuntimeException("Kpcrudy: la classe '{$class}' no implementa Kpcrudy\\IdMasker.");
+        }
+
+        return $masker;
+    }
+
+    protected function masker(): IdMasker
+    {
+        return $this->masker ??= static::defaultMasker($this->config);
+    }
+
+    protected function maskContextName(): string
+    {
+        if ($this->maskContext === null) {
+            $this->boot();
+        }
+
+        return $this->maskContext ?? $this->table;
+    }
+
+    // ------------------------------------------------------------------
+    // URL signades
+    // ------------------------------------------------------------------
+
+    /**
+     * Les operacions indicades només s'obren amb una URL signada (p. ex. per
+     * compartir una consulta sense haver d'iniciar sessió). Els enllaços que
+     * genera el CRUD (paginació, fitxes, exportació...) se signen sols i
+     * caduquen quan caduca la URL amb què s'ha entrat.
+     *
+     * La signatura cobreix el camí (operació i id), no els paràmetres (?q=,
+     * ?page=, ?f[]...): el que l'usuari pot veure ho ha de limitar where().
+     *
+     * $operations: '*' (totes, el valor per defecte i el més segur) o una llista
+     *              ('list', 'show', 'export'...). Les que no hi són queden obertes:
+     *              protegeix-les amb un filtre d'autenticació o amb unset*().
+     * $ttl:        durada, en segons, dels enllaços que signen les operacions de $signFrom; null = no caduquen.
+     * $signFrom:   operacions que NO necessiten signatura i que reparteixen enllaços
+     *              signats (p. ex. ['list'] per a un llistat intern, protegit amb login,
+     *              que dona enllaços signats a les fitxes). Per defecte, cap.
+     *
+     * @param list<string>|string $operations
+     * @param list<string>|string $signFrom
+     */
+    public function requireSignature(array|string $operations = '*', ?int $ttl = null, array|string $signFrom = []): static
+    {
+        $all = ['list', ...self::ID_OPERATIONS, ...self::OPERATIONS];
+
+        $operations = $operations === '*' ? $all : array_values((array) $operations);
+        $signFrom   = array_values((array) $signFrom);
+
+        // Un nom mal escrit deixaria l'operació oberta sense avisar
+        foreach ([...$operations, ...$signFrom] as $operation) {
+            if (! in_array($operation, $all, true)) {
+                throw new RuntimeException("Kpcrudy: l'operació '{$operation}' no existeix. Operacions: " . implode(', ', $all) . '.');
+            }
+        }
+
+        if (array_intersect($operations, $signFrom) !== []) {
+            throw new RuntimeException('Kpcrudy: una operació no pot necessitar signatura i alhora repartir-ne ($signFrom).');
+        }
+
+        $this->signedOperations = $operations;
+        $this->signFrom         = $signFrom;
+        $this->signTtl          = $ttl;
+
+        return $this;
+    }
+
+    /**
+     * URL signada d'una operació d'aquest CRUD, per compartir-la (correu,
+     * missatge...). L'id és el real (s'emmascara si cal). $ttl en segons; null = no caduca.
+     *
+     * @param array<string, mixed> $query
+     */
+    public function signedUrl(string $operation = 'list', int|string|null $id = null, ?int $ttl = 86400, array $query = []): string
+    {
+        $url = $this->withQuery($this->rawUrl($operation, $id === null ? null : (string) $id), $query);
+
+        return $this->signer()->sign($url, $ttl === null ? null : time() + $ttl, false);
+    }
+
+    /**
+     * Si una petició sense signatura arriba a una operació que no la necessita,
+     * el CRUD no signa res, excepte per a les operacions de $signFrom.
+     */
+    protected function canSign(): bool
+    {
+        // Abans de render() (p. ex. url() al controlador) qui demana l'enllaç és el desenvolupador
+        return ! $this->signatureChecked || $this->signAllowed;
+    }
+
+    /**
+     * Signa qualsevol URL (absoluta o relativa al projecte), p. ex. d'una ruta
+     * pròpia. Per defecte la signatura cobreix també els paràmetres, que no es
+     * poden canviar. $ttl en segons; null = no caduca.
+     */
+    public static function signUrl(string $url, ?int $ttl = 3600, bool $lockQuery = true, ?KpcrudyConfig $config = null): string
+    {
+        if (! preg_match('#^([a-z][a-z0-9+.-]*:|/)#i', $url)) {
+            $url = site_url($url);
+        }
+
+        return (new UrlSigner(static::resolveConfig($config)))->sign($url, $ttl === null ? null : time() + $ttl, $lockQuery);
+    }
+
+    /**
+     * Estat de la signatura de la petició: 'valid', 'missing', 'invalid' o 'expired'
+     * (constants de Kpcrudy\UrlSigner). Per a controladors propis: només accepta
+     * les URL signades amb signUrl() o signedUrl(), mai les que signa un CRUD navegant.
+     */
+    public static function checkSignature(?IncomingRequest $request = null, bool $allowFreeQuery = false, ?KpcrudyConfig $config = null): string
+    {
+        return (new UrlSigner(static::resolveConfig($config)))->check($request ?? service('request'), $allowFreeQuery);
+    }
+
+    public static function hasValidSignature(?IncomingRequest $request = null, bool $allowFreeQuery = false, ?KpcrudyConfig $config = null): bool
+    {
+        return static::checkSignature($request, $allowFreeQuery, $config) === UrlSigner::VALID;
+    }
+
+    protected function signer(): UrlSigner
+    {
+        return $this->signer ??= new UrlSigner($this->config);
+    }
+
+    protected function signatureRequired(string $operation): bool
+    {
+        return in_array($operation, $this->signedOperations, true);
+    }
+
+    /**
+     * Atura la petició si l'operació necessita signatura i no en té una de vàlida.
+     * També fixa la caducitat dels enllaços que se signaran en aquesta petició.
+     */
+    protected function verifySignature(string $operation): void
+    {
+        if ($this->signedOperations === []) {
+            return;
+        }
+
+        $this->signatureChecked = true;
+        $status                 = $this->signer()->check($this->request, true, ['', 'crud', 'crud-trash']);
+        $matched                = $this->signer()->matched();
+
+        // Exportar la paperera demana una signatura feta des de la paperera (o una URL signada sencera)
+        if ($status === UrlSigner::VALID && $operation === 'export' && $this->request->getGet('trash') && $this->signatureRequired('trash')
+            && $matched['scope'] !== 'crud-trash' && $matched['mode'] !== 'full') {
+            $status = UrlSigner::INVALID;
+        }
+
+        if ($status === UrlSigner::VALID) {
+            $this->signExpires = $this->signer()->expires($this->request);
+            $this->signAllowed = in_array($operation, ['list', 'trash'], true);
+        } elseif ($this->signatureRequired($operation)) {
+            throw PageNotFoundException::forPageNotFound(lang($status === UrlSigner::EXPIRED ? 'Kpcrudy.linkExpired' : 'Kpcrudy.linkInvalid'));
+        } else {
+            $this->signExpires = $this->signTtl === null ? null : time() + $this->signTtl;
+            $this->signAllowed = in_array($operation, $this->signFrom, true);
+        }
+    }
+
+    protected function signIfRequired(string $url, string $operation, string $scope = 'crud'): string
+    {
+        if (! $this->signatureRequired($operation) || ! $this->canSign()) {
+            return $url;
+        }
+
+        $expires = $this->signatureChecked ? $this->signExpires : ($this->signTtl === null ? null : time() + $this->signTtl);
+
+        return $this->signer()->sign($url, $expires, false, $scope);
+    }
+
+    /**
+     * kp_exp i kp_sig d'una operació sense id, per als camps ocults dels formularis GET.
+     *
+     * @return array<string, string>
+     */
+    protected function signatureParams(string $operation): array
+    {
+        if (! $this->signatureRequired($operation)) {
+            return [];
+        }
+
+        parse_str((string) parse_url($this->signIfRequired($this->rawUrl($operation), $operation), PHP_URL_QUERY), $params);
+
+        return array_intersect_key($params, array_flip(UrlSigner::PARAMS));
+    }
+
+    protected static function resolveConfig(?KpcrudyConfig $config): KpcrudyConfig
+    {
+        $config ??= config('Kpcrudy');
+
+        return $config instanceof KpcrudyConfig ? $config : new KpcrudyConfig();
     }
 
     // ------------------------------------------------------------------
@@ -936,12 +1341,23 @@ class Crud
      */
     public function render(): ResponseInterface|string
     {
+        if (ENVIRONMENT === 'development' && $this->config->checkRoutes) {
+            static::checkRoutes();
+        }
+
         $this->boot();
         [$operation, $id] = $this->resolveOperation();
+
+        // Amb els identificadors emmascarats, un codi que no és vàlid no coincideix amb cap registre
+        if ($id !== null) {
+            $id = $this->decodeId($id) ?? '';
+        }
 
         if ($this->isPost()) {
             $this->verifyCsrf();
         }
+
+        $this->verifySignature($operation);
 
         return match ($operation) {
             'list'       => $this->listOperation(false),
@@ -1101,7 +1517,29 @@ class Crud
      */
     protected function resolveOperation(): array
     {
-        $path     = trim($this->request->getPath(), '/');
+        // getPath() ja està descodificat: els segments no s'han de tornar a descodificar
+        $path = trim($this->request->getPath(), '/');
+        $base = $this->routeBase($path);
+
+        if ($base !== null) {
+            // Amb una ruta de Crud::routes() la base és coneguda: després només hi pot haver
+            // "operació" o "operació/id". Qualsevol altra cosa és una pàgina que no existeix.
+            $rest     = trim(substr($path, strlen($base)), '/');
+            $segments = $rest === '' ? [] : explode('/', $rest);
+
+            [$operation, $id] = match (true) {
+                $segments === []                                                        => ['list', null],
+                count($segments) === 1 && in_array($segments[0], self::OPERATIONS, true)  => [$segments[0], null],
+                count($segments) === 2 && in_array($segments[0], self::ID_OPERATIONS, true) => [$segments[0], $segments[1]],
+                default                                                                 => throw PageNotFoundException::forPageNotFound(),
+            };
+
+            $this->baseUrl ??= rtrim(site_url($base), '/');
+
+            return [$operation, $id];
+        }
+
+        // Rutes definides a mà: es dedueix dels darrers segments
         $segments = $path === '' ? [] : explode('/', $path);
         $count    = count($segments);
 
@@ -1110,7 +1548,7 @@ class Crud
 
         if ($count >= 2 && in_array($segments[$count - 2], self::ID_OPERATIONS, true)) {
             $operation = $segments[$count - 2];
-            $id        = rawurldecode($segments[$count - 1]);
+            $id        = $segments[$count - 1];
             $segments  = array_slice($segments, 0, $count - 2);
         } elseif ($count >= 1 && in_array($segments[$count - 1], self::OPERATIONS, true)) {
             $operation = $segments[$count - 1];
@@ -1120,6 +1558,31 @@ class Crud
         $this->baseUrl ??= rtrim(site_url(implode('/', $segments)), '/');
 
         return [$operation, $id];
+    }
+
+    /**
+     * Part de la URL que correspon a la base del CRUD, si la petició ha entrat per
+     * una ruta de Crud::routes(); null si la ruta s'ha definit d'una altra manera.
+     */
+    protected function routeBase(string $path): ?string
+    {
+        $router = service('router');
+
+        if (! method_exists($router, 'getMatchedRoute') || ! method_exists($router, 'getMatchedRouteOptions')) {
+            return null;
+        }
+
+        $matched = $router->getMatchedRoute();
+        $options = $router->getMatchedRouteOptions();
+
+        if (! is_array($matched) || ! is_string($matched[0] ?? null) || empty($options['kpcrudy'])) {
+            return null;
+        }
+
+        $key   = trim($matched[0], '/');
+        $regex = str_replace('{locale}', '[^/]+', str_ends_with($key, '/(.*)') ? substr($key, 0, -5) : $key);
+
+        return @preg_match('#^' . $regex . '(?=/|$)#u', $path, $m) === 1 ? $m[0] : null;
     }
 
     // ------------------------------------------------------------------
@@ -1175,7 +1638,7 @@ class Crud
             }
 
             $items[] = [
-                'id'      => (string) $row[$this->primaryKey],
+                'id'      => $this->encodeId((string) $row[$this->primaryKey]),
                 'cells'   => $cells,
                 'actions' => $this->rowActions($row, $trash, 'list'),
             ];
@@ -1191,8 +1654,9 @@ class Crud
             'state'          => $state,
             'listUrl'        => $this->listUrl($trash),
             'bulkUrl'        => $this->url('bulk'),
-            'searchHidden'   => $this->stateQuery($state, ['q' => '', 'page' => 1, 'per_page' => null]),
-            'filterHidden'   => array_intersect_key($this->stateQuery($state), array_flip(['q', 'per_page', 'sort', 'dir'])),
+            // Els formularis GET no envien els paràmetres de l'action: la signatura va en camps ocults
+            'searchHidden'   => $this->stateQuery($state, ['q' => '', 'page' => 1, 'per_page' => null]) + $this->signatureParams($trash ? 'trash' : 'list'),
+            'filterHidden'   => array_intersect_key($this->stateQuery($state), array_flip(['q', 'per_page', 'sort', 'dir'])) + $this->signatureParams($trash ? 'trash' : 'list'),
             'filters'        => $this->can('filters') ? $this->filterData($state) : [],
             'filtersActive'  => count($this->stateQuery($state)['f'] ?? []),
             'filtersReset'   => $this->listUrl($trash, $this->stateQuery($state, ['f' => [], 'page' => 1])),
@@ -1250,7 +1714,7 @@ class Crud
 
         return $this->output('form', [
             'mode'      => $mode,
-            'id'        => $id,
+            'id'        => $id === null ? null : $this->encodeId($id),
             'action'    => $mode === 'add' ? $this->url('add') : $this->url('edit', $id),
             'backUrl'   => $this->backUrl(),
             'fields'    => $this->formFields($fields, $values, $errors, $mode, $record),
@@ -1283,10 +1747,11 @@ class Crud
         }
 
         return $this->output('show', [
-            'id'      => $id,
+            'id'      => $this->encodeId((string) $record[$this->primaryKey]),
             'items'   => $items,
             'actions' => $this->rowActions($record, false, 'show'),
-            'backUrl' => $this->backUrl(),
+            // Amb l'enllaç signat d'una sola fitxa no es pot tornar a un llistat que també demana signatura
+            'backUrl' => ! $this->canSign() && $this->signatureRequired('list') ? '' : $this->backUrl(),
         ], lang('Kpcrudy.showTitle', [$this->subject]));
     }
 
@@ -2116,6 +2581,9 @@ class Crud
      */
     protected function scopedIds(array $ids, bool $trash): array
     {
+        // Els identificadors arriben del formulari tal com es mostren (emmascarats o no)
+        $ids = array_map(fn ($id) => is_scalar($id) ? ($this->decodeId((string) $id) ?? '') : '', $ids);
+
         $ids = array_values(array_unique(array_filter(
             array_map('strval', array_filter($ids, 'is_scalar')),
             fn (string $id): bool => $id !== '' && $this->isValidId($id),
@@ -2527,7 +2995,8 @@ class Crud
     {
         return $this->columns ?? array_values(array_filter(
             array_keys($this->meta),
-            fn (string $name): bool => ! $this->isDeletedField($name) && ! $this->isSensitive($name),
+            // Amb maskIds() l'id real no es mostra per defecte (es veuria al costat del codi de la URL)
+            fn (string $name): bool => ! $this->isDeletedField($name) && ! $this->isSensitive($name) && ! ($this->maskIds && $name === $this->primaryKey),
         ));
     }
 
@@ -2573,7 +3042,8 @@ class Crud
 
         $fields = array_filter(
             array_keys($this->meta),
-            fn (string $name): bool => ! $this->isDeletedField($name) && ! $this->isSensitive($name),
+            // Amb maskIds() l'id real no es mostra per defecte (es veuria al costat del codi de la URL)
+            fn (string $name): bool => ! $this->isDeletedField($name) && ! $this->isSensitive($name) && ! ($this->maskIds && $name === $this->primaryKey),
         );
 
         return array_values(array_merge($fields, array_keys($this->relationsNN)));
@@ -3063,7 +3533,11 @@ class Crud
         }
 
         $url = preg_replace_callback('/\{(\w+)\}/', function (array $m) use ($row): string {
-            $value = $m[1] === 'id' ? $row[$this->primaryKey] : ($row[$m[1]] ?? '');
+            $value = match ($m[1]) {
+                'id'    => $row[$this->primaryKey],
+                'kp_id' => (string) $row[$this->primaryKey] === '' ? '' : $this->encodeId((string) $row[$this->primaryKey]),
+                default => $row[$m[1]] ?? '',
+            };
 
             return rawurlencode((string) $value);
         }, $url);
@@ -3077,7 +3551,7 @@ class Crud
      */
     protected function urlScheme(string $url): string
     {
-        $url = preg_replace('/[ - ]+/', '', $url);
+        $url = preg_replace('/[\x00-\x20\x7f]+/', '', $url);
 
         return preg_match('/^([a-z][a-z0-9+.-]*):/i', $url, $m) ? strtolower($m[1]) : '';
     }
@@ -3133,7 +3607,10 @@ class Crud
                 $query['trash'] = 1;
             }
 
-            $actions[] = $this->builtinAction('export', $this->withQuery($this->url('export'), $query), 'bi bi-filetype-csv', 'btn-outline-success');
+            // L'exportació de la paperera es signa amb un abast propi: un enllaç d'exportació
+            // del llistat no serveix per exportar la paperera
+            $export    = $trash ? $this->signIfRequired($this->rawUrl('export'), 'export', 'crud-trash') : $this->url('export');
+            $actions[] = $this->builtinAction('export', $this->withQuery($export, $query), 'bi bi-filetype-csv', 'btn-outline-success');
         }
 
         if (! $trash && $this->importAllowed()) {
@@ -3169,7 +3646,11 @@ class Crud
         }
 
         if ($this->can('export')) {
-            $list['export'] = ['label' => lang('Kpcrudy.exportSelected'), 'confirm' => null, 'url' => $this->url('export')];
+            $list['export'] = [
+                'label'   => lang('Kpcrudy.exportSelected'),
+                'confirm' => null,
+                'url'     => $trash ? $this->signIfRequired($this->rawUrl('export'), 'export', 'crud-trash') : $this->url('export'),
+            ];
         }
 
         foreach ($this->bulkActions as $key => $action) {
@@ -3312,13 +3793,25 @@ class Crud
         return 'kpcrudy_' . md5((string) $this->baseUrl);
     }
 
+    /**
+     * URL d'una operació del CRUD amb l'id real (s'emmascara i se signa si cal).
+     */
     public function url(string $operation, ?string $id = null): string
+    {
+        return $this->signIfRequired($this->rawUrl($operation, $id), $operation);
+    }
+
+    protected function rawUrl(string $operation, ?string $id = null): string
     {
         if ($this->baseUrl === null) {
             $this->resolveOperation();
         }
 
-        return $this->baseUrl . '/' . $operation . ($id !== null ? '/' . rawurlencode($id) : '');
+        if ($operation === 'list') {
+            return (string) $this->baseUrl;
+        }
+
+        return $this->baseUrl . '/' . $operation . ($id !== null ? '/' . rawurlencode($this->encodeId($id)) : '');
     }
 
     /**
@@ -3326,7 +3819,7 @@ class Crud
      */
     protected function listUrl(bool $trash, array $query = []): string
     {
-        return $this->withQuery($trash ? $this->url('trash') : (string) $this->baseUrl, $query);
+        return $this->withQuery($trash ? $this->url('trash') : $this->signIfRequired((string) $this->baseUrl, 'list'), $query);
     }
 
     /**
@@ -3336,7 +3829,12 @@ class Crud
     {
         $string = http_build_query($query);
 
-        return $string === '' ? $url : $url . '?' . $string;
+        if ($string === '') {
+            return $url;
+        }
+
+        // La URL pot portar ja la signatura (?kp_exp=...&kp_sig=...)
+        return $url . (str_contains($url, '?') ? '&' : '?') . $string;
     }
 
     /**
@@ -3359,6 +3857,12 @@ class Crud
 
     protected function redirectToList(string $type, string $text): ResponseInterface
     {
+        // Si el llistat necessita signatura i aquesta petició no en pot donar, redirigir-hi
+        // portaria a "enllaç no vàlid": es mostra el missatge directament
+        if ($this->backUrl === null && $this->signatureRequired('list') && ! $this->canSign()) {
+            throw PageNotFoundException::forPageNotFound($text);
+        }
+
         session()->setFlashdata($this->stateKey() . '_flash', ['type' => $type, 'text' => $text]);
 
         return redirect()->to($this->backUrl());

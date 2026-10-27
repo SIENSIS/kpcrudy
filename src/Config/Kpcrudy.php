@@ -80,6 +80,34 @@ class Kpcrudy extends BaseConfig
     public bool $csrfProtection = true;
 
     /**
+     * En desenvolupament, comprova que cap ruta del projecte xoqui amb les de
+     * Crud::routes() (vegeu Crud::checkRoutes()). Desactiva-ho només si tens una
+     * ruta que substitueix una operació del CRUD a propòsit.
+     */
+    public bool $checkRoutes = true;
+
+    /**
+     * Emmascara els identificadors de les URL de tots els CRUD (edit/Xk3f9...
+     * en lloc d'edit/5). Cada CRUD ho pot canviar amb maskIds().
+     */
+    public bool $maskIds = false;
+
+    /**
+     * Clau per emmascarar els identificadors. Si és buida es fa servir la
+     * d'encriptació de CodeIgniter (encryption.key) i, si tampoc n'hi ha, una
+     * clau aleatòria desada a writable/kpcrudy/mask.key. Si canvia, canvien
+     * tots els codis (els enllaços antics deixen de funcionar).
+     */
+    public string $maskKey = '';
+
+    /**
+     * Classe que emmascara els identificadors (ha d'implementar Kpcrudy\IdMasker).
+     *
+     * @var class-string<\Kpcrudy\IdMasker>
+     */
+    public string $idMasker = \Kpcrudy\DefaultIdMasker::class;
+
+    /**
      * Noms de camp (o parts del nom separades per "_") que es consideren
      * secrets: no surten per defecte al llistat, la fitxa, la cerca,
      * l'exportació ni els formularis. Es poden mostrar indicant-los explícitament.

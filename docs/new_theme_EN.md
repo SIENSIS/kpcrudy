@@ -30,6 +30,7 @@ This document explains how a theme is built and how you would make a new one, us
 
 ## Contents
 
+- [Start from a copy](#start-from-a-copy)
 - [How a theme works](#how-a-theme-works)
 - [The templates](#the-templates)
 - [What the theme cannot change](#what-the-theme-cannot-change)
@@ -38,6 +39,19 @@ This document explains how a theme is built and how you would make a new one, us
 - [Example: a theme with Tailwind CSS](#example-a-theme-with-tailwind-css)
 - [Extending an existing theme](#extending-an-existing-theme)
 - [Final checks](#final-checks)
+
+---
+
+## Start from a copy
+
+The quickest way to start a theme is to copy an existing one with [kpcrudy:publish](commands_EN.md#kpcrudypublish):
+
+```bash
+php spark kpcrudy:publish theme w3css --as intranet                    # full copy
+php spark kpcrudy:publish theme w3css --as intranet --only list,show   # only these templates
+```
+
+The command copies the templates to `app/Views/kpcrudy/intranet` and registers the theme in `$themes` of `app/Config/Kpcrudy.php` (add `--dry-run` to see it first). In a **full copy**, the new theme's parent is the original's parent (`bootstrap5`), so the templates that use `renderParent()` keep working. In a **partial copy** (`--only`), the parent is the original theme, which provides the templates that were not copied; and if one of the copied templates already extends its parent with `renderParent()` (such as `partials/assets` of `w3css` and `tailwind`), an extension is written instead of a duplicate: `renderParent()` and an empty `<style>` for your CSS. Then use it with `->setTheme('intranet')` or with `$theme = 'intranet'`. The rest of this document explains what each template does.
 
 ---
 
@@ -470,6 +484,8 @@ Templates are looked up in `w3teal`, then in `w3css` and, finally, in `bootstrap
 **Changing a single template**: for example, a two-column detail page, only for this theme: `app/Views/kpcrudy/w3teal/show.php`. The rest (list, form...) is still the `w3css` one.
 
 The same applies to `tailwind` or any theme of your own. A theme can have another theme of the project as its parent.
+
+The command can set all this up: `php spark kpcrudy:publish theme w3css --as w3teal --only partials/assets,show` registers `w3teal` with `w3css` as its parent, copies `show.php` into it and, since the `partials/assets.php` of `w3css` already uses `renderParent()`, writes an empty extension where you put the styles above. See [Start from a copy](#start-from-a-copy).
 
 ## Final checks
 

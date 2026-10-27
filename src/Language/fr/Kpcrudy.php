@@ -70,6 +70,8 @@ return [
     'noSelection'      => 'Aucun enregistrement sélectionné.',
     'notFound'         => 'Enregistrement introuvable.',
     'notAllowed'       => 'Vous n\'avez pas l\'autorisation d\'effectuer cette opération.',
+    'linkInvalid'      => 'Ce lien n’est pas valide.',
+    'linkExpired'      => 'Ce lien a expiré.',
     'exportTooMany'    => 'Il y a trop d\'enregistrements à exporter (maximum {0}). Filtrez la liste et réessayez.',
     'invalidRequest'   => 'Requête non valide.',
     'invalidOption'    => 'La valeur du champ {0} n\'est pas valide.',

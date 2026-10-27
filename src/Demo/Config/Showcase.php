@@ -58,6 +58,8 @@ class Showcase extends BaseConfig
             'Virtual occupancy column with a progress bar',
             'callbackColumn for status and price; callbackExport for the price in the CSV',
             'Hooks: beforeInsert sets the creator and validates the dates',
+            'Share links: signed URLs valid 7 days to a read-only agenda without login (requireSignature, Crud::signUrl)',
+            'Masked ids in every URL (maskIds in the demo config): edit/Xk3f9... instead of edit/5; the Duplicate action uses {kp_id} and Demo::unmaskId()',
             'Custom POST action with confirmation: duplicate the event',
             'Custom bulk actions: publish and cancel',
             'Header button to the public agenda',

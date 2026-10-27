@@ -31,8 +31,10 @@ For complete recipes for common cases, see [howto_EN.md](howto_EN.md).
 - [Permissions](#permissions): `setPermission`, `unsetAdd`, `unsetEdit`, `unsetDelete`, `unsetShow`, `unsetExport`, `unsetTrash`, `unsetPurge`, `unsetSearch`, `unsetFilters`, `unsetBulk`, `readOnly`
 - [Display and navigation](#display-and-navigation): `setPerPage`, `defaultOrder`, `setBaseUrl`, `setBackUrl`, `setTheme`, `setLayout`
 - [Access from callbacks](#access-from-callbacks): `getModel`, `getTable`, `getPrimaryKey`, `getBaseUrl`, `url`
+- [Masked ids](#masked-ids): `maskIds`, `encodeId`, `decodeId`, `maskId`, `unmaskId`, `idFromUrl`, `idForUrl`, `IdMasker`, `checkRoutes`
+- [Signed URLs](#signed-urls): `requireSignature`, `signedUrl`, `signUrl`, `checkSignature`, `hasValidSignature`
 - [Constants](#constants): `ID_OPERATIONS`, `OPERATIONS`
-- [Spark commands](#spark-commands): `kpcrudy:make`, `kpcrudy:demo`
+- [Spark commands](#spark-commands): `kpcrudy:make`, `kpcrudy:demo`, `kpcrudy:maskid`, `kpcrudy:unmaskid`, `kpcrudy:signurl`, `kpcrudy:checkurl`
 - [Global configuration](#global-configuration): properties of `Config\Kpcrudy`
 - [Templates](#templates): `Renderer::render`, `Renderer::renderParent`, `Renderer::locate`, `Renderer::hidden`, `Renderer::attrs`
 
@@ -86,8 +88,12 @@ $routes->group('', ['filter' => 'auth'], static function ($routes) {
 });
 
 // The route can have parameters: the controller receives them first
-Crud::routes($routes, 'clients/(:num)/notes', 'Clients::notes/$1');   // notes(int $clientId)
+Crud::routes($routes, 'clients/(:segment)/notes', 'Clients::notes/$1');   // notes(string $code): the real id with Crud::idFromUrl($code, 'clients')
 ```
+
+The routes it registers carry the option `'kpcrudy' => true`, which lets [`Crud::checkRoutes()`](#crudcheckroutes-void-static) find them. In development, `render()` checks that no other route conflicts with the CRUD's: a route with the same prefix defined **after** `Crud::routes()` would never run (`prefix/(:any)` captures it first), and one defined **before** that captures CRUD URLs (`prefix/add`, `prefix/edit/1`...) would stop them from working. Your own pages (e.g. a public link with a [masked id](#masked-ids)) must use a different prefix.
+
+These routes are **strict**: after the CRUD base only `operation` (`add`, `trash`, `export`...) or `operation/id` (`edit/5`, `show/Xk3f9QaLm2PwE7`) is accepted; anything else (`admin/clients/foo`, `admin/clients/edit/5/extra`) is a 404. This way each page has a single URL, which [signed URLs](#signed-urls) also rely on. With hand-written routes (without `Crud::routes()`), the operation is deduced from the last segments of the URL.
 
 ---
 
@@ -116,7 +122,7 @@ $crud->setModel(\App\Models\ClientModel::class);
 $crud->setModel(model('ClientModel'));
 ```
 
-> If the model rules use `{id}` (for example `is_unique[clients.email,id,{id}]`), on CodeIgniter 4.5+ the primary key field must also have a rule: `'id' => 'permit_empty|is_natural_no_zero'`. Kpcrudy adds the identifier when editing.
+> If the model rules use `{id}` (for example `is_unique[clients.email,id,{id}]`), on CodeIgniter 4.5+ the primary key field must also have a rule: `'id' => 'permit_empty|is_natural_no_zero'`. Kpcrudy adds the identifier when editing: always the real id, even if the URL carries a [masked code](#masked-ids).
 
 ### `setDatabase(BaseConnection|string $db): static`
 
@@ -340,7 +346,7 @@ $crud->fieldType('notes', 'textarea', ['attrs' => ['rows' => 8]])
 
 ### `setRules(array|string $field, array|string|null $rules = null): static`
 
-CodeIgniter validation rules. `{id}` is replaced with the identifier of the record being edited (empty when adding). Rules can be passed as text separated by `|` or as an array; use the array if a rule contains `|`, such as `regex_match`.
+CodeIgniter validation rules. `{id}` is replaced with the real identifier of the record being edited (empty when adding), even if the URL carries a masked code. Rules can be passed as text separated by `|` or as an array; use the array if a rule contains `|`, such as `regex_match`.
 
 If a field has its own rules, no automatic rules are inferred for it (see `$inferRules`).
 
@@ -586,8 +592,19 @@ Adds a button to **each row** of the list and to the **detail view**. You can ad
 
 The URL can be:
 
-- a **string** with `{id}` (primary key) and `{field}` (any field of the record), which are URL-encoded. If it is relative, it goes through `site_url()`;
+- a **string** with `{id}` (primary key), `{kp_id}` (the id as it appears in the CRUD's URLs: [masked](#masked-ids) if `maskIds()` is enabled, otherwise the real id) and `{field}` (any field of the record), which are URL-encoded. If it is relative, it goes through `site_url()`;
 - a **closure** `fn (array $row): string` that returns the full URL. It is only used if it is relative or starts with `http:`, `https:`, `mailto:` or `tel:`; otherwise (e.g. `javascript:`), the button points to `#`.
+
+> **`{id}` and `{kp_id}` are always the primary key**, whatever the field is called (`id`, `code`, `vat_number`...): the one the library detects in the table or the one set with `setPrimaryKey()` (or in the model). If the key is called `code`:
+>
+> | Placeholder | Value |
+> |---|---|
+> | `{id}` | the real value of `code` |
+> | `{code}` | the same: it is a field of the record |
+> | `{kp_id}` | the value of `code` as it appears in the CRUD's URLs (masked if `maskIds()` is on) |
+> | `{kp_code}` | **does not exist**: it is replaced by an empty string and the link is broken |
+>
+> The `kp_` prefix only exists for the key (`{kp_id}`). And if the table has a field called `id` that is not the key, `{id}` still gives the key: for that field, use a closure (`fn ($row) => '...' . $row['id']`).
 
 | Option | Default | Description |
 |---|---|---|
@@ -599,13 +616,15 @@ The URL can be:
 | `method` | `'get'` | `'post'` for actions that modify data. A form with the CSRF token is submitted |
 
 ```php
-$crud->addAction('Invoices', 'invoices/client/{id}', ['icon' => 'bi bi-receipt']);
+// {kp_id}: the id as it appears in the CRUD's URLs (a code if masked).
+// The target route, with (:segment), gets the real id with Crud::idFromUrl()
+$crud->addAction('Invoices', 'invoices/client/{kp_id}', ['icon' => 'bi bi-receipt']);
 
 $crud->addAction('Map', 'https://www.openstreetmap.org/search?query={address}', [
     'icon' => 'bi bi-geo-alt', 'target' => '_blank',
 ]);
 
-$crud->addAction('Send reminder', 'clients/remind/{id}', [
+$crud->addAction('Send reminder', 'clients/remind/{kp_id}', [
     'method'  => 'post',
     'confirm' => 'Do you want to send the reminder?',
     'visible' => fn (array $row) => $row['balance'] > 0,
@@ -915,7 +934,7 @@ Where to go back after saving, deleting or cancelling, and where the "Back to li
 
 ```php
 // After editing the profile, go back to the detail view
-$crud->setBackUrl(site_url('profile/show/' . $userId));
+$crud->setBackUrl(site_url('profile/show/' . Crud::idForUrl($userId, 'users')));   // the code if ids are masked
 ```
 
 ### `setTheme(string $theme): static`
@@ -983,6 +1002,434 @@ $crud->addBulkAction('duplicate', 'Duplicate', function (array $ids, Crud $crud)
 });
 ```
 
+`url()` takes the real id: if [ids are masked](#masked-ids), it masks it.
+
+---
+
+## Masked ids
+
+By default, the CRUD's URLs carry the primary key: `admin/invoices/edit/5`. With `maskIds()` they carry a code instead of the id: `admin/invoices/edit/Xk3f9QaLm2PwE7`.
+
+**When to use it.** When URLs leave the application (a public link, an email, a [signed link](#signed-urls)) or when you do not want anyone to see how many records there are or to try consecutive ids (`edit/6`, `edit/7`...). It does not replace permissions or `where()`: it is one more layer. In a well-protected internal CRUD it is not essential.
+
+### Quick start
+
+1. **Enable it in the CRUD** (or in all of them, with `public bool $maskIds = true;` in the [global configuration](#global-configuration)). No extra route is needed:
+
+   ```php
+   $crud->setTable('invoices')->maskIds();
+   ```
+
+2. **Your own pages that receive the code** (e.g. a public detail page) use **a different prefix** from the CRUD and decode it with `Crud::unmaskId()`, with the same context (by default, the table name):
+
+   ```php
+   // Routes.php
+   Crud::routes($routes, 'admin/invoices', 'Admin\Invoices::index', ['filter' => 'auth:admin']);
+   $routes->get('invoice/(:segment)', 'PublicInvoice::show/$1');   // invoice/..., not admin/invoices/...
+
+   // PublicInvoice::show(string $code)
+   $id = Crud::unmaskId($code, 'invoices') ?? throw PageNotFoundException::forPageNotFound();
+   ```
+
+   If the route receives the id from a CRUD action (`{kp_id}`) and must work whether ids are masked or not, use [`Crud::idFromUrl()`](#crudidfromurlstring-value-string-context-bool-masked--null-kpcrudyconfig-config--null-string-static) instead of `unmaskId()`, and [`Crud::idForUrl()`](#crudidforurlintstring-id-string-context-bool-masked--null-kpcrudyconfig-config--null-string-static) to build its links. The route always uses `(:segment)`, never `(:num)`: the code has letters, `-` and `_`.
+
+3. **In actions**, `{kp_id}` puts the code in the URL (`{id}` is still the real id). Outside the CRUD (an email, a view), `Crud::maskId($id, 'invoices')` gives the same code:
+
+   ```php
+   $crud->addAction('Public link', 'invoice/{kp_id}', ['target' => '_blank']);
+   ```
+
+### What changes and what does not
+
+| Item | With `maskIds()` |
+|---|---|
+| Edit, detail view, delete, restore and purge URLs | They carry the code: `edit/Xk3f9QaLm2PwE7` |
+| List checkboxes (bulk actions, export of the selection) and redirects after saving | They use the code |
+| A real id or a forged code in the URL | Treated as a record that does not exist ("Record not found.") |
+| Primary key column | Not shown by default in the list, the detail view or the export (it would appear next to the code). If you want it, add it to `columns()`, `showFields()` or `exportColumns()` |
+| Hooks, permissions, callbacks, bulk actions, `addAction()` closures and `{id}` | **Unchanged**: they receive the real id |
+| Filters in the URL (`admin/attendances?f[event_id]=5`) | **Unchanged**: they use the real values |
+| Routes | **Unchanged**: the same two from `Crud::routes()` |
+
+### Context and key
+
+- **Context**: by default, the table name, so the same id gives different codes in each table (an invoice's code does not open any client). Outside the CRUD you must use the same context. If you change it (`maskIds(context: 'invoice')`), the codes change.
+- **Key**: `Config\Kpcrudy::$maskKey` (at least 32 characters, e.g. `bin2hex(random_bytes(32))`; if it is shorter, an exception is thrown); if it is empty, CodeIgniter's encryption key (`php spark key:generate`); and if there is none, a random key created the first time in `writable/kpcrudy/mask.key`. It is the same key that signs [signed URLs](#signed-urls) (a different one is derived for each use).
+- **If the key changes, every code changes** and old links stop working, signed ones too. Use the same key on every server and do not delete `mask.key` when deploying.
+- If a CRUD uses its own configuration (`new Crud(new \Config\KpcrudyPublic())`), pass it to `Crud::maskId()` and `Crud::unmaskId()` too (`$config`), because it may have a different key or masker.
+
+### `maskIds(bool $enabled = true, ?string $context = null, IdMasker|string|null $masker = null): static`
+
+Masks the ids in every CRUD URL (see [What changes and what does not](#what-changes-and-what-does-not)). It works with the same two routes registered by [`Crud::routes()`](#crudroutesroutecollection-routes-string-path-string-handler-array-options---void-static).
+
+- `$context`: by default, the table name (see [Context and key](#context-and-key)).
+- `$masker`: an instance or the name of a class implementing [`IdMasker`](#interface-kpcrudyidmasker). By default, the one in `Config\Kpcrudy::$idMasker`.
+
+```php
+$crud->setTable('invoices')->maskIds();
+
+// With a custom context (e.g. two CRUDs that share codes)
+$crud->maskIds(context: 'invoice');
+
+// Disable it for one CRUD when it is enabled in the global configuration
+$crud->maskIds(false);
+```
+
+The default code ([`DefaultIdMasker`](../src/DefaultIdMasker.php)):
+
+- is **always the same** for the same id and context (URLs do not change and can be bookmarked);
+- is encrypted with AES-256-CTR using an HMAC of the id as the initialization vector, which is also the signature: it **cannot be forged or altered** without the key (it is treated as invalid);
+- is **short** (about 16 characters plus the length of the id) and only has URL-safe characters (`A-Z a-z 0-9 - _`);
+- needs PHP's `openssl` extension.
+
+### `encodeId(int|string $id): string` · `decodeId(string $value): ?string`
+
+The id as it appears in this CRUD's URLs, and the real id from what appears in the URL (`null` if the code is not valid). If `maskIds()` is not enabled, they return the value unchanged.
+
+```php
+$crud->callbackColumn('number', fn ($value, array $row) =>
+    '<a href="' . site_url('admin/invoices/show/' . $crud->encodeId($row['id'])) . '">' . esc($value) . '</a>');
+```
+
+### `Crud::maskId(int|string $id, string $context, ?KpcrudyConfig $config = null): string` (static)
+
+Masks an id outside a CRUD: a public page, an email, a custom route. The context must be the CRUD's (by default, the table name). Without `$config`, it uses the project configuration (the key and the masker).
+
+```php
+use Kpcrudy\Crud;
+
+$link = site_url('invoice/' . Crud::maskId($invoice['id'], 'invoices'));
+```
+
+### `Crud::unmaskId(string $code, string $context, ?KpcrudyConfig $config = null): ?string` (static)
+
+Real id of a code made by a CRUD or by `Crud::maskId()`, or `null` if it is not valid for this context (forged, altered, from another table or from an old key).
+
+```php
+// Routes.php: a different prefix from the CRUD's (admin/invoices)
+$routes->get('invoice/(:segment)', 'PublicInvoice::show/$1');
+
+// Controller
+public function show(string $code)
+{
+    $id = Crud::unmaskId($code, 'invoices') ?? throw \CodeIgniter\Exceptions\PageNotFoundException::forPageNotFound();
+    // ...
+}
+```
+
+### `Crud::idFromUrl(string $value, string $context, ?bool $masked = null, ?KpcrudyConfig $config = null): ?string` (static)
+
+Real id from the value that reaches one of your own routes (e.g. the `{kp_id}` of an action), **whether ids are masked or not**:
+
+- with masking, it decodes the code like `unmaskId()` (`null` if it is not valid);
+- without it, it returns the value as is (`null` if empty). It does not check that it is a number: the record query will do that.
+
+`$masked`: `null` (default) follows `Config\Kpcrudy::$maskIds`; pass `true` if the CRUD enables it only with `maskIds()` (or `false` if it disables it with `maskIds(false)`). `$config`: the CRUD's configuration, if it uses its own.
+
+```php
+// Clients CRUD controller
+$crud->addAction('Send reminder', 'clients/remind/{kp_id}', ['method' => 'post']);
+
+// Routes.php: (:segment), not (:num)
+$routes->post('clients/remind/(:segment)', 'Clients::remind/$1');
+
+// Target
+public function remind(string $code)
+{
+    $id = Crud::idFromUrl($code, 'clients') ?? throw \CodeIgniter\Exceptions\PageNotFoundException::forPageNotFound();
+    // If the CRUD enables it only with maskIds(): Crud::idFromUrl($code, 'clients', true)
+    // ...
+}
+```
+
+### `Crud::idForUrl(int|string $id, string $context, ?bool $masked = null, ?KpcrudyConfig $config = null): string` (static)
+
+The value that goes in the URL for a real id: the code (like `maskId()`) if ids are masked, and the id as is otherwise. It is the same value `{kp_id}` inserts in actions. `$masked` and `$config` work as in `idFromUrl()`.
+
+Use it to build links and redirects to a CRUD's pages from outside the CRUD without assuming the id appears as is in the URL. If you have the CRUD instance, `$crud->url('edit', $id)` or `$crud->encodeId($id)` already know whether masking is on.
+
+```php
+return redirect()->to(site_url('admin/clients/show/' . Crud::idForUrl($id, 'clients')));
+```
+
+In actions, `{kp_id}` inserts the id as it appears in the CRUD's URLs (the code, if masked). The target route must use `(:segment)` (not `(:num)`) and get the real id with `Crud::idFromUrl()` (or `Crud::unmaskId()` if ids are always masked, as in the demo). For example, the demo's *Duplicate* action ([Events::duplicate](../src/Demo/Controllers/Admin/Events.php)), adapted to work in both cases:
+
+```php
+// CRUD controller
+$crud->addAction('Duplicate', 'admin/events-duplicate/{kp_id}', ['method' => 'post']);
+
+// Routes.php
+$routes->post('admin/events-duplicate/(:segment)', 'Admin\Events::duplicate/$1');
+
+// Target
+public function duplicate(string $code)
+{
+    $id = Crud::idFromUrl($code, 'events') ?? throw \CodeIgniter\Exceptions\PageNotFoundException::forPageNotFound();
+    // ...
+    return redirect()->to(site_url('admin/events/edit/' . Crud::idForUrl($newId, 'events')));
+}
+```
+
+`{id}` is still the real id: that is what you need, for example, to open another CRUD filtered (`admin/attendances?f[event_id]={id}`), because filters use the real values.
+
+### Interface `Kpcrudy\IdMasker`
+
+To use a different code format, implement the interface and set the class in `Config\Kpcrudy::$idMasker` (for the whole project) or pass it to `maskIds(masker: ...)`. The constructor receives the configuration (`Kpcrudy\Config\Kpcrudy`).
+
+```php
+interface IdMasker
+{
+    public function encode(string $id, string $context): string;   // code for the URL
+    public function decode(string $code, string $context): ?string; // real id, or null if it is not valid
+}
+```
+
+For example, shorter codes with [Sqids](https://sqids.org/php) (`composer require sqids/sqids`). It is not encryption: it hides the order and the number of records, but anyone who knows the alphabet can decode it.
+
+```php
+// app/Libraries/SqidsMasker.php
+namespace App\Libraries;
+
+use Kpcrudy\IdMasker;
+use Sqids\Sqids;
+
+class SqidsMasker implements IdMasker
+{
+    public function encode(string $id, string $context): string
+    {
+        return $this->sqids($context)->encode([(int) $id]);
+    }
+
+    public function decode(string $code, string $context): ?string
+    {
+        $ids = $this->sqids($context)->decode($code);
+
+        // Only valid if it gives back the same code
+        return count($ids) === 1 && $this->encode((string) $ids[0], $context) === $code ? (string) $ids[0] : null;
+    }
+
+    protected function sqids(string $context): Sqids
+    {
+        // Custom alphabet, shuffled differently (but deterministically) for each context
+        $alphabet = str_split('k3G7QAe51FCsPW92uEOyq4Bg6Sp8YzVTmnU0liwDdHXLajZrfxNhobJIRcMvKt');
+        usort($alphabet, fn ($a, $b) => strcmp(md5($context . $a), md5($context . $b)));
+
+        return new Sqids(implode('', $alphabet), 8);
+    }
+}
+```
+
+```php
+// app/Config/Kpcrudy.php
+public bool $maskIds   = true;
+public string $idMasker = \App\Libraries\SqidsMasker::class;
+```
+
+### `Crud::checkRoutes(): void` (static)
+
+Checks that no route conflicts with those of the CRUDs registered with [`Crud::routes()`](#crudroutesroutecollection-routes-string-path-string-handler-array-options---void-static) and, if it finds one, throws a `RuntimeException` explaining the problem. `render()` calls it automatically when `ENVIRONMENT` is `development` (once per request), so the error shows up while you are coding and not in production. To disable it, set `public bool $checkRoutes = false;` in the [global configuration](#global-configuration) (only if you have a route that replaces a CRUD operation on purpose).
+
+There are four error cases:
+
+- a route with the same prefix defined **after** `Crud::routes()`: it is never reached, because `prefix/(:any)` captures it first;
+- a route defined **before** that captures a CRUD URL (`prefix/add`, `prefix/edit/1`, `prefix/trash`...): the CRUD stops working for that URL;
+- a route identical to `prefix/(:any)` defined before: CodeIgniter ignores the CRUD's one;
+- a CRUD whose prefix contains another one defined **after** it (`admin` and then `admin/users`): the second one never runs. Define the CRUD with the longer prefix first.
+
+More specific routes defined before that do not capture any CRUD URL (e.g. `admin/invoices/pdf/(:segment)`) are fine. With masked ids it is easy to fall into the first case (`admin/invoices/(:segment)` for the public page): use a different prefix (`invoice/(:segment)`).
+
+```php
+// Wrong: never runs, Crud::routes() already captures admin/invoices/...
+Crud::routes($routes, 'admin/invoices', 'Admin\Invoices::index');
+$routes->get('admin/invoices/(:segment)', 'PublicInvoice::show/$1');
+
+// Right
+$routes->get('invoice/(:segment)', 'PublicInvoice::show/$1');
+```
+
+### Troubleshooting masked ids
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| "Record not found." when opening `edit/5` or a hand-made link | With `maskIds()`, a real id in the URL is not valid | Build links with `{kp_id}`, `$crud->url('edit', $id)`, `encodeId()`, `Crud::idForUrl()` or `Crud::maskId()` |
+| Your own page returns a 404 with a good code (`Crud::unmaskId()` or `Crud::idFromUrl()` returns `null`) | A different context (the table or the one in `maskIds(context: ...)`) or a different configuration | The same context; pass `$config` if the CRUD uses its own |
+| Your own route that receives `{kp_id}` returns a 404 before reaching the controller | The route uses `(:num)` and the code has letters, `-` and `_` | `(:segment)` and `Crud::idFromUrl()` in the controller |
+| `Crud::idFromUrl()` returns the code without decoding it | Ids are masked only with `maskIds()` in the CRUD, not in the configuration | Pass `true` as `$masked` |
+| After a deploy, no old link works and the codes are different | The key changed: another `$maskKey`, a new `encryption.key`, or `writable/kpcrudy/mask.key` was deleted | Restore the old key; set `$maskKey` in every environment |
+| Your custom route is never reached (the CRUD or a 404 opens) | It has the same prefix as the CRUD and `prefix/(:any)` captures it | A different prefix (`invoice/...`); in development, [`checkRoutes()`](#crudcheckroutes-void-static) warns you |
+| Exception "... no s'executarà mai" (will never run) or "... captura ..." (captures) in development | `checkRoutes()` found a route conflict | Change your route's prefix, or define the CRUD with the longer prefix first |
+| The id column disappeared from the list | `maskIds()` hides the primary key by default | Add it to `columns()` (or `showFields()`, `exportColumns()`) |
+| A list filtered with `{kp_id}` finds nothing | Filters use the real values | `?f[event_id]={id}` |
+| Finding which record a code refers to | | `php spark kpcrudy:unmaskid <table> <code>` (see [the recipe](howto_EN.md#find-which-record-a-masked-code-refers-to)) |
+
+---
+
+## Signed URLs
+
+A signed URL carries a signature (`kp_sig`, 32 characters) and, if it expires, the expiry time (`kp_exp`, in Unix seconds): `shared/agenda?kp_exp=1767225600&kp_sig=Qm9...`. Whoever has the link can open the page **without logging in**; if they change anything that is signed, it stops working.
+
+**When to use it.** To share a read-only view with someone who has no account (an agenda, a price list, an order's details), to email a link that expires, or to protect a download or a custom page. It is not meant to give anonymous visitors permission to edit.
+
+**How it works:**
+
+1. In the CRUD being shared, [`requireSignature()`](#requiresignaturearraystring-operations---int-ttl--null-arraystring-signfrom---static) states which operations only open with a signed URL.
+2. Somewhere else (the admin area, an email, a command) the entry link is created with [`Crud::signUrl()`](#crudsignurlstring-url-int-ttl--3600-bool-lockquery--true-kpcrudyconfig-config--null-string-static) or [`signedUrl()`](#signedurlstring-operation--list-intstringnull-id--null-int-ttl--86400-array-query---string), with a lifetime.
+3. The visitor opens it: the CRUD checks the signature and, if it is not valid or has expired, answers with a 404.
+4. While browsing a signed list, the links the CRUD generates (pages, sorting, search, detail views, export) are signed automatically, with **the same expiry** as the entry link.
+5. When the entry link expires, the whole navigation expires: browsing never extends the validity.
+
+```text
+Admin area (logged in)                        Visitor (not logged in), CRUD with requireSignature()
+Crud::signUrl('shared/agenda', 7 days) ───►  shared/agenda?kp_exp=…&kp_sig=…           list
+                                               ├─ ?page=2 · ?sort=… · ?q=…              signed automatically, same expiry
+                                               ├─ show/Xk3f9QaLm2PwE7?kp_exp=…&kp_sig=…  detail view (no back button)
+                                               └─ export?kp_exp=…&kp_sig=…              CSV (unless removed)
+                                             shared/agenda/edit/Xk3f9…  (no signature)    ─► 404 "This link is not valid."
+                                             any link after kp_exp                       ─► 404 "This link has expired."
+```
+
+**What the signature covers** in CRUD pages: the path (the CRUD base, the operation and the masked id) and the expiry. It does **not** cover the query string (`?q=`, `?page=`, `?sort=`, `?f[...]=`), which the visitor can change to search, filter and paginate. Therefore, **what the visitor can see is limited by `where()`** (and by the path parameters, e.g. the `5` in `clients/5/notes`), never by a filter placed in the link.
+
+### `requireSignature(array|string $operations = '*', ?int $ttl = null, array|string $signFrom = []): static`
+
+The given operations only open with a valid signed URL. Without a signature, with a signature that does not match or with an expired one, the CRUD answers with a 404 and the message "This link is not valid." or "This link has expired." (language keys `linkInvalid` and `linkExpired`).
+
+- `$operations`: `'*'` (the default, and the safest): every operation. Or a list (`['list', 'show']`): the ones not in it stay **open to anyone** who reaches the route; protect them with an authentication filter or remove them with `unset*()`. A name that does not exist (`'lsit'`) throws an exception, because it would leave the operation open without warning. The operations are `list` and those in [`ID_OPERATIONS` and `OPERATIONS`](#crudid_operations--crudoperations).
+- `$signFrom`: operations that open **without** a signature and hand out signed links. E.g. `['list']` for an internal list, protected by login, that gives signed links to the detail views. An operation cannot be both in `$operations` and in `$signFrom`.
+- `$ttl`: lifetime, in seconds, of the links handed out by the `$signFrom` operations (`null` = they never expire). Links signed while browsing with a signed URL do not use it: they inherit the entry link's expiry.
+
+```php
+// The whole CRUD only with a signed link (the usual case)
+$crud->readOnly()->requireSignature();
+
+// Only the list and the detail views: the rest stays open and must be removed
+$crud->readOnly()->unsetExport()->unsetTrash()->unsetBulk()->requireSignature(['list', 'show']);
+
+// Internal list (logged in) that gives 7-day links to the detail views
+$crud->requireSignature(['show'], 7 * 86400, ['list']);
+```
+
+Which links the CRUD signs by itself:
+
+- Only when it was entered with a signed URL of a **list** (or of the trash), or through a `$signFrom` operation. A request without a valid signature never obtains signed links (otherwise anyone could get them).
+- On a **detail view** opened with a signed link (`show/X`), the CRUD signs no other link: a detail view's link does not give access to the list. There is no back-to-list button (from a signed list, the visitor goes back with the browser's button), and errors (e.g. a record that no longer exists) are shown as a 404 page with the message, instead of redirecting to a list the visitor could not open.
+- Exporting the trash needs a signature issued from the trash page.
+
+### `signedUrl(string $operation = 'list', int|string|null $id = null, ?int $ttl = 86400, array $query = []): string`
+
+Signed URL of an operation of this CRUD, to share it. The id is the real one (it is masked automatically if needed). `$ttl` in seconds (by default, 1 day; `null` = it never expires). `$query`: initial parameters (a search, an order); they are not signed, so the visitor can change them. Only the path is signed, like the links the CRUD makes while browsing.
+
+The link points to this CRUD's URL. If you create it from another controller (e.g. the admin area), build the public CRUD in one place and give it its base URL with [`setBaseUrl()`](#setbaseurlstring-url-static):
+
+```php
+class SharedEvents extends BaseController
+{
+    public static function crud(): Crud
+    {
+        return (new Crud())->setTable('events')
+            ->setBaseUrl(site_url('shared/events'))
+            ->maskIds()
+            ->readOnly()
+            ->requireSignature();
+    }
+
+    public function index()
+    {
+        return static::crud()->render();
+    }
+}
+
+// In the admin area
+$week  = SharedEvents::crud()->signedUrl('list', null, 7 * 86400, ['sort' => 'starts_at']);
+$event = SharedEvents::crud()->signedUrl('show', $row['id'], 3 * 86400);   // real id
+```
+
+### `Crud::signUrl(string $url, ?int $ttl = 3600, bool $lockQuery = true, ?KpcrudyConfig $config = null): string` (static)
+
+Signs any URL of the project, absolute (`site_url(...)`) or relative (`'shared/agenda'`, which goes through `site_url()`). `$ttl` in seconds (by default, 1 hour; `null` = it never expires). The path must be exactly the page's, with the masked id if the CRUD uses `maskIds()`.
+
+- `$lockQuery = true` (the default): the signature also covers every parameter; none can be changed, removed or added. For custom routes and downloads, which are checked with [`Crud::checkSignature()`](#crudchecksignatureincomingrequest-request--null-bool-allowfreequery--false-kpcrudyconfig-config--null-string-static).
+- `$lockQuery = false`: only the path. This is what you need to create, from somewhere else, the **entry link to a CRUD** with `requireSignature()`, so the visitor can search and change pages (as the [demo](../src/Demo/Controllers/Shared.php)'s `Shared::link()` does).
+- `$config`: the configuration the key comes from, if the CRUD uses its own.
+
+```php
+use Kpcrudy\Crud;
+
+// Entry to a signed CRUD (path only), 7 days
+$agenda = Crud::signUrl('shared/agenda', 7 * 86400, false);
+$event  = Crud::signUrl('shared/agenda/show/' . Crud::maskId($id, 'events'), 7 * 86400, false);
+
+// Custom route (path and parameters), 10 minutes
+$pdf = Crud::signUrl(site_url('reports/' . Crud::maskId($id, 'reports') . '/pdf') . '?copy=1', 600);
+```
+
+### `Crud::checkSignature(?IncomingRequest $request = null, bool $allowFreeQuery = false, ?KpcrudyConfig $config = null): string` (static)
+
+Signature status of the request (by default, the current one), for custom controllers: `'valid'`, `'missing'` (no `kp_sig`), `'invalid'` or `'expired'`, which are the constants `UrlSigner::VALID`, `MISSING`, `INVALID` and `EXPIRED`.
+
+- `$allowFreeQuery`: also accepts links made with `$lockQuery = false` or with `signedUrl()`, where the parameters can change. Not by default.
+- It only accepts links made with `Crud::signUrl()` or `signedUrl()` for this same path: the ones a CRUD signs while browsing are not valid for a custom page.
+- `'expired'` is only returned if the signature is correct, so you can say "ask for a new link" without giving hints to a forger.
+
+```php
+use CodeIgniter\Exceptions\PageNotFoundException;
+use Kpcrudy\Crud;
+use Kpcrudy\UrlSigner;
+
+$status = Crud::checkSignature();
+
+if ($status !== UrlSigner::VALID) {
+    throw PageNotFoundException::forPageNotFound(lang($status === UrlSigner::EXPIRED ? 'Kpcrudy.linkExpired' : 'Kpcrudy.linkInvalid'));
+}
+```
+
+### `Crud::hasValidSignature(?IncomingRequest $request = null, bool $allowFreeQuery = false, ?KpcrudyConfig $config = null): bool` (static)
+
+The same as `Crud::checkSignature() === UrlSigner::VALID`, when you do not need to know why the link is not good.
+
+```php
+if (! Crud::hasValidSignature()) {
+    throw \CodeIgniter\Exceptions\PageNotFoundException::forPageNotFound();
+}
+```
+
+### Security
+
+What it guarantees:
+
+- Nothing in the path can be changed, nor the expiry: not the operation (`show` → `edit`), the id, the CRUD base or `kp_exp`. Any change, including encoding tricks (`%2F`, `..`), gives "This link is not valid.".
+- Browsing does not extend the validity, and a detail view's link gives no access to the list or to any other record.
+- A request without a valid signature never obtains signed links (except in the `$signFrom` operations, which must be protected by login).
+- Links a CRUD signs while browsing are not valid for custom pages, and a masked code does not work as a signature or the other way round (each use has its own derived key).
+- The signature is an HMAC-SHA256 with a key derived from the [library key](#context-and-key), and it is compared in constant time. If the key changes, every link stops working.
+- The path is compared as CodeIgniter sees it, without the domain, the port, the base directory or `index.php`: a link is still valid if the domain or the port changes.
+- `Crud::routes()` routes are strict: after the base only `operation` or `operation/id` is accepted, and any extra segment is a 404.
+
+Limits:
+
+- Whoever has the link can enter until it expires: a single link cannot be revoked. If you need to withdraw access, limit the CRUD with a column (`where('shared', 1)`) and clear it; to revoke all of them, change the key (the masked codes change too).
+- In CRUD pages the query string is not signed: the visitor can search, filter and sort everything `where()` allows.
+- It is meant for read-only views: combine it with `readOnly()` and remove (`unset*()`) whatever the visitor should not do.
+- The link may end up in the browser history, in server logs or be forwarded: use HTTPS and short lifetimes for sensitive data. With `$ttl = null`, it never expires.
+
+### Troubleshooting signed URLs
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| "This link is not valid." with a link just created | The path is not the page's (the masked id is missing, another prefix) or it was signed with a different configuration (key) from the CRUD's | Create it with `signedUrl()` or `Crud::maskId()`, and pass `$config` if the CRUD has its own. Check it with `kpcrudy:checkurl` |
+| "This link is not valid." after editing it, or only from some email clients | It was modified or cut: the id, `kp_exp`, `kp_sig`, `&amp;` instead of `&` | Copy the whole link; it cannot be extended by hand, create a new one |
+| "This link has expired." | `kp_exp` is in the past (navigation inherits the entry link's expiry) | Create a new link, with a longer `$ttl` if needed |
+| No link works after a deploy, or they work on one server and not on another | The key is different (see [Context and key](#context-and-key)) | The same key in every environment (`$maskKey`) |
+| The signed list shows everything | `where()` is missing: a filter or a search in the link limits nothing | Limit what the visitor can see with `where()` |
+| The signed list shows nothing | `where()` is too strict (e.g. future dates) or the link carries a search (`?q=`) | Review the `where()`; create the link without parameters |
+| The detail view has no back button, or an error shows a 404 instead of going back to the list | Expected behaviour: a detail view's link gives no access to the list | If the visitor must see the list, share the list's link |
+| Other operations open without a signature | `requireSignature()` with a list: the rest stays open | `requireSignature()` without parameters, `unset*()` or an authentication filter |
+| Your custom page says `'invalid'` with a link made with `$lockQuery = false` | By default `checkSignature()` requires the parameters to be signed | `Crud::checkSignature(allowFreeQuery: true)` |
+| `kpcrudy:checkurl` says `signed by a CRUD while browsing` | The link was copied from a page of the signed list (page 2, a details page): it is correct, but only that CRUD accepts it | Normal; it expires together with the entry link |
+| Exception "l'operació '...' no existeix" (the operation does not exist) | A misspelt name in `requireSignature()` | Use the names in [`ID_OPERATIONS` and `OPERATIONS`](#crudid_operations--crudoperations), or `list` |
+
+See also the [Signed links](howto_EN.md#share-a-read-only-list-without-login) recipes and the `kpcrudy:signurl` and `kpcrudy:checkurl` commands in [commands_EN.md](commands_EN.md).
+
 ---
 
 ## Spark commands
@@ -1012,6 +1459,45 @@ See the recipe [Generate a table's CRUD with a command](howto_EN.md#generate-a-t
 ### `php spark kpcrudy:demo <install|status|reset|uninstall>`
 
 Installs and uninstalls the demo application. See [Install the demo in your project](../README_EN.md#installing-the-demo-in-your-project).
+
+### `php spark kpcrudy:maskid <context> <id> [<id>...] [--config Class]`
+
+Shows the [masked](#masked-ids) code of one or more ids, as it appears in the URLs of a CRUD with `maskIds()`. The context is the table name, or the value passed to `maskIds(context: ...)`.
+
+### `php spark kpcrudy:unmaskid <context> <code> [<code>...] [--config Class]`
+
+Shows the real id of one or more masked codes: use it to find which record a URL or a log line refers to. Codes that are not valid for this context are flagged in the table, and the command ends with exit code 1.
+
+| Option | Default | Description |
+|---|---|---|
+| `--config` | `app/Config/Kpcrudy.php` | Config class passed to the CRUD, if it is a different one (e.g. `"Kpcrudy\Demo\Config\CrudConfig"` for the demo, which has its own key) |
+
+```bash
+php spark kpcrudy:maskid invoices 5 6 7
+php spark kpcrudy:unmaskid invoices Xk3f9QaLm2PwE7
+
+# Demo
+php spark kpcrudy:unmaskid kpdemo_events <code> --config "Kpcrudy\Demo\Config\CrudConfig"
+```
+
+```text
+Context: invoices
++----------------+----+
+| Masked code    | Id |
++----------------+----+
+| Xk3f9QaLm2PwE7 | 5  |
++----------------+----+
+```
+
+See the recipe [Find which record a masked code refers to](howto_EN.md#find-which-record-a-masked-code-refers-to).
+
+### `php spark kpcrudy:signurl <url>` · `php spark kpcrudy:checkurl <url>`
+
+Create and check [signed URLs](#signed-urls) from the command line: to send a link by hand or to find out why a link does not work (valid, expired, modified, and when it expires). All the options are in [commands_EN.md](commands_EN.md).
+
+### `php spark kpcrudy:publish <config|theme|lang> [name]`
+
+Copies the configuration (`app/Config/Kpcrudy.php`, with every option), a theme (`theme w3css --as intranet`, optionally only some templates with `--only`) or the texts of a language (`lang ca`) into the project, to adapt them without touching the library. It overwrites nothing without `--force`, and with `--dry-run` it only shows what it would do. See [kpcrudy:publish](commands_EN.md#kpcrudypublish).
 
 ---
 
@@ -1045,6 +1531,8 @@ class Kpcrudy extends \Kpcrudy\Config\Kpcrudy
 }
 ```
 
+`php spark kpcrudy:publish config` creates it with every option, its default value and its comment, as a reference: change only what you need. The options that are not in it take the library's value (see [kpcrudy:publish](commands_EN.md#kpcrudypublish)).
+
 | Property | Default | Description |
 |---|---|---|
 | `string $theme` | `'bootstrap5'` | Default theme |
@@ -1059,7 +1547,11 @@ class Kpcrudy extends \Kpcrudy\Config\Kpcrudy
 | `string $csvDelimiter` | `';'` | CSV delimiter (`;` is read correctly by Excel in Catalan and Spanish) |
 | `bool $csvBom` | `true` | Add the UTF-8 BOM so that Excel detects accented characters |
 | `int $exportMaxRows` | `100000` | Maximum rows of a CSV export (`0` = no limit). If the filtered list has more, the user is asked to filter it |
+| `bool $checkRoutes` | `true` | In development, check that no project route conflicts with those of `Crud::routes()` (see [`Crud::checkRoutes()`](#crudcheckroutes-void-static)). Disable it only if you have a route that replaces a CRUD operation on purpose |
 | `bool $csrfProtection` | `true` | Verify the CSRF token of the CRUD's POST requests when CodeIgniter's `csrf` filter (or a subclass of `CodeIgniter\Filters\CSRF`) is not active for the request. Disable it only if the project protects requests in another way |
+| `bool $maskIds` | `false` | [Mask the ids](#masked-ids) in the URLs of every CRUD (`edit/Xk3f9...` instead of `edit/5`). Each CRUD can change it with `maskIds()` |
+| `string $maskKey` | `''` | The library key: it masks the ids and signs [signed URLs](#signed-urls). It must be at least 32 characters long (e.g. `bin2hex(random_bytes(32))`); if it is shorter, an exception is thrown. If empty, CodeIgniter's encryption key (`encryption.key`) and, if there is none, a random key stored in `writable/kpcrudy/mask.key`. If it changes, every code changes and old links stop working, signed ones too |
+| `string $idMasker` | `Kpcrudy\DefaultIdMasker` | Class that masks the ids; it must implement [`Kpcrudy\IdMasker`](#interface-kpcrudyidmasker) |
 | `array $sensitiveFields` | `password`, `passwd`, `pass`, `pwd`, `contrasenya`, `contrasena`, `secret`, `token`, `salt`, `hash`, `apikey`, `otp`, `totp`, `2fa` | Names of [sensitive fields](#columns-and-fields), which are hidden everywhere by default |
 | `int $importMaxRows` | `1000` | Maximum rows of an import file (can be changed per CRUD with `enableImport()`) |
 | `int $importMaxSize` | `2048` | Maximum size of an import file, in KB |

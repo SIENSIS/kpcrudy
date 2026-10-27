@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Kpcrudy\Demo\Config;
 
 use Kpcrudy\Config\Kpcrudy;
+use Kpcrudy\Demo\Demo;
+use RuntimeException;
 
 /**
  * kpcrudy settings for the demo CRUDs, independent of the host project's
@@ -28,4 +30,24 @@ class CrudConfig extends Kpcrudy
 
     public int $perPage          = 10;
     public array $perPageOptions = [5, 10, 25, 50];
+
+    /**
+     * Every demo URL uses masked ids (admin/events/edit/Xk3f9... instead of edit/5).
+     */
+    public bool $maskIds = true;
+
+    public function __construct()
+    {
+        parent::__construct();
+
+        // The demo has its own masking key, stored in the install marker, so that
+        // uninstalling it leaves no key behind in the host project
+        $this->maskKey = Demo::maskKey();
+
+        // Without the demo key, kpcrudy would fall back to the host project's key
+        // (or create writable/kpcrudy/mask.key), which uninstall could not remove
+        if ($this->maskKey === '') {
+            throw new RuntimeException('The kpcrudy demo is not installed (php spark kpcrudy:demo install).');
+        }
+    }
 }

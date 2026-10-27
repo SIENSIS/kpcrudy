@@ -6,7 +6,7 @@
  * @var string                     $title
  * @var list<array<string, mixed>> $items
  * @var list<array<string, mixed>> $actions
- * @var string                     $backUrl
+ * @var string                     $backUrl ('' si no s'ha de mostrar: fitxa compartida amb un enllaç signat)
  * @var array<string, string>|null $flash
  */
 ?>
@@ -16,7 +16,9 @@
     <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
         <h1 class="h3 mb-0"><?= esc($title) ?></h1>
         <div class="d-flex flex-wrap gap-2">
+            <?php if ($backUrl !== ''): ?>
             <a href="<?= esc($backUrl, 'attr') ?>" class="btn btn-outline-secondary"><i class="bi bi-arrow-left"></i> <?= esc(lang('Kpcrudy.backToList')) ?></a>
+            <?php endif ?>
             <?php foreach ($actions as $action): ?>
                 <?= $this->render('partials/button', ['action' => $action]) ?>
             <?php endforeach ?>

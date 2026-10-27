@@ -11,7 +11,9 @@
     <div class="w3-cell-row w3-margin-bottom">
         <h2 class="w3-cell w3-cell-middle" style="margin: 0"><?= esc($title) ?></h2>
         <div class="w3-cell w3-cell-middle w3-right-align">
+            <?php if ($backUrl !== ''): ?>
             <a href="<?= esc($backUrl, 'attr') ?>" class="w3-button w3-white w3-border w3-round"><i class="bi bi-arrow-left"></i> <?= esc(lang('Kpcrudy.backToList')) ?></a>
+            <?php endif ?>
             <?php foreach ($actions as $action): ?>
                 <?= $this->render('partials/button', ['action' => $action]) ?>
             <?php endforeach ?>

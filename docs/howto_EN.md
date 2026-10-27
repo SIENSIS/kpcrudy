@@ -25,10 +25,19 @@ In the examples, `$crud` is an instance of `Kpcrudy\Crud` inside a controller me
 - [Link to a project page with the id](#link-to-a-project-page-with-the-id)
 - [Link to an external page with the id](#link-to-an-external-page-with-the-id)
 - [Link with a masked id](#link-with-a-masked-id)
+- [Find which record a masked code refers to](#find-which-record-a-masked-code-refers-to)
 - [Actions that modify data](#actions-that-modify-data)
 - [Show an action only on some records](#show-an-action-only-on-some-records)
 - [Open the list already filtered or sorted](#open-the-list-already-filtered-or-sorted)
 - [Custom bulk actions](#custom-bulk-actions)
+
+**Signed links**
+- [Share a read-only list without login](#share-a-read-only-list-without-login)
+- [Share a single record for a few days](#share-a-single-record-for-a-few-days)
+- [Internal list that hands out signed links](#internal-list-that-hands-out-signed-links)
+- [Signed download or custom page](#signed-download-or-custom-page)
+- [Signed links with masked ids](#signed-links-with-masked-ids)
+- [Find out why a signed link does not work](#find-out-why-a-signed-link-does-not-work)
 
 **CSV import**
 - [Import data from a CSV](#import-data-from-a-csv)
@@ -153,7 +162,7 @@ $crud->setModel(\App\Models\ClientModel::class)
      ->setSubject('client', 'Clients');
 ```
 
-If the model's rules use `{id}`, the primary key must have its own rule (CodeIgniter 4.5+):
+If the model's rules use `{id}`, the primary key must have its own rule (CodeIgniter 4.5+). The CRUD always puts the real id there, even if the URL carries a [masked code](#link-with-a-masked-id):
 
 ```php
 protected $validationRules = [
@@ -260,7 +269,7 @@ The administrator should neither see nor type passwords: a button generates a te
 
 ```php
 // CRUD controller
-$crud->addAction('Reset password', 'admin/users-reset-password/{id}', [
+$crud->addAction('Reset password', 'admin/users-reset-password/{kp_id}', [
     'icon'    => 'bi bi-key',
     'method'  => 'post',
     'confirm' => 'A new password will be generated and sent by email. Continue?',
@@ -268,13 +277,15 @@ $crud->addAction('Reset password', 'admin/users-reset-password/{id}', [
 ```
 
 ```php
-// Routes.php
-$routes->post('admin/users-reset-password/(:num)', 'Admin\Users::resetPassword/$1');
+// Routes.php: (:segment), because with masked ids the id is a code
+$routes->post('admin/users-reset-password/(:segment)', 'Admin\Users::resetPassword/$1');
 
 // Controller
-public function resetPassword(int $id)
+public function resetPassword(string $code)
 {
-    $user     = db_connect()->table('users')->where('id', $id)->get()->getRowArray();
+    // The real id, whether ids are masked or not
+    $id       = \Kpcrudy\Crud::idFromUrl($code, 'users') ?? throw \CodeIgniter\Exceptions\PageNotFoundException::forPageNotFound();
+    $user     = db_connect()->table('users')->where('id', $id)->get()->getRowArray() ?? throw \CodeIgniter\Exceptions\PageNotFoundException::forPageNotFound();
     $password = bin2hex(random_bytes(6));
 
     db_connect()->table('users')->where('id', $id)->update(['password' => password_hash($password, PASSWORD_DEFAULT)]);
@@ -296,12 +307,16 @@ Actions with `'method' => 'post'` send the CSRF token; the route must be `post`.
 
 ### Link to a project page with the id
 
-`{id}` is the primary key, and `{field}` any field of the record. Relative URLs go through `site_url()`:
+`{kp_id}` is the id as it appears in the CRUD's URLs (a code if ids are [masked](#link-with-a-masked-id), otherwise the real id), `{id}` is always the real primary key, and `{field}` any field of the record. Relative URLs go through `site_url()`:
 
 ```php
-$crud->addAction('Invoices', 'invoices/client/{id}', ['icon' => 'bi bi-receipt']);
-$crud->addAction('Orders', 'orders?client={id}&year={year}', ['icon' => 'bi bi-cart']);
+$crud->addAction('Invoices', 'invoices/client/{kp_id}', ['icon' => 'bi bi-receipt']);
+$crud->addAction('Orders', 'orders?client={kp_id}&year={year}', ['icon' => 'bi bi-cart']);
 ```
+
+For your own pages, use `{kp_id}`: the route, with `(:segment)` (not `(:num)`), gets the real id with [`Crud::idFromUrl()`](functions_EN.md#crudidfromurlstring-value-string-context-bool-masked--null-kpcrudyconfig-config--null-string-static), and works whether ids are masked or not (see [Actions that modify data](#actions-that-modify-data)). To open another CRUD filtered, on the other hand, you need `{id}`, because filters use the real values (see [Open the list already filtered or sorted](#open-the-list-already-filtered-or-sorted)).
+
+> `{id}` and `{kp_id}` always point to the table's **primary key**, even if the field is not called `id`. If the key is `code`, `{id}` gives the value of `code` and `{kp_id}` gives that value as it appears in the CRUD's URLs. `{kp_code}` does not exist: the `kp_` prefix is only for the key (see [`addAction()`](functions_EN.md#addactionstring-label-closurestring-url-array-options---static)).
 
 If the URL has to be built with some logic, use a closure:
 
@@ -338,129 +353,102 @@ $crud->addAction('Map', fn (array $row) =>
 
 ### Link with a masked id
 
-When the link leaves the CRUD (a public page, an email, an external system) you may not want the id to be visible or guessable. The URL is built with a closure, and the target page reverses the transformation. There are three options:
+You may not want the id to be visible or guessable: neither in the CRUD's URLs (`edit/5`) nor in the links that leave it (a public page, an email, an external system). There are three options, and C is combined with A:
 
 | Option | URL | Purpose |
 |---|---|---|
-| A. Encrypted | long, changes every time | The id cannot be known in any way |
-| B. Obfuscated (Sqids) | short and fixed: `/invoice/Uk9pQ2` | No sequential number is visible |
-| C. Signed | visible id + signature: `/invoice/123/9f2c...` | The id cannot be changed, and the link expires |
+| A. `maskIds()` (recommended) | short and fixed: `/invoice/Xk3f9QaLm2PwE7` | The id can be neither seen nor changed, inside the CRUD and outside |
+| B. Custom masker (Sqids) | shorter: `/invoice/Uk9pQ2xa` | No sequential number is visible |
+| C. A + signature (`Crud::signUrl()`) | `/invoice/Xk3f9QaLm2PwE7?kp_exp=…&kp_sig=…` | Also, the link expires and only opens for whoever received it |
 
 None of the three replaces the permission check on the target page.
 
-**A. Encrypted with CodeIgniter's Encrypter.** A key is required: `php spark key:generate`.
-
-```php
-// app/Helpers/mask_helper.php
-function mask_id(int|string $id): string
-{
-    $cipher = service('encrypter')->encrypt((string) $id);
-
-    return rtrim(strtr(base64_encode($cipher), '+/', '-_'), '=');
-}
-
-function unmask_id(string $token): ?string
-{
-    try {
-        $cipher = base64_decode(strtr($token, '-_', '+/'), true);
-
-        return $cipher === false ? null : service('encrypter')->decrypt($cipher);
-    } catch (\CodeIgniter\Encryption\Exceptions\EncryptionException) {
-        return null;
-    }
-}
-```
+**A. The CRUD's masked ids.** With [`maskIds()`](functions_EN.md#masked-ids), every CRUD URL carries a code instead of the id (`admin/invoices/edit/Xk3f9QaLm2PwE7`), and the links that leave it use the same code. No extra route is needed: the CRUD uses the ones from `Crud::routes()`. Hooks, permissions and callbacks still receive the real id.
 
 ```php
 // CRUD controller
-helper('mask');
-
-$crud->addAction('Link for the client', fn (array $row) => site_url('invoice/' . mask_id($row['id'])), [
-    'icon'   => 'bi bi-link-45deg',
-    'target' => '_blank',
-]);
+$crud->setTable('invoices')
+     ->maskIds()
+     ->addAction('Link for the client', 'invoice/{kp_id}', [   // {kp_id}: the masked id; {id}: the real one
+         'icon'   => 'bi bi-link-45deg',
+         'target' => '_blank',
+     ]);
 ```
+
+The public page decodes the code with `Crud::unmaskId()`, with the same context as the CRUD (by default, the table name). A forged or altered code returns `null`:
 
 ```php
 // Routes.php
-$routes->get('invoice/(:segment)', 'PublicInvoice::show/$1');
+Crud::routes($routes, 'admin/invoices', 'Admin\Invoices::index', ['filter' => 'auth:admin']);
+$routes->get('invoice/(:segment)', 'PublicInvoice::show/$1');   // a different prefix!
 
 // Target controller
-public function show(string $token)
+use Kpcrudy\Crud;
+
+public function show(string $code)
 {
-    helper('mask');
-    $id = unmask_id($token) ?? throw \CodeIgniter\Exceptions\PageNotFoundException::forPageNotFound();
+    $id = Crud::unmaskId($code, 'invoices') ?? throw \CodeIgniter\Exceptions\PageNotFoundException::forPageNotFound();
 
     $invoice = model('InvoiceModel')->find($id);
     // ...
 }
 ```
 
-**B. Obfuscated with Sqids.** It produces short URLs that are always the same for the same id. It is not encryption: with the alphabet it can be reversed, but neither the order nor the number of records is revealed.
+To build the link outside the CRUD (e.g. in an email), `Crud::maskId()` gives the same code:
+
+```php
+$link = site_url('invoice/' . Crud::maskId($invoice['id'], 'invoices'));
+```
+
+**If your own route must work with masked ids or without them** (e.g. it receives the `{kp_id}` of an action and masking can be turned on or off in the configuration), use [`Crud::idFromUrl()`](functions_EN.md#crudidfromurlstring-value-string-context-bool-masked--null-kpcrudyconfig-config--null-string-static) instead of `unmaskId()`, and `Crud::idForUrl()` instead of `maskId()`: they decode and encode the code only if ids are masked. If the CRUD enables it only with `maskIds()` (not in the configuration), pass `true` as the third parameter:
+
+```php
+$id   = Crud::idFromUrl($code, 'invoices', true) ?? throw \CodeIgniter\Exceptions\PageNotFoundException::forPageNotFound();
+$link = site_url('invoice/' . Crud::idForUrl($invoice['id'], 'invoices', true));
+```
+
+**The public route must use a different prefix** (`invoice/...`, not `admin/invoices/...`). `Crud::routes()` registers `admin/invoices/(:any)`, which captures everything starting with `admin/invoices/`: an `admin/invoices/(:segment)` route defined after it would never run, and defined before it would take over `admin/invoices/add`, `admin/invoices/trash`... In development, the CRUD detects this and throws an exception explaining the problem (see [`Crud::checkRoutes()`](functions_EN.md#crudcheckroutes-void-static)). More specific routes that do not capture any CRUD URL (e.g. `admin/invoices/pdf/(:segment)` defined before `Crud::routes()`) are fine.
+
+To enable it for every CRUD, set `public bool $maskIds = true;` in `app/Config/Kpcrudy.php`. The key is `$maskKey` (at least 32 characters) or the project's encryption key (`php spark key:generate`); if it changes, old links stop working (see [Context and key](functions_EN.md#context-and-key)).
+
+**B. Shorter codes with Sqids.** If you prefer a different code format, implement `Kpcrudy\IdMasker` and set it in `Config\Kpcrudy::$idMasker`: everything else (routes, `{kp_id}`, `Crud::maskId()`...) works the same. [Interface `Kpcrudy\IdMasker`](functions_EN.md#interface-kpcrudyidmasker) has a complete example with [Sqids](https://sqids.org/php). It is not encryption: with the alphabet it can be reversed, but neither the order nor the number of records is revealed.
+
+**C. Signed link with expiry.** If the link must also expire, and the page must not open just by knowing the code, sign it with `Crud::signUrl()` and check it on the public page with `Crud::hasValidSignature()` (or `Crud::checkSignature()`, to tell an expired link from a forged one). If someone changes the code or the expiry, the signature is no longer valid:
+
+```php
+// CRUD controller: 24 h link with the masked id
+$crud->addAction('24 h link', fn (array $row) => Crud::signUrl('invoice/' . Crud::maskId($row['id'], 'invoices'), 86400));
+
+// PublicInvoice::show(string $code), before decoding the code
+if (! Crud::hasValidSignature()) {
+    throw \CodeIgniter\Exceptions\PageNotFoundException::forPageNotFound(lang('Kpcrudy.linkInvalid'));
+}
+```
+
+To share a whole CRUD (a list or a detail view) instead of a custom page, see the [Signed links](#share-a-read-only-list-without-login) group.
+
+### Find which record a masked code refers to
+
+With masked ids, a URL from an error report or a complaint (`admin/invoices/edit/Xk3f9QaLm2PwE7`) does not tell you which record it is. The `kpcrudy:unmaskid` command decodes it; the first parameter is the context (the table name, or the value passed to `maskIds(context: ...)`):
 
 ```bash
-composer require sqids/sqids
+php spark kpcrudy:unmaskid invoices Xk3f9QaLm2PwE7 Pq81LmZt0aXcW9
 ```
 
-```php
-$sqids = new \Sqids\Sqids(alphabet: 'k3G7QAe51FCsPW92uEOyq4Bg6Sp8YzVTmnU0liwDdHXLajZrfxNhobJIRcMvKt', minLength: 6);
+And the other way round, to find a record's URL:
 
-$crud->addAction('Short link', fn (array $row) => site_url('i/' . $sqids->encode([(int) $row['id']])));
-
-// Target
-$id = $sqids->decode($code)[0] ?? null;
+```bash
+php spark kpcrudy:maskid invoices 5 6 7
 ```
 
-Store the alphabet in a shared place (a config) and shuffle it into your own order so the codes do not match those of other projects.
-
-**C. Signed link with expiry.** The id is visible, but if someone changes it, the signature is no longer valid. It is useful for sending links by email or to an external system that shares the secret.
-
-```php
-// app/Helpers/signed_helper.php
-function signed_url(string $path, int|string $id, int $ttl = 86400): string
-{
-    $expires = time() + $ttl;
-    $sign    = hash_hmac('sha256', "{$path}|{$id}|{$expires}", config('Encryption')->key);
-
-    return site_url("{$path}/{$id}/{$expires}/{$sign}");
-}
-
-function signed_ok(string $path, string $id, string $expires, string $sign): bool
-{
-    $expected = hash_hmac('sha256', "{$path}|{$id}|{$expires}", config('Encryption')->key);
-
-    return (int) $expires >= time() && hash_equals($expected, $sign);
-}
-```
-
-```php
-// CRUD controller
-helper('signed');
-$crud->addAction('24 h link', fn (array $row) => signed_url('download', $row['id']));
-
-// Routes.php
-$routes->get('download/(:num)/(:num)/(:alphanum)', 'Downloads::get/$1/$2/$3');
-
-// Target
-public function get(string $id, string $expires, string $sign)
-{
-    helper('signed');
-
-    if (! signed_ok('download', $id, $expires, $sign)) {
-        throw \CodeIgniter\Exceptions\PageNotFoundException::forPageNotFound();
-    }
-    // ...
-}
-```
-
-> These techniques are for links that **leave** the CRUD. The CRUD's internal URLs (`edit/5`, `show/5`) use the real id; those URLs are protected by permissions and `where()`.
+Codes that are not valid for this context are flagged (they may belong to another table or to an old key). If the CRUDs use their own configuration (`new Crud(new \Config\KpcrudyPublic())`), pass it with `--config "Config\KpcrudyPublic"`, because it may have a different key. See [the commands](functions_EN.md#spark-commands). If the code comes from a signed link that does not work, see [Find out why a signed link does not work](#find-out-why-a-signed-link-does-not-work).
 
 ### Actions that modify data
 
 An action that changes data must not be a GET link: a search engine or a link preview could execute it. With `'method' => 'post'` the button submits a form with the CSRF token:
 
 ```php
-$crud->addAction('Duplicate', 'admin/events-duplicate/{id}', [
+$crud->addAction('Duplicate', 'admin/events-duplicate/{kp_id}', [   // {kp_id}: the id as in the CRUD's URLs
     'icon'    => 'bi bi-copy',
     'method'  => 'post',
     'confirm' => 'Do you want to create a copy of this event?',
@@ -469,22 +457,28 @@ $crud->addAction('Duplicate', 'admin/events-duplicate/{id}', [
 
 ```php
 // Routes.php: a POST route that does not start like the CRUD ones
-$routes->post('admin/events-duplicate/(:num)', 'Admin\Events::duplicate/$1');
+// (:segment), not (:num): with masked ids a code arrives (DxbBosxVUi2fWpPq3w)
+$routes->post('admin/events-duplicate/(:segment)', 'Admin\Events::duplicate/$1');
 
 // Controller
-public function duplicate(int $id)
+use Kpcrudy\Crud;
+
+public function duplicate(string $code)
 {
+    $id = Crud::idFromUrl($code, 'events') ?? throw \CodeIgniter\Exceptions\PageNotFoundException::forPageNotFound();
     // ... create the copy ...
-    return redirect()->to(site_url('admin/events/edit/' . $newId))->with('message', 'Copy created.');
+    return redirect()->to(site_url('admin/events/edit/' . Crud::idForUrl($newId, 'events')))->with('message', 'Copy created.');
 }
 ```
 
-The route cannot be `admin/events/duplicate/5`, because `admin/events/(:any)` already belongs to the CRUD. Use another prefix, such as `admin/events-duplicate/5`.
+`Crud::idFromUrl()` and `Crud::idForUrl()` decode and encode the code only if ids are masked, so the example works in both cases (if the CRUD enables it only with `maskIds()`, pass them `true` as the third parameter).
+
+The route cannot be `admin/events/duplicate/<id>`, because `admin/events/(:any)` already belongs to the CRUD. Use another prefix, such as `admin/events-duplicate/<id>`.
 
 ### Show an action only on some records
 
 ```php
-$crud->addAction('Pay', 'invoices/pay/{id}', [
+$crud->addAction('Pay', 'invoices/pay/{kp_id}', [
     'icon'    => 'bi bi-credit-card',
     'class'   => 'btn-success',
     'method'  => 'post',
@@ -497,13 +491,13 @@ If the condition depends on other tables, compute it before the CRUD (see [Compu
 ```php
 $registered = array_column(db_connect()->table('attendances')->select('event_id')->where('user_id', $userId)->get()->getResultArray(), 'event_id');
 
-$crud->addAction('Sign me up', 'events-join/{id}', [
+$crud->addAction('Sign me up', 'events-join/{kp_id}', [
     'method'  => 'post',
     'visible' => fn (array $row) => ! in_array($row['id'], $registered),
 ]);
 ```
 
-`visible` only hides the button. The target route must check again that the action is allowed.
+`visible` only hides the button. The target route (with `(:segment)` and `Crud::idFromUrl()`, as in [Actions that modify data](#actions-that-modify-data)) must check again that the action is allowed.
 
 ### Open the list already filtered or sorted
 
@@ -520,7 +514,8 @@ The list state is in the URL, so you can link to it directly:
 The field must be in `filters()` (or in the default filters) and among the sortable columns.
 
 ```php
-// In the clients CRUD, a button to see their orders already filtered
+// In the clients CRUD, a button to see their orders already filtered.
+// {id}, not {kp_id}: filters use the real id, even with masked ids
 $crud->addAction('Orders', 'admin/orders?f[client_id]={id}&sort=date&dir=desc', ['icon' => 'bi bi-cart']);
 ```
 
@@ -547,6 +542,262 @@ $crud->addBulkAction('anonymize', 'Anonymize', function (array $ids) {
 ```
 
 `$ids` is already filtered by the CRUD's scope (`where()`): there is no need to check that the records are "yours".
+
+---
+
+## Signed links
+
+A signed link opens a page without logging in, only for whoever received it and until it expires. How it works, what the signature covers and every option: [Signed URLs](functions_EN.md#signed-urls).
+
+### Share a read-only list without login
+
+An events agenda that anyone with the link can browse for 7 days, without an account. This is what the demo's [Shared](../src/Demo/Controllers/Shared.php) controller does.
+
+```php
+// app/Config/Routes.php
+use Kpcrudy\Crud;
+
+Crud::routes($routes, 'admin/events', 'Admin\Events::index', ['filter' => 'auth:admin']);
+// No login filter (the signature is the permission) and a different prefix from the admin area
+Crud::routes($routes, 'shared/agenda', 'Shared::agenda');
+```
+
+```php
+// app/Controllers/Shared.php
+namespace App\Controllers;
+
+use Kpcrudy\Crud;
+
+class Shared extends BaseController
+{
+    public const TTL = 7 * 86400;   // 7 days
+
+    public function agenda()
+    {
+        $crud = new Crud();
+        $crud->setTable('events')
+             ->setSubject('event', 'Agenda')
+             // What the visitor can see: the signature does not cover ?q=, ?page=, ?f[...]=...
+             ->where('status', 'published')
+             ->where('starts_at >=', date('Y-m-d H:i:s'))
+             ->readOnly()
+             ->unsetTrash()
+             ->unsetBulk()
+             ->unsetExport()
+             ->maskIds()                 // recommended for shared links
+             ->requireSignature()        // '*': every page needs a signature
+             ->setLayout('default')      // no application menu: the visitor is not logged in
+             ->columns(['title', 'starts_at', 'location']);
+
+        return $crud->render();
+    }
+
+    /**
+     * Entry link to the agenda. Only the path is signed ($lockQuery = false):
+     * the visitor can search and change pages, but cannot extend the link.
+     */
+    public static function link(): string
+    {
+        return Crud::signUrl('shared/agenda', self::TTL, false);
+    }
+}
+```
+
+```php
+// app/Controllers/Admin/Events.php: where the link is created (a button in the admin area)
+$crud->addHeaderAction('Share agenda', \App\Controllers\Shared::link(), [
+    'icon'   => 'bi bi-share',
+    'target' => '_blank',
+]);
+```
+
+Every time the admin page is shown a new link is created, valid for 7 days from that moment. While the visitor browses (pages, sorting, search, detail views), the CRUD signs the links by itself, with the same expiry.
+
+**The visitor can** view, search, sort and open the detail view of published upcoming events for 7 days; **they cannot** edit anything, see other events (not even by changing the search in the URL), extend the link or open any other page of the application.
+
+### Share a single record for a few days
+
+A link to an invoice's detail view, valid for 3 days, to send to the client. Whoever receives it sees that invoice and nothing else.
+
+```php
+// app/Config/Routes.php
+Crud::routes($routes, 'admin/invoices', 'Admin\Invoices::index', ['filter' => 'auth:admin']);
+Crud::routes($routes, 'shared/invoices', 'SharedInvoices::index');   // no login
+```
+
+```php
+// app/Controllers/SharedInvoices.php
+public function index()
+{
+    $crud = new Crud();
+    $crud->setTable('invoices')
+         ->where('status', 'sent')        // only sent invoices can be shared
+         ->maskIds()
+         ->readOnly()
+         ->unsetExport()
+         ->requireSignature()             // the list too: only a signed list link would open it
+         ->setLayout('default')
+         ->showFields(['number', 'date', 'client_id', 'total']);
+
+    return $crud->render();
+}
+```
+
+```php
+// app/Controllers/Admin/Invoices.php: an action on each row of the admin area
+$crud->addAction('Link for the client (3 days)', fn (array $row) =>
+    Crud::signUrl('shared/invoices/show/' . Crud::maskId($row['id'], 'invoices'), 3 * 86400, false),
+    ['icon' => 'bi bi-share', 'target' => '_blank']
+);
+```
+
+The link must carry the masked code with the same context as the public CRUD (the table name). Do not use the admin CRUD's `$crud->signedUrl()`: it would sign an admin URL. Since the link is a detail view's, the CRUD signs no other link: there is no back-to-list button, and if the invoice is deleted or no longer matches the `where()`, the visitor sees a 404 with "Record not found.".
+
+**The visitor can** view that invoice for 3 days; **they cannot** reach the list (`shared/invoices` without a signature is a 404), open any other invoice or extend the link.
+
+### Internal list that hands out signed links
+
+Staff see the orders list with login, and each detail view in the list has a 7-day signed link they can copy and send to someone without an account.
+
+```php
+// app/Config/Routes.php: no filter on the route. A login filter would also block
+// the shared detail views, because they have the same prefix: the controller decides.
+Crud::routes($routes, 'orders', 'Orders::index');
+```
+
+```php
+// app/Controllers/Orders.php
+public function index()
+{
+    $loggedIn = session('user_id') !== null;
+
+    // No login and no signature: go and log in
+    if (! $loggedIn && $this->request->getGet('kp_sig') === null) {
+        return redirect()->to('login');
+    }
+
+    $crud = new Crud();
+    $crud->setTable('orders')
+         ->maskIds()
+         ->readOnly();
+
+    if ($loggedIn) {
+        // The list opens without a signature and gives 7-day links to the detail views
+        $crud->requireSignature(['show'], 7 * 86400, ['list']);
+    } else {
+        // Without login, everything needs a signature: only the detail views handed out by the list open
+        $crud->requireSignature();
+    }
+
+    return $crud->render();
+}
+```
+
+**Why the rest must be protected.** With `requireSignature(['show'], ...)`, only the detail view needs a signature: the list and any other operation you have not removed would be open to everyone who reaches the route. That is why, without login, the controller redirects to the login page or requires a signature for everything (`requireSignature()`). If the recipients also have accounts, a login filter on the route and `requireSignature(['show'], 7 * 86400, ['list'])` are enough.
+
+**Whoever receives the link can** view that order for 7 days without login; **they cannot** see the list (it takes them to the login page), any other order, or extend the link.
+
+### Signed download or custom page
+
+A download link for a report, valid for 1 hour, to a custom route (not a CRUD). Here the signature covers the path **and** the parameters (`$lockQuery = true`, the default).
+
+```php
+// app/Config/Routes.php: no login, and a prefix different from any CRUD
+$routes->get('reports/(:segment)/pdf', 'Reports::pdf/$1');
+```
+
+```php
+// app/Controllers/Admin/Reports.php: where the link is created (an action of the admin CRUD)
+$crud->maskIds()
+     ->addAction('Download link (1 h)', fn (array $row) =>
+         Crud::signUrl('reports/' . Crud::maskId($row['id'], 'reports') . '/pdf'),   // 3600 s by default
+         ['icon' => 'bi bi-file-earmark-pdf']
+     );
+```
+
+```php
+// app/Controllers/Reports.php
+use CodeIgniter\Exceptions\PageNotFoundException;
+use Kpcrudy\Crud;
+use Kpcrudy\UrlSigner;
+
+public function pdf(string $code)
+{
+    $status = Crud::checkSignature();
+
+    if ($status === UrlSigner::EXPIRED) {
+        // The signature is good but the hour has passed: you can say so clearly
+        return $this->response->setStatusCode(410)->setBody(lang('Kpcrudy.linkExpired') . ' Ask for a new link.');
+    }
+
+    if ($status !== UrlSigner::VALID) {   // 'missing' or 'invalid': give no hints
+        throw PageNotFoundException::forPageNotFound(lang('Kpcrudy.linkInvalid'));
+    }
+
+    $id     = Crud::unmaskId($code, 'reports') ?? throw PageNotFoundException::forPageNotFound();
+    $report = model('ReportModel')->find($id) ?? throw PageNotFoundException::forPageNotFound();
+
+    return $this->response->download(WRITEPATH . 'reports/' . $report['file'], null);
+}
+```
+
+If the link was made with `$lockQuery = false`, check it with `Crud::checkSignature(allowFreeQuery: true)`. `checkSignature()` only accepts links made with `Crud::signUrl()` or `signedUrl()`: the ones a CRUD signs while browsing do not open custom pages.
+
+**Whoever receives the link can** download that report for 1 hour; **they cannot** change the code, add or remove parameters, or use it for another report.
+
+### Signed links with masked ids
+
+They can be used separately, but for shared links combining them is recommended:
+
+| | Signature only | Signature + `maskIds()` |
+|---|---|---|
+| URL | `shared/invoices/show/123?kp_exp=…&kp_sig=…` | `shared/invoices/show/Xk3f9QaLm2PwE7?kp_exp=…&kp_sig=…` |
+| Can another record be opened by changing the URL? | No | No |
+| Is the real id visible (how many invoices there are, the order)? | Yes | No |
+
+```php
+// Public CRUD
+$crud->setTable('invoices')->maskIds()->readOnly()->requireSignature();
+
+// With signedUrl(), the real id is masked automatically
+$link = $crud->signedUrl('show', 123, 3 * 86400);
+
+// With Crud::signUrl(), mask it yourself, with the same context as the CRUD (the table name)
+$link = Crud::signUrl('shared/invoices/show/' . Crud::maskId(123, 'invoices'), 3 * 86400, false);
+```
+
+Both use the same [key](functions_EN.md#context-and-key): if it changes, the codes and the signatures stop working at the same time.
+
+### Find out why a signed link does not work
+
+When someone says "the link does not work", ask them for the whole link and check it with `kpcrudy:checkurl` (in quotes, because it contains `&`):
+
+```bash
+php spark kpcrudy:checkurl "https://example.com/shared/invoices/show/Xk3f9QaLm2PwE7?kp_exp=1767225600&kp_sig=Qm9..."
+```
+
+```text
+Valid signature (path only: the parameters can change)
+Expires: 2026-01-01 00:00:00
+```
+
+| Result | What it means | What to do |
+|---|---|---|
+| `Valid signature` | The link is fine | The problem is in the data: the record was deleted or no longer matches the `where()`, or the operation was removed |
+| `Expired` | The signature is good, but `kp_exp` has passed | Create a new one |
+| `Invalid signature` | It was modified or cut, or signed with another key (another environment or another configuration) | Copy it again in full; pass `--config` if the CRUD uses its own configuration |
+| `Not signed` | It has no `kp_sig` (the link was cut) | Copy it again in full |
+
+The command also says who signed the link: `signed with signUrl() or signedUrl()` (an entry link) or `signed by a CRUD while browsing` (copied from a page of the signed list, such as page 2 or a detail view). The latter are only accepted by that CRUD and expire together with the entry link.
+
+To find out which record it is, decode the code in the URL; and to send a new link without going through the application, create it with `kpcrudy:signurl` (`--ttl` in seconds; `--free-query` for CRUD pages):
+
+```bash
+php spark kpcrudy:unmaskid invoices Xk3f9QaLm2PwE7
+php spark kpcrudy:signurl "shared/invoices/show/Xk3f9QaLm2PwE7" --ttl 259200 --free-query
+```
+
+All the command options are in [commands_EN.md](commands_EN.md).
 
 ---
 
@@ -831,16 +1082,19 @@ public function profile()
 {
     $userId = session('user_id');
 
+    // The profile detail view: profile/show/<id>, or the code if ids are masked
+    $showUrl = site_url('profile/show/' . Crud::idForUrl($userId, 'users'));
+
     // There is no list: the page is the detail view
     if (uri_string() === 'profile') {
-        return redirect()->to(site_url('profile/show/' . $userId));
+        return redirect()->to($showUrl);
     }
 
     $crud = new Crud();
     $crud->setTable('users')
          ->setSubject('profile', 'My profile')
          ->where('id', $userId)
-         ->setBackUrl(site_url('profile/show/' . $userId))
+         ->setBackUrl($showUrl)
          ->unsetAdd()->unsetDelete()->unsetTrash()->unsetExport()->unsetBulk()
          ->editFields(['first_name', 'last_name', 'email', 'avatar', 'password'])
          ->showFields(['avatar', 'username', 'first_name', 'last_name', 'email']);
@@ -908,36 +1162,47 @@ $crud->setRelationNN('attendees', 'attendances', 'users', 'event_id', 'user_id',
 
 ### CRUD of a record's children
 
-A client's notes, at `clients/5/notes`. `Crud::routes()` accepts routes with parameters:
+A client's notes, at `clients/5/notes` or, with [masked ids](#link-with-a-masked-id), at `clients/DxbBosxVUi2fWpPq3w/notes`. `Crud::routes()` accepts routes with parameters. With `(:segment)` (not `(:num)`, which does not accept the code's letters, `-` and `_`) the same route works in both cases:
 
 ```php
 // Routes.php
-\Kpcrudy\Crud::routes($routes, 'clients/(:num)/notes', 'Clients::notes/$1');
+\Kpcrudy\Crud::routes($routes, 'clients/(:segment)/notes', 'Clients::notes/$1');
 ```
 
 ```php
-// Controller: the first parameter is the client id
-public function notes(int $clientId)
+use CodeIgniter\Exceptions\PageNotFoundException;
+use Kpcrudy\Crud;
+
+// Controller: the first parameter is the client id as it appears in the URL
+public function notes(string $clientCode)
 {
-    $client = model('ClientModel')->find($clientId) ?? throw \CodeIgniter\Exceptions\PageNotFoundException::forPageNotFound();
+    // The real id: decodes the code if ids are masked (a forged code gives null).
+    // The context is the clients CRUD's one: by default, the table name
+    $clientId = Crud::idFromUrl($clientCode, 'clients') ?? throw PageNotFoundException::forPageNotFound();
+    $client   = model('ClientModel')->find($clientId) ?? throw PageNotFoundException::forPageNotFound();
 
     $crud = new Crud();
     $crud->setTable('client_notes')
          ->setSubject('note', 'Notes for ' . $client['name'])
-         ->where('client_id', $clientId)
-         ->fieldType('client_id', 'hidden', ['value' => $clientId])
+         ->where('client_id', $clientId)   // with the real id; also makes new notes belong to this client
          ->columns(['created_at', 'text'])
-         ->addHeaderAction('Back to client', 'admin/clients/show/' . $clientId, ['icon' => 'bi bi-arrow-left']);
+         ->addHeaderAction('Back to client', 'admin/clients/show/' . Crud::idForUrl($clientId, 'clients'), ['icon' => 'bi bi-arrow-left']);
 
     return $crud->render();
 }
 ```
 
-And from the clients CRUD:
+And from the clients CRUD, with `{kp_id}` (the id as it appears in the CRUD's URLs; `{id}` is always the real one):
 
 ```php
-$crud->addAction('Notes', 'clients/{id}/notes', ['icon' => 'bi bi-journal-text']);
+$crud->addAction('Notes', 'clients/{kp_id}/notes', ['icon' => 'bi bi-journal-text']);
 ```
+
+`where('client_id', $clientId)` limits the notes to the client and also hides the `client_id` field from the form and always saves it with this value: no hidden field is needed. Changing the id in the URL only gives access to another client's notes if the user is allowed to see them; if that is not the case, check it in the controller (e.g. that the client belongs to the logged-in user).
+
+If ids are masked only with `maskIds()` in the clients CRUD (not in the configuration), pass `true` as the third parameter to `idFromUrl()` and `idForUrl()`. Without masking, `idFromUrl()` returns the URL value as is: if you only want to accept numbers, check it in the controller.
+
+> **Route order.** If the clients CRUD also lives under `clients` (`Crud::routes($routes, 'clients', ...)`), define the children route first: `clients/(:any)` would capture `clients/<code>/notes`. In development, `Crud::checkRoutes()` detects it and explains it with an exception.
 
 ---
 
@@ -1098,6 +1363,14 @@ public function dashboard()
 
 A custom theme only needs to contain the templates that change; the rest are loaded from the `bootstrap5` theme.
 
+The quickest way is the [kpcrudy:publish](commands_EN.md#kpcrudypublish) command, which copies the template and registers the theme in one step:
+
+```bash
+php spark kpcrudy:publish theme bootstrap5 --as compact --only show
+```
+
+Then modify `app/Views/kpcrudy/compact/show.php` and do step 3. By hand, the steps are these:
+
 1. Copy the template, for example [src/Views/bootstrap5/show.php](../src/Views/bootstrap5/show.php), to `app/Views/kpcrudy/compact/show.php`, and modify it. The variables it receives are documented in the file header.
 2. Register the theme:
 
@@ -1127,7 +1400,11 @@ $config->listTruncate = 0;
 $crud = new Crud($config);
 ```
 
+To change it for every CRUD, `php spark kpcrudy:publish config` creates `app/Config/Kpcrudy.php` with every option and its default value: change only what you need (see [kpcrudy:publish](commands_EN.md#kpcrudypublish)). `config('Kpcrudy')`, and therefore the copy above, starts from those values.
+
 ### Change a text or add a language
+
+The quickest way is `php spark kpcrudy:publish lang en` (see [kpcrudy:publish](commands_EN.md#kpcrudypublish)): it copies all the texts of the language to `app/Language/en/Kpcrudy.php`. Change the ones you want and delete the rest: the missing keys come from the library.
 
 To change any of the library's texts, create a file in the project with only the keys you want to override:
 

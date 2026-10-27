@@ -5,6 +5,7 @@ namespace Kpcrudy\Demo\Controllers\Admin;
 use Kpcrudy\Crud;
 use Kpcrudy\Demo\Config\CrudConfig;
 use Kpcrudy\Demo\Controllers\BaseController;
+use Kpcrudy\Demo\Controllers\Shared;
 use Kpcrudy\Demo\Demo;
 
 class Events extends BaseController
@@ -101,12 +102,19 @@ class Events extends BaseController
             })
             ->beforeUpdate(static fn (array $data) => $checker($data))
             ->addAction('Attendees', 'kpcrudy-demo/admin/attendances?f[event_id]={id}', ['icon' => 'bi bi-people', 'class' => 'btn-outline-info'])
-            ->addAction('Duplicate', 'kpcrudy-demo/admin/events-duplicate/{id}', [
+            ->addAction('Duplicate', 'kpcrudy-demo/admin/events-duplicate/{kp_id}', [
                 'icon'    => 'bi bi-copy',
                 'method'  => 'post',
                 'confirm' => 'Create a draft copy of this event?',
             ])
             ->addHeaderAction('Public agenda', 'kpcrudy-demo/agenda', ['icon' => 'bi bi-calendar3', 'class' => 'btn-outline-secondary'])
+            // Signed links (valid 7 days) to a read-only agenda that needs no login
+            ->addHeaderAction('Share agenda', Shared::link(), ['icon' => 'bi bi-share', 'class' => 'btn-outline-secondary', 'target' => '_blank'])
+            ->addAction('Share', static fn (array $row) => Shared::link($row['id']), [
+                'icon'    => 'bi bi-share',
+                'target'  => '_blank',
+                'visible' => static fn (array $row) => $row['status'] === 'published' && $row['starts_at'] >= date('Y-m-d H:i:s'),
+            ])
             ->addBulkAction('publish', 'Publish', static function (array $ids) {
                 db_connect()->table('kpdemo_events')->whereIn('id', $ids)->update(['status' => 'published']);
 
@@ -124,8 +132,10 @@ class Events extends BaseController
     /**
      * Custom functionality reached from a row action: not part of the CRUD.
      */
-    public function duplicate(int $id)
+    public function duplicate(string $code)
     {
+        // The action URL carries the masked id ({kp_id}), like every other demo URL
+        $id    = Demo::unmaskId('kpdemo_events', $code) ?? 0;
         $db    = db_connect();
         $event = $db->table('kpdemo_events')->where('id', $id)->where('deleted_at', null)->get()->getRowArray();
 
@@ -145,7 +155,7 @@ class Events extends BaseController
             'updated_at' => $now,
         ]));
 
-        return redirect()->to(Demo::url('admin/events/edit/' . $db->insertID()))
+        return redirect()->to(Demo::url('admin/events/edit/' . Demo::maskId('kpdemo_events', $db->insertID())))
             ->with('message', 'A draft copy has been created. Review it and publish it when it is ready.');
     }
 }

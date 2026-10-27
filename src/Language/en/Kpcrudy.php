@@ -70,6 +70,8 @@ return [
     'noSelection'      => 'No records selected.',
     'notFound'         => 'Record not found.',
     'notAllowed'       => 'You are not allowed to perform this operation.',
+    'linkInvalid'      => 'This link is not valid.',
+    'linkExpired'      => 'This link has expired.',
     'exportTooMany'    => 'There are too many records to export (maximum {0}). Filter the list and try again.',
     'invalidRequest'   => 'Invalid request.',
     'invalidOption'    => 'The value of {0} is not valid.',

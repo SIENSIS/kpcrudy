@@ -70,6 +70,8 @@ return [
     'noSelection'      => 'No has seleccionat cap registre.',
     'notFound'         => 'No s\'ha trobat el registre.',
     'notAllowed'       => 'No tens permís per fer aquesta operació.',
+    'linkInvalid'      => 'Aquest enllaç no és vàlid.',
+    'linkExpired'      => 'Aquest enllaç ha caducat.',
     'exportTooMany'    => 'Hi ha massa registres per exportar (màxim {0}). Filtra el llistat i torna-ho a provar.',
     'invalidRequest'   => 'Petició no vàlida.',
     'invalidOption'    => 'El valor del camp {0} no és vàlid.',

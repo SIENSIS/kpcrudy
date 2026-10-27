@@ -28,7 +28,7 @@ The command **does not copy or modify any file of the project**:
 |---|---|
 | 5 tables with sample data | `kpdemo_categories`, `kpdemo_users`, `kpdemo_user_interests`, `kpdemo_events`, `kpdemo_attendances` |
 | Avatars and posters | `public/uploads/kpcrudy-demo/` |
-| Marker file | `writable/kpcrudy-demo.json` |
+| Marker file (with the key for the demo's masked ids) | `writable/kpcrudy-demo.json` |
 
 The routes (`/kpcrudy-demo/...`) are registered by the library itself: CodeIgniter discovers the module's [src/Config/Routes.php](../src/Config/Routes.php) file, which only enables them if the marker file exists and it is not production (see the notes). The `kpdemo_` and `kpcrudy-demo` prefixes avoid any collision with the project's tables, URLs, files and session (for example, with its own `users` table or Shield's).
 
@@ -47,6 +47,25 @@ php spark kpcrudy:demo uninstall    # deletes tables, images and marker: the pro
 | `--allow-production` | `install`, `reset`: run even if `ENVIRONMENT` is `production`; with `install`, the demo routes are also registered there |
 
 `uninstall` also works if an installation was left half-finished.
+
+### Other commands with the demo
+
+The demo CRUDs use their own configuration ([CrudConfig](../src/Demo/Config/CrudConfig.php)), with a masking and signing key that is not the project's. That is why the commands that work with masked codes and signed URLs must **always** be run there with `--config "Kpcrudy\Demo\Config\CrudConfig"`; without it, the codes do not match, the signatures show as invalid and, if the project has no key, `writable/kpcrudy/mask.key` is created. URLs containing `&` must be quoted.
+
+```bash
+# Masked code of events 1 and 2, and the other way round
+php spark kpcrudy:maskid kpdemo_events 1 2 --config "Kpcrudy\Demo\Config\CrudConfig"
+php spark kpcrudy:unmaskid kpdemo_events <code> --config "Kpcrudy\Demo\Config\CrudConfig"
+
+# Link to the shared agenda valid for 7 days, and check it
+php spark kpcrudy:signurl kpcrudy-demo/shared/agenda --ttl 604800 --free-query --config "Kpcrudy\Demo\Config\CrudConfig"
+php spark kpcrudy:checkurl "<url>" --config "Kpcrudy\Demo\Config\CrudConfig"
+
+# See what kpcrudy:make would generate for a demo table, without writing anything
+php spark kpcrudy:make kpdemo_categories --dry-run
+```
+
+The real outputs of all these commands are in the [command reference](../docs/commands_EN.md).
 
 **Notes:**
 
@@ -122,6 +141,8 @@ The tables are created with the **migrations** in [src/Demo/Database/Migrations]
 
 All URLs start with `/kpcrudy-demo/`. The controllers are in [src/Demo/Controllers](../src/Demo/Controllers).
 
+Every demo URL uses **masked ids** ([`maskIds`](../docs/functions_EN.md#masked-ids) enabled in [CrudConfig](../src/Demo/Config/CrudConfig.php)): `admin/events/edit/Xk3f9QaLm2PwE7` instead of `admin/events/edit/5`. The custom actions (*Duplicate*, *Join*, *Cancel*) put the code in the URL with `{kp_id}` and decode it with `Demo::unmaskId()`.
+
 ### Administration (`admin` role)
 
 #### Users — `admin/users`
@@ -163,9 +184,10 @@ All URLs start with `/kpcrudy-demo/`. The controllers are in [src/Demo/Controlle
 - Calculated **occupancy column** with a progress bar.
 - `callbackColumn` for the status and the price, and `callbackExport` for the price in the CSV.
 - **Hooks**: `beforeInsert` assigns the creator and checks that the end is after the start.
-- **Custom POST action** with confirmation: *Duplicate* (outside the CRUD, in `Events::duplicate`).
+- **Custom POST action** with confirmation: *Duplicate* (outside the CRUD, in `Events::duplicate`). The URL carries the masked id (`{kp_id}`), the route uses `(:segment)` and the method decodes it with `Demo::unmaskId()`.
 - Custom **bulk actions**: publish and cancel.
 - **Header button** linking to the public agenda.
+- **Signed links** to the [shared agenda](#shared-agenda--sharedagenda): the *Share agenda* header button and the *Share* row action (visible only on published, upcoming events) open, in a new tab, a link valid for 7 days that can be sent to anyone.
 - **Export columns** different from the list columns (`exportColumns`).
 - **CSV import** by id: you can use *Export CSV*, edit the file in a spreadsheet and import it with *Update the record if its "Id" already exists*. Categories and statuses are read by their text, and dates in the display format.
 - `callbackImport`: the file can use `Free` as the price.
@@ -180,7 +202,7 @@ All URLs start with `/kpcrudy-demo/`. The controllers are in [src/Demo/Controlle
 - **Different fields for adding and editing**, with user and event read-only when editing.
 - **Default values** (`setDefault`).
 - **Hook** `beforeInsert`: prevents duplicates and checks the capacity.
-- **Linkable filters**: reached from users and events with `?f[user_id]=…` or `?f[event_id]=…`.
+- **Linkable filters**: reached from users and events with `?f[user_id]=…` or `?f[event_id]=…`. These actions use `{id}`, the real id, because filters work with the real values.
 - Custom **bulk actions**: mark as attended or absent.
 
 ![Attendance](../screenshots/09-assistencia.png)
@@ -192,7 +214,7 @@ All URLs start with `/kpcrudy-demo/`. The controllers are in [src/Demo/Controlle
 
 - **Read-only** (`readOnly`) on the same table as the administration.
 - `where()`: only **published and upcoming** events, also on the detail page and in the export.
-- **POST action** *Join*, **visible only** if there are places left and you are not registered.
+- **POST action** *Join*, **visible only** if there are places left and you are not registered. Like *Duplicate*, it carries the masked id (`{kp_id}`).
 - **Calculated columns** for the logged-in user (free places, my registration). The data is calculated once before the CRUD, to avoid one query per row.
 
 ![Agenda](../screenshots/12-agenda.png)
@@ -207,13 +229,29 @@ All URLs start with `/kpcrudy-demo/`. The controllers are in [src/Demo/Controlle
 #### My profile — `profile`
 [Controllers/Profile.php](../src/Demo/Controllers/Profile.php) · [Views/kpcrudy/profile/show.php](../src/Demo/Views/kpcrudy/profile/show.php)
 
-- **Single-record CRUD**: `where('id', logged-in user)`. Changing the id in the URL does not give access to any other profile.
+- **Single-record CRUD**: `where('id', logged-in user)`. Changing the id in the URL does not give access to any other profile. The detail page URL is built with `Demo::maskId()`.
 - **Custom theme** `profile`: it only replaces `show.php`; the other templates are those of the `bootstrap5` theme.
 - `setBackUrl()`: after saving, you go back to the profile detail page.
 - **Limited fields**: users cannot change their role or username.
 - **Editable N-N**: my interests. The photo and password can also be changed.
 
 ![Profile](../screenshots/14-perfil.png)
+
+### Without logging in (with a signed link)
+
+#### Shared agenda — `shared/agenda`
+[Controllers/Shared.php](../src/Demo/Controllers/Shared.php)
+
+A read-only agenda that anyone can open **without logging in**, but only with a **signed link** and until it expires. The route is registered outside the login group (in [Demo.php](../src/Demo/Demo.php), with only the CSRF filter), and what protects it is the signature.
+
+- **How to get the link**: in *Events* (`admin/events`), the **Share agenda** header button gives the link to the whole agenda, and the **Share** row action the link to a single event (`shared/agenda/show/{code}`). They are created by `Shared::link()` with `Crud::signUrl()`, valid for **7 days** (`Shared::TTL`). One can also be created from the command line with `kpcrudy:signurl` (see [Other commands with the demo](#other-commands-with-the-demo)).
+- `requireSignature('*')`: every operation needs a valid signature. The links the CRUD generates (pages, details, search) are signed automatically and expire together with the link used to enter.
+- Only the **path** is signed (`lockQuery: false`): the visitor can search, sort and change pages, but cannot change the event or the expiry.
+- `where()`: only **published and upcoming** events. This is what limits what can be seen, not the signature.
+- `readOnly()`, `unsetTrash()`, `unsetBulk()` and `unsetExport()`: nothing can be added, edited, deleted or exported, and there is no trash.
+- `setLayout('default')`: it is shown with the library's basic layout, without the demo menu, because the visitor is not logged in.
+
+**What the visitor can do**: see the list, search, sort, page and open the details of each event (with a single-event link, only that event, with no way back to the list). **What they cannot do**: enter without the link or with a modified link (*This link is not valid.*), use it after it expires (*This link has expired.*), see drafts, past events or any other demo page, or change anything.
 
 ---
 
@@ -226,7 +264,7 @@ Everything is in [src/Demo](../src/Demo), with the `Kpcrudy\Demo` namespace:
 | `kpcrudy:demo` command | [src/Commands/Demo.php](../src/Commands/Demo.php) |
 | Installation and uninstallation | [Installer.php](../src/Demo/Installer.php) |
 | Names, routes, URLs and folders | [Demo.php](../src/Demo/Demo.php) · [src/Config/Routes.php](../src/Config/Routes.php) |
-| Configuration of the demo CRUDs (layout, themes, pagination) | [Config/CrudConfig.php](../src/Demo/Config/CrudConfig.php) |
+| Configuration of the demo CRUDs (layout, themes, pagination, masked ids) | [Config/CrudConfig.php](../src/Demo/Config/CrudConfig.php) |
 | Layout with menu and code panel | [Views/layouts/main.php](../src/Demo/Views/layouts/main.php) |
 | Code panel (outside the controllers, so they only contain the CRUD code) | [Config/Showcase.php](../src/Demo/Config/Showcase.php) · [Controllers/BaseController.php](../src/Demo/Controllers/BaseController.php) |
 | Simple session-based authentication | [Libraries/Auth.php](../src/Demo/Libraries/Auth.php) · [Filters/AuthFilter.php](../src/Demo/Filters/AuthFilter.php) |
@@ -236,7 +274,18 @@ Each controller creates the CRUD with `new Crud(new CrudConfig())`, so the demo 
 ### Security
 
 - All forms and POST actions (logout included) carry the CSRF token. The demo filters extend `CodeIgniter\Filters\CSRF` ([CsrfFilter](../src/Demo/Filters/CsrfFilter.php)): they verify the token if the project does not have the global `csrf` filter, and do nothing if it does (it is enabled in this project).
-- The public pages (login and logout) use `CsrfFilter`, the user pages `AuthFilter` and the administration pages `AdminFilter`, one filter per route: since the class is used, there is no need to register any alias in `app/Config/Filters.php`.
+- The public pages (login, logout and the shared agenda) use `CsrfFilter`, the user pages `AuthFilter` and the administration pages `AdminFilter`, one filter per route: since the class is used, there is no need to register any alias in `app/Config/Filters.php`.
 - The user is reloaded on every request (also in worker mode): if an administrator deactivates them or moves them to the trash, they lose access instantly. On logout, the session gets a new id.
 - The demo session uses its own key (`kpdemo_user_id`) and does not interfere with the project's login.
+- **Masked ids** in every URL (`CrudConfig::$maskIds = true`): a forged or altered code, or a numeric id in the URL, is treated as a record that does not exist. The demo has its own masking key, stored in the marker file `writable/kpcrudy-demo.json`, so it neither uses nor creates the project's key and uninstalling it leaves nothing behind. To find which record a code refers to, or which code a record has, pass the demo configuration to the commands; the context is the table name:
+
+  ```bash
+  php spark kpcrudy:unmaskid kpdemo_events <code> --config "Kpcrudy\Demo\Config\CrudConfig"
+  php spark kpcrudy:maskid kpdemo_users 1 2 3 --config "Kpcrudy\Demo\Config\CrudConfig"
+  ```
+- **Shared agenda** without login: it only opens with a link signed with the demo key (`requireSignature('*')`), which expires after 7 days and cannot be extended or modified. To check a link someone says does not work:
+
+  ```bash
+  php spark kpcrudy:checkurl "<url>" --config "Kpcrudy\Demo\Config\CrudConfig"
+  ```
 - Authentication is deliberately minimal because the focus is the library: you log in without a password by choosing the user. **Never use it outside a test environment.** In a real project, use [CodeIgniter Shield](https://shield.codeigniter.com/).

@@ -20,6 +20,8 @@ Funcionalitats:
 - **Callbacks** de columna, de camp i d'exportació, i **hooks** abans i després de desar o esborrar
 - **Accions massives** (esborrar, restaurar, exportar i les teves pròpies)
 - **Permisos** per operació, globals o registre a registre
+- **Identificadors emmascarats** a les URL (`edit/Xk3f9...` en lloc d'`edit/5`), opcionals, per CRUD o per a tot el projecte
+- **URL signades amb caducitat** per compartir pàgines de consulta sense iniciar sessió (`requireSignature()`): el visitant hi pot cercar i navegar, però no pot canviar el camí ni allargar la caducitat
 - **Plantilles intercanviables** (tema Bootstrap 5 per defecte) i layout configurable
 - Textos en **català, castellà, anglès, francès, portuguès i alemany**
 
@@ -29,6 +31,7 @@ Funcionalitats:
 
 - [docs/functions_CA.md](docs/functions_CA.md): referència de totes les funcions i propietats públiques, amb exemples.
 - [docs/howto_CA.md](docs/howto_CA.md): receptes per a casos habituals (contrasenyes, enllaços amb l'id, id emmascarat, permisos, relacions, fitxers, integració...).
+- [docs/commands_CA.md](docs/commands_CA.md): referència de les comandes de `spark` (`kpcrudy:make`, `kpcrudy:demo`, `kpcrudy:maskid`, `kpcrudy:unmaskid`, `kpcrudy:signurl`, `kpcrudy:checkurl`, `kpcrudy:publish`), amb sortides reals i receptes.
 - [docs/new_theme_CA.md](docs/new_theme_CA.md): com crear un tema, amb els exemples de W3.CSS i Tailwind CSS.
 
 ## Demo
@@ -88,7 +91,7 @@ Ve dins de la llibreria (a `src/Demo`) i s'instal·la al projecte on ja tens kpc
 php spark list
 ```
 
-A la llista hi ha d'aparèixer el grup **Kpcrudy** amb la comanda `kpcrudy:demo`. Per veure'n l'ajuda:
+A la llista hi ha d'aparèixer el grup **Kpcrudy** amb set comandes: `kpcrudy:demo` (la que ara cal), `kpcrudy:make` (generar un CRUD a partir d'una taula), `kpcrudy:maskid` i `kpcrudy:unmaskid` (fer i desfer els identificadors emmascarats), `kpcrudy:signurl` i `kpcrudy:checkurl` (crear i comprovar URL signades), i `kpcrudy:publish` (copiar al projecte la configuració, un tema o els textos d'un idioma per adaptar-los). Totes es descriuen, amb exemples i sortides reals, a la [referència de comandes](docs/commands_CA.md). Per veure l'ajuda de la demo:
 
 ```bash
 php spark help kpcrudy:demo
@@ -217,6 +220,8 @@ php spark kpcrudy:demo uninstall --yes
 | `php spark kpcrudy:demo uninstall [--yes]` | Ho esborra tot i deixa el projecte com estava |
 | `php spark help kpcrudy:demo` | Ajuda de la comanda |
 
+Totes les opcions, les sortides i els errors de `kpcrudy:demo` (i de la resta de comandes) són a la [referència de comandes](docs/commands_CA.md#kpcrudydemo).
+
 ### Situacions especials
 
 **"La demo ja està instal·lada".** `install` no es pot executar dues vegades. Per tornar a començar, fes servir `reset`.
@@ -333,7 +338,7 @@ El codi generat ja inclou:
 | `--dry-run` | Mostra el codi sense escriure cap fitxer |
 | `--force` | Reemplaça el mètode (i el model) si ja existeixen |
 
-És un punt de partida: obre el controlador i adapta-hi el que calgui (etiquetes en el teu idioma, filtres, accions, permisos...).
+És un punt de partida: obre el controlador i adapta-hi el que calgui (etiquetes en el teu idioma, filtres, accions, permisos...). Més exemples, el mode interactiu i els errors habituals, a [kpcrudy:make](docs/commands_CA.md#kpcrudymake).
 
 ### URL que gestiona
 
@@ -355,6 +360,10 @@ El codi generat ja inclou:
 La URL base es dedueix sola. Si la ruta acaba amb una d'aquestes paraules (p. ex. `admin/trash`), indica-la amb `setBaseUrl(site_url('admin/trash'))`.
 
 Totes les operacions que modifiquen dades van per POST i inclouen el token CSRF. Si el filtre `csrf` de CodeIgniter està actiu per a la ruta, és ell qui el comprova; si no, el CRUD verifica el token pel seu compte (es pot desactivar amb `$csrfProtection = false` a la [configuració](#configuració)).
+
+**Identificadors emmascarats.** Amb `$crud->maskIds()` (o `$maskIds = true` a la [configuració](#configuració), per a tots els CRUD), el `{id}` d'aquestes URL és un codi (`edit/Xk3f9QaLm2PwE7` en lloc d'`edit/5`), també a les caselles del llistat i a les redireccions. Fa servir les mateixes dues rutes; un codi fals o un id real a la URL es tracten com un registre inexistent, i els hooks, els permisos i els callbacks reben l'id real. Fora del CRUD, `Crud::maskId()` i `Crud::unmaskId()` fan i desfan el codi, i a les accions `{kp_id}` posa l'id emmascarat. Per a les rutes pròpies que han de funcionar tant amb els ids emmascarats com sense, `Crud::idForUrl()` i `Crud::idFromUrl()` fan i desfan el codi només si l'emmascarament és actiu (i la ruta, amb `(:segment)`, no `(:num)`). Les comandes `php spark kpcrudy:maskid <taula> <id>` i `php spark kpcrudy:unmaskid <taula> <codi>` diuen a quin registre correspon un codi (amb `--config` si el CRUD rep una configuració pròpia; vegeu la [referència de comandes](docs/commands_CA.md#kpcrudyunmaskid)). Vegeu [Identificadors emmascarats](docs/functions_CA.md#identificadors-emmascarats) i la recepta [Enllaçar amb l'id emmascarat](docs/howto_CA.md#enllaçar-amb-lid-emmascarat).
+
+**Conflictes de rutes.** `Crud::routes()` registra `base/(:any)`, que captura totes les URL que comencen per `base/`. Una ruta pròpia amb el mateix prefix definida després (p. ex. `admin/invoices/(:segment)` per a una pàgina pública) no s'executaria mai, i una de definida abans que capturi URL del CRUD (`admin/invoices/add`...) el deixaria sense funcionar. En desenvolupament, `render()` ho detecta i llança una excepció que explica el problema. Fes servir un altre prefix per a les pàgines pròpies (`invoice/(:segment)`).
 
 ---
 
@@ -392,7 +401,7 @@ public function clients()
         ->setPerPage(25, [10, 25, 50])
 
         // Enllaços a cada fila
-        ->addAction('Factures', 'factures/client/{id}', ['icon' => 'bi bi-receipt', 'class' => 'btn-outline-info'])
+        ->addAction('Factures', 'factures/client/{kp_id}', ['icon' => 'bi bi-receipt', 'class' => 'btn-outline-info'])
         ->addAction('Escriu-li', fn ($row) => 'mailto:' . $row['email'], [
             'icon'    => 'bi bi-envelope',
             'visible' => fn ($row) => ! empty($row['email']),
@@ -429,7 +438,7 @@ public function clients()
 | `where(string\|array $field, $value = null)` | Limita els registres que gestiona el CRUD. S'aplica al llistat, al detall, a l'edició, a l'esborrat i a les accions massives. |
 | `setSubject(string $singular, ?string $plural)` | Noms que surten als títols i missatges. |
 
-> **Model amb `{id}` a les regles**: a CodeIgniter 4.5+ el camp de la clau primària ha de tenir una regla pròpia per poder fer servir `{id}`, per exemple `'id' => 'permit_empty|is_natural_no_zero'`. Kpcrudy hi afegeix l'identificador automàticament en editar.
+> **Model amb `{id}` a les regles**: a CodeIgniter 4.5+ el camp de la clau primària ha de tenir una regla pròpia per poder fer servir `{id}`, per exemple `'id' => 'permit_empty|is_natural_no_zero'`. Kpcrudy hi afegeix l'identificador automàticament en editar (l'id real, encara que la URL porti un codi emmascarat).
 
 ### Camps i columnes
 
@@ -452,7 +461,7 @@ Els camps secrets són els que tenen un nom de `$sensitiveFields` (`password`, `
 | `exportColumns(array)` | Columnes del CSV. Per defecte, les del llistat. |
 | `unsortable(array)` | Columnes que no es poden ordenar. |
 | `displayAs(string\|array $field, ?string $label)` | Etiquetes. |
-| `setRules(string\|array $field, string\|array $rules)` | Regles de validació de CodeIgniter. `{id}` és l'identificador en edició. |
+| `setRules(string\|array $field, string\|array $rules)` | Regles de validació de CodeIgniter. `{id}` és l'identificador (real) en edició. |
 | `requiredFields(array)` | Camps obligatoris. |
 | `readonlyFields(array)` | Camps que es veuen però no es poden modificar en edició. |
 | `setDefault(string $field, $value)` | Valor inicial a l'alta. |
@@ -559,8 +568,12 @@ Els hooks `before*` poden retornar un array (dades noves), `null` (sense canvis)
 ### Accions
 
 ```php
-// A cada fila del llistat i a la fitxa. {id} i {qualsevol_camp} es substitueixen.
-$crud->addAction('Factures', 'factures/client/{id}', [
+// A cada fila del llistat i a la fitxa. {id} (id real), {kp_id} (l'id com a les URL del CRUD:
+// el codi si està emmascarat) i {qualsevol_camp} es substitueixen. {id} i {kp_id} són sempre la
+// clau primària, encara que el camp es digui "codi" (no hi ha {kp_codi}).
+// Per a pàgines pròpies, {kp_id}: la ruta, amb (:segment), n'obté l'id real amb Crud::idFromUrl().
+// Per obrir un altre CRUD filtrat, {id}: 'admin/orders?f[client_id]={id}' (els filtres fan servir l'id real).
+$crud->addAction('Factures', 'factures/client/{kp_id}', [
     'icon'    => 'bi bi-receipt',          // Bootstrap Icons
     'class'   => 'btn-outline-info',
     'target'  => '_blank',
@@ -569,7 +582,9 @@ $crud->addAction('Factures', 'factures/client/{id}', [
 ]);
 
 // Accions que modifiquen dades: per POST (amb el token CSRF)
-$crud->addAction('Duplica', 'admin/events-duplicate/{id}', ['method' => 'post', 'confirm' => 'Segur?']);
+$crud->addAction('Duplica', 'admin/events-duplicate/{kp_id}', ['method' => 'post', 'confirm' => 'Segur?']);
+// Routes.php: $routes->post('admin/events-duplicate/(:segment)', 'Admin\Events::duplicate/$1');
+// duplicate(string $code): $id = Crud::idFromUrl($code, 'events') ?? throw PageNotFoundException::forPageNotFound();
 
 // La URL també pot ser una closure
 $crud->addAction('Mapa', fn (array $row) => 'https://maps.google.com/?q=' . urlencode($row['address']));
@@ -660,13 +675,16 @@ class Kpcrudy extends \Kpcrudy\Config\Kpcrudy
     public int $importMaxRows      = 1000;
     public int $exportMaxRows      = 100000;   // 0 = sense límit
     public bool $csrfProtection    = true;     // verifica el token si el filtre csrf no és actiu
+    public bool $maskIds           = false;    // true: identificadors emmascarats a totes les URL
     public string|false $layout    = 'layouts/admin';
     public array $themes           = ['admin' => APPPATH . 'Views/kpcrudy/admin'];
     public string $theme           = 'admin';
 }
 ```
 
-Totes les opcions estan documentades a [src/Config/Kpcrudy.php](src/Config/Kpcrudy.php). Entre les de seguretat hi ha `$csrfProtection`, `$exportMaxRows` i `$sensitiveFields` (noms de camps secrets que no es mostren per defecte; si l'amplies, parteix de la llista original).
+La manera més ràpida de crear-lo és `php spark kpcrudy:publish config`: escriu aquesta classe amb **totes** les opcions, el valor per defecte i el comentari de la llibreria, com a referència. Canvia-hi només el que necessitis; les opcions que esborris (i les que s'afegeixin en versions noves) agafen el valor de la llibreria. Vegeu [kpcrudy:publish](docs/commands_CA.md#kpcrudypublish).
+
+Totes les opcions estan documentades a [src/Config/Kpcrudy.php](src/Config/Kpcrudy.php). Entre les de seguretat hi ha `$csrfProtection`, `$exportMaxRows`, `$maskIds` (amb `$maskKey` i `$idMasker`, vegeu [Identificadors emmascarats](docs/functions_CA.md#identificadors-emmascarats)) i `$sensitiveFields` (noms de camps secrets que no es mostren per defecte; si l'amplies, parteix de la llista original).
 
 ## Layouts i temes
 
@@ -729,6 +747,8 @@ public array $themes = [
 ];
 ```
 
+La comanda `php spark kpcrudy:publish theme w3css --as intranet` copia les plantilles d'un tema a `app/Views/kpcrudy/intranet` i el registra a `$themes`; amb `--only list,partials/pagination` en copia només algunes i la resta surt del tema original. Després, `->setTheme('intranet')` o `$theme = 'intranet'`. Per adaptar els textos, `php spark kpcrudy:publish lang ca` (vegeu [kpcrudy:publish](docs/commands_CA.md#kpcrudypublish)).
+
 La guia [docs/new_theme_CA.md](docs/new_theme_CA.md) explica pas a pas com fer un tema, amb els exemples de W3.CSS i Tailwind.
 
 | W3.CSS (`w3css`) | Tailwind CSS (`tailwind`) |
@@ -748,7 +768,7 @@ Idiomes inclosos:
 | `pt` | Portuguès |
 | `de` | Alemany |
 
-Els textos són a `src/Language/{codi}/Kpcrudy.php` i segueixen el locale de la petició (`app.defaultLocale`, o el que negociï CodeIgniter si tens `negotiateLocale` activat i el codi a `supportedLocales`). Per canviar-ne algun, crea `app/Language/{codi}/Kpcrudy.php` amb les claus que vulguis sobreescriure.
+Els textos són a `src/Language/{codi}/Kpcrudy.php` i segueixen el locale de la petició (`app.defaultLocale`, o el que negociï CodeIgniter si tens `negotiateLocale` activat i el codi a `supportedLocales`). Per canviar-ne algun, crea `app/Language/{codi}/Kpcrudy.php` amb les claus que vulguis sobreescriure (`php spark kpcrudy:publish lang ca` hi copia tots els textos de l'idioma: deixa-hi només els que canviïs).
 
 Per afegir-hi un idioma nou, copia `src/Language/en/Kpcrudy.php` a la carpeta del codi corresponent i tradueix-ne els valors. Els `{0}`, `{1}`... són paràmetres i s'han de mantenir. El portuguès és el de Portugal: per al del Brasil, crea `app/Language/pt-BR/Kpcrudy.php`.
 
@@ -760,6 +780,8 @@ Per afegir-hi un idioma nou, copia `src/Language/en/Kpcrudy.php` a la carpeta de
 - **Camps secrets**: les columnes amb noms com `password`, `token`, `secret`, `salt`, `hash`, `apikey`... (`$sensitiveFields`) no surten per defecte al llistat, la fitxa, la cerca, l'ordenació, els filtres, l'exportació ni els formularis (les contrasenyes sí que surten al formulari, i es desen amb hash). Només es mostren si les indiques explícitament.
 - Les columnes amb `callbackColumn` no es fan servir per cercar si no les poses a `searchFields()`, perquè el callback pot amagar el valor real.
 - Els valors de relacions, enum i select es validen contra les opcions permeses. Els valors de filtre no vàlids s'ignoren, els comodins `%` i `_` de la cerca es busquen literalment i un id que no pot ser una clau primària vàlida es tracta com a inexistent.
+- **Identificadors emmascarats** (`maskIds()`): els codis són sempre els mateixos per a cada registre, xifrats i signats amb una clau del servidor; un codi fals, modificat o d'una altra taula es tracta com a inexistent. No substitueixen els permisos ni `where()`. En desenvolupament, el CRUD avisa de les rutes que xoquen amb les seves (`Crud::checkRoutes()`).
+- **URL signades** (`requireSignature()`, `Crud::signUrl()`): la signatura és un HMAC amb una clau del servidor i cobreix el camí (operació i id) i la caducitat, de manera que un enllaç no es pot allargar ni fer apuntar a un altre registre; no cobreix el domini ni el port. En un CRUD els paràmetres (`?q=`, `?page=`) queden lliures, i per això el que pot veure el visitant s'ha de limitar amb `where()`. Les rutes pròpies són estrictes: `Crud::checkSignature()` només accepta (si no s'indica `allowFreeQuery`) URL signades senceres amb `signUrl()` o `signedUrl()`, mai les que signa un CRUD mentre es navega. Qualsevol que tingui l'enllaç hi pot entrar fins que caduqui; l'única manera d'anul·lar-lo abans és canviar la clau. Vegeu "URL signades" a [docs/functions_CA.md](docs/functions_CA.md) i [kpcrudy:signurl / kpcrudy:checkurl](docs/commands_CA.md#kpcrudysignurl).
 - Les URL (camps `url` i URL d'accions retornades per closures) només es fan servir si són relatives o `http`, `https`, `mailto` o `tel`; els enllaços amb `target` porten `rel="noopener noreferrer"`.
 - Els fitxers pujats es validen per extensió (la real i la declarada), tipus MIME (imatges) i mida, i es desen amb un nom aleatori. En substituir-los o esborrar-los, només s'esborren fitxers que siguin dins del directori de pujada del camp.
 - L'exportació CSV neutralitza els valors que comencen per `=`, `+`, `-` o `@` (també amb espais o salts de línia al davant, i les variants d'amplada completa) per evitar la injecció de fórmules. Té un límit de files (`$exportMaxRows`) i llegeix els registres per blocs.

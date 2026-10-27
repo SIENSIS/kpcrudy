@@ -30,6 +30,7 @@ Aquest document explica com està fet un tema i com en faries un de nou, amb els
 
 ## Índex
 
+- [Començar amb una còpia](#començar-amb-una-còpia)
 - [Com funciona un tema](#com-funciona-un-tema)
 - [Les plantilles](#les-plantilles)
 - [El que el tema no pot canviar](#el-que-el-tema-no-pot-canviar)
@@ -38,6 +39,19 @@ Aquest document explica com està fet un tema i com en faries un de nou, amb els
 - [Exemple: un tema amb Tailwind CSS](#exemple-un-tema-amb-tailwind-css)
 - [Ampliar un tema existent](#ampliar-un-tema-existent)
 - [Comprovacions finals](#comprovacions-finals)
+
+---
+
+## Començar amb una còpia
+
+La manera més ràpida de començar un tema és copiar-ne un d'existent amb [kpcrudy:publish](commands_CA.md#kpcrudypublish):
+
+```bash
+php spark kpcrudy:publish theme w3css --as intranet                    # còpia sencera
+php spark kpcrudy:publish theme w3css --as intranet --only list,show   # només aquestes plantilles
+```
+
+La comanda copia les plantilles a `app/Views/kpcrudy/intranet` i registra el tema a `$themes` d'`app/Config/Kpcrudy.php` (afegeix `--dry-run` per veure-ho abans). En una **còpia sencera**, el pare del tema nou és el pare de l'original (`bootstrap5`), de manera que les plantilles que fan servir `renderParent()` continuen funcionant. En una **còpia parcial** (`--only`), el pare és el tema original, que dona les plantilles que no s'han copiat; i si una de les copiades ja amplia el seu pare amb `renderParent()` (com `partials/assets` de `w3css` i `tailwind`), en lloc de duplicar-la s'hi escriu una ampliació: `renderParent()` i un `<style>` buit on afegir el teu CSS. Després, fes-lo servir amb `->setTheme('intranet')` o amb `$theme = 'intranet'`. La resta d'aquest document explica què fa cada plantilla.
 
 ---
 
@@ -470,6 +484,8 @@ Les plantilles es busquen a `w3teal`, després a `w3css` i, al final, a `bootstr
 **Canviar una sola plantilla**: per exemple, una fitxa de detall en dues columnes, només per a aquest tema: `app/Views/kpcrudy/w3teal/show.php`. La resta (llistat, formulari...) continua sent la de `w3css`.
 
 El mateix serveix per a `tailwind` o per a qualsevol tema teu. Un tema pot tenir com a pare un altre tema del projecte.
+
+Tot això ho pot preparar la comanda: `php spark kpcrudy:publish theme w3css --as w3teal --only partials/assets,show` registra `w3teal` amb `w3css` com a pare, hi copia `show.php` i, com que `partials/assets.php` de `w3css` ja fa servir `renderParent()`, hi escriu una ampliació buida on posar els estils de dalt. Vegeu [Començar amb una còpia](#començar-amb-una-còpia).
 
 ## Comprovacions finals
 

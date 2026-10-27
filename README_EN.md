@@ -20,6 +20,8 @@ Features:
 - Column, field and export **callbacks**, and **hooks** before and after saving or deleting
 - **Bulk actions** (delete, restore, export and your own)
 - **Permissions** per operation, global or record by record
+- **Masked ids** in the URLs (`edit/Xk3f9...` instead of `edit/5`), optional, per CRUD or for the whole project
+- **Signed URLs with an expiry** to share read-only pages without logging in (`requireSignature()`): the visitor can search and browse, but cannot change the path or extend the expiry
 - **Swappable templates** (Bootstrap 5 theme by default) and configurable layout
 - Texts in **Catalan, Spanish, English, French, Portuguese and German**
 
@@ -29,6 +31,7 @@ Features:
 
 - [docs/functions_EN.md](docs/functions_EN.md): reference of all public functions and properties, with examples.
 - [docs/howto_EN.md](docs/howto_EN.md): recipes for common cases (passwords, links with the id, masked id, permissions, relations, files, integration...).
+- [docs/commands_EN.md](docs/commands_EN.md): reference of the `spark` commands (`kpcrudy:make`, `kpcrudy:demo`, `kpcrudy:maskid`, `kpcrudy:unmaskid`, `kpcrudy:signurl`, `kpcrudy:checkurl`, `kpcrudy:publish`), with real outputs and recipes.
 - [docs/new_theme_EN.md](docs/new_theme_EN.md): how to create a theme, with the W3.CSS and Tailwind CSS examples.
 
 ## Demo
@@ -88,7 +91,7 @@ It ships inside the library (in `src/Demo`) and is installed in the project wher
 php spark list
 ```
 
-The **Kpcrudy** group must appear in the list with the `kpcrudy:demo` command. To see its help:
+The **Kpcrudy** group must appear in the list with seven commands: `kpcrudy:demo` (the one you need now), `kpcrudy:make` (generate a CRUD from a table), `kpcrudy:maskid` and `kpcrudy:unmaskid` (encode and decode masked ids), `kpcrudy:signurl` and `kpcrudy:checkurl` (create and check signed URLs), and `kpcrudy:publish` (copy the configuration, a theme or the texts of a language into the project to adapt them). They are all described, with examples and real outputs, in the [command reference](docs/commands_EN.md). To see the demo's help:
 
 ```bash
 php spark help kpcrudy:demo
@@ -217,6 +220,8 @@ php spark kpcrudy:demo uninstall --yes
 | `php spark kpcrudy:demo uninstall [--yes]` | Deletes everything and leaves the project as it was |
 | `php spark help kpcrudy:demo` | Command help |
 
+Every option, output and error of `kpcrudy:demo` (and of the other commands) is in the [command reference](docs/commands_EN.md#kpcrudydemo).
+
 ### Special situations
 
 **"The demo is already installed".** `install` cannot be run twice. To start over, use `reset`.
@@ -333,7 +338,7 @@ The generated code already includes:
 | `--dry-run` | Shows the code without writing any file |
 | `--force` | Replaces the method (and the model) if they already exist |
 
-It is a starting point: open the controller and adapt whatever you need (labels in your language, filters, actions, permissions...).
+It is a starting point: open the controller and adapt whatever you need (labels in your language, filters, actions, permissions...). More examples, the interactive mode and the common errors are in [kpcrudy:make](docs/commands_EN.md#kpcrudymake).
 
 ### URLs it handles
 
@@ -355,6 +360,10 @@ It is a starting point: open the controller and adapt whatever you need (labels 
 The base URL is deduced automatically. If the route ends with one of these words (e.g. `admin/trash`), set it with `setBaseUrl(site_url('admin/trash'))`.
 
 All operations that modify data go through POST and include the CSRF token. If CodeIgniter's `csrf` filter is active for the route, the filter checks it; otherwise, the CRUD verifies the token itself (this can be disabled with `$csrfProtection = false` in the [configuration](#configuration)).
+
+**Masked ids.** With `$crud->maskIds()` (or `$maskIds = true` in the [configuration](#configuration), for every CRUD), the `{id}` in these URLs is a code (`edit/Xk3f9QaLm2PwE7` instead of `edit/5`), also in the list checkboxes and in the redirects. It uses the same two routes; a forged code or a real id in the URL is treated as a record that does not exist, and hooks, permissions and callbacks receive the real id. Outside the CRUD, `Crud::maskId()` and `Crud::unmaskId()` encode and decode the code, and in actions `{kp_id}` inserts the masked id. For your own routes that must work both with masked ids and without them, `Crud::idForUrl()` and `Crud::idFromUrl()` encode and decode the code only if masking is on (and the route uses `(:segment)`, not `(:num)`). The commands `php spark kpcrudy:maskid <table> <id>` and `php spark kpcrudy:unmaskid <table> <code>` tell you which record a code refers to (with `--config` if the CRUD receives its own configuration; see the [command reference](docs/commands_EN.md#kpcrudyunmaskid)). See [Masked ids](docs/functions_EN.md#masked-ids) and the recipe [Link with a masked id](docs/howto_EN.md#link-with-a-masked-id).
+
+**Route conflicts.** `Crud::routes()` registers `base/(:any)`, which captures every URL starting with `base/`. A route of your own with the same prefix defined after it (e.g. `admin/invoices/(:segment)` for a public page) would never run, and one defined before that captures CRUD URLs (`admin/invoices/add`...) would stop the CRUD from working. In development, `render()` detects this and throws an exception explaining the problem. Use a different prefix for your own pages (`invoice/(:segment)`).
 
 ---
 
@@ -392,7 +401,7 @@ public function clients()
         ->setPerPage(25, [10, 25, 50])
 
         // Links on each row
-        ->addAction('Invoices', 'invoices/customer/{id}', ['icon' => 'bi bi-receipt', 'class' => 'btn-outline-info'])
+        ->addAction('Invoices', 'invoices/customer/{kp_id}', ['icon' => 'bi bi-receipt', 'class' => 'btn-outline-info'])
         ->addAction('Email', fn ($row) => 'mailto:' . $row['email'], [
             'icon'    => 'bi bi-envelope',
             'visible' => fn ($row) => ! empty($row['email']),
@@ -429,7 +438,7 @@ public function clients()
 | `where(string\|array $field, $value = null)` | Limits the records managed by the CRUD. It applies to the list, detail, editing, deletion and bulk actions. |
 | `setSubject(string $singular, ?string $plural)` | Names shown in titles and messages. |
 
-> **Model with `{id}` in the rules**: in CodeIgniter 4.5+ the primary key field must have its own rule to be able to use `{id}`, for example `'id' => 'permit_empty|is_natural_no_zero'`. Kpcrudy adds the identifier automatically when editing.
+> **Model with `{id}` in the rules**: in CodeIgniter 4.5+ the primary key field must have its own rule to be able to use `{id}`, for example `'id' => 'permit_empty|is_natural_no_zero'`. Kpcrudy adds the identifier automatically when editing (the real id, even if the URL carries a masked code).
 
 ### Fields and columns
 
@@ -452,7 +461,7 @@ Sensitive fields are those whose name is in `$sensitiveFields` (`password`, `tok
 | `exportColumns(array)` | CSV columns. By default, those of the list. |
 | `unsortable(array)` | Columns that cannot be sorted. |
 | `displayAs(string\|array $field, ?string $label)` | Labels. |
-| `setRules(string\|array $field, string\|array $rules)` | CodeIgniter validation rules. `{id}` is the identifier when editing. |
+| `setRules(string\|array $field, string\|array $rules)` | CodeIgniter validation rules. `{id}` is the (real) identifier when editing. |
 | `requiredFields(array)` | Required fields. |
 | `readonlyFields(array)` | Fields that are shown but cannot be modified when editing. |
 | `setDefault(string $field, $value)` | Initial value when adding. |
@@ -559,8 +568,12 @@ The `before*` hooks can return an array (new data), `null` (no changes), a strin
 ### Actions
 
 ```php
-// On each list row and on the detail view. {id} and {any_field} are replaced.
-$crud->addAction('Invoices', 'invoices/customer/{id}', [
+// On each list row and on the detail view. {id} (real id), {kp_id} (the id as in the CRUD's URLs:
+// the code if masked) and {any_field} are replaced. {id} and {kp_id} are always the primary
+// key, even if the field is called "code" (there is no {kp_code}).
+// For your own pages, {kp_id}: the route, with (:segment), gets the real id with Crud::idFromUrl().
+// To open another CRUD filtered, {id}: 'admin/orders?f[client_id]={id}' (filters use the real id).
+$crud->addAction('Invoices', 'invoices/customer/{kp_id}', [
     'icon'    => 'bi bi-receipt',          // Bootstrap Icons
     'class'   => 'btn-outline-info',
     'target'  => '_blank',
@@ -569,7 +582,9 @@ $crud->addAction('Invoices', 'invoices/customer/{id}', [
 ]);
 
 // Actions that modify data: via POST (with the CSRF token)
-$crud->addAction('Duplicate', 'admin/events-duplicate/{id}', ['method' => 'post', 'confirm' => 'Are you sure?']);
+$crud->addAction('Duplicate', 'admin/events-duplicate/{kp_id}', ['method' => 'post', 'confirm' => 'Are you sure?']);
+// Routes.php: $routes->post('admin/events-duplicate/(:segment)', 'Admin\Events::duplicate/$1');
+// duplicate(string $code): $id = Crud::idFromUrl($code, 'events') ?? throw PageNotFoundException::forPageNotFound();
 
 // The URL can also be a closure
 $crud->addAction('Map', fn (array $row) => 'https://maps.google.com/?q=' . urlencode($row['address']));
@@ -660,13 +675,16 @@ class Kpcrudy extends \Kpcrudy\Config\Kpcrudy
     public int $importMaxRows      = 1000;
     public int $exportMaxRows      = 100000;   // 0 = no limit
     public bool $csrfProtection    = true;     // verify the token if the csrf filter is not active
+    public bool $maskIds           = false;    // true: masked ids in every URL
     public string|false $layout    = 'layouts/admin';
     public array $themes           = ['admin' => APPPATH . 'Views/kpcrudy/admin'];
     public string $theme           = 'admin';
 }
 ```
 
-All options are documented in [src/Config/Kpcrudy.php](src/Config/Kpcrudy.php). The security-related ones include `$csrfProtection`, `$exportMaxRows` and `$sensitiveFields` (names of secret fields that are hidden by default; if you extend it, start from the original list).
+The quickest way to create it is `php spark kpcrudy:publish config`: it writes this class with **every** option, the library's default value and comment, as a reference. Change only what you need; the options you delete (and those added in new versions) take the library's value. See [kpcrudy:publish](docs/commands_EN.md#kpcrudypublish).
+
+All options are documented in [src/Config/Kpcrudy.php](src/Config/Kpcrudy.php). The security-related ones include `$csrfProtection`, `$exportMaxRows`, `$maskIds` (with `$maskKey` and `$idMasker`, see [Masked ids](docs/functions_EN.md#masked-ids)) and `$sensitiveFields` (names of secret fields that are hidden by default; if you extend it, start from the original list).
 
 ## Layouts and themes
 
@@ -729,6 +747,8 @@ public array $themes = [
 ];
 ```
 
+The command `php spark kpcrudy:publish theme w3css --as intranet` copies the templates of a theme to `app/Views/kpcrudy/intranet` and registers it in `$themes`; with `--only list,partials/pagination` it copies only some of them and the rest comes from the original theme. Then use `->setTheme('intranet')` or `$theme = 'intranet'`. To adapt the texts, `php spark kpcrudy:publish lang ca` (see [kpcrudy:publish](docs/commands_EN.md#kpcrudypublish)).
+
 The [docs/new_theme_EN.md](docs/new_theme_EN.md) guide explains step by step how to make a theme, with the W3.CSS and Tailwind examples.
 
 | W3.CSS (`w3css`) | Tailwind CSS (`tailwind`) |
@@ -748,7 +768,7 @@ Included languages:
 | `pt` | Portuguese |
 | `de` | German |
 
-The texts are in `src/Language/{code}/Kpcrudy.php` and follow the request locale (`app.defaultLocale`, or the one negotiated by CodeIgniter if you have `negotiateLocale` enabled and the code in `supportedLocales`). To change any of them, create `app/Language/{code}/Kpcrudy.php` with the keys you want to override.
+The texts are in `src/Language/{code}/Kpcrudy.php` and follow the request locale (`app.defaultLocale`, or the one negotiated by CodeIgniter if you have `negotiateLocale` enabled and the code in `supportedLocales`). To change any of them, create `app/Language/{code}/Kpcrudy.php` with the keys you want to override (`php spark kpcrudy:publish lang en` copies all the texts of the language into it: keep only the ones you change).
 
 To add a new language, copy `src/Language/en/Kpcrudy.php` to the folder of the corresponding code and translate its values. `{0}`, `{1}`... are parameters and must be kept. Portuguese is European Portuguese: for Brazilian Portuguese, create `app/Language/pt-BR/Kpcrudy.php`.
 
@@ -760,6 +780,8 @@ To add a new language, copy `src/Language/en/Kpcrudy.php` to the folder of the c
 - **Sensitive fields**: columns with names like `password`, `token`, `secret`, `salt`, `hash`, `apikey`... (`$sensitiveFields`) are hidden by default from the list, the detail view, search, sorting, filters, export and forms (passwords do appear in the form, and are saved hashed). They are only shown if you list them explicitly.
 - Columns with `callbackColumn` are not searched unless you add them to `searchFields()`, because the callback may hide the real value.
 - Values of relations, enum and select are validated against the allowed options. Invalid filter values are ignored, the `%` and `_` search wildcards are matched literally, and an id that cannot be a valid primary key is treated as not found.
+- **Masked ids** (`maskIds()`): codes are always the same for each record, encrypted and signed with a server key; a forged or altered code, or one from another table, is treated as not found. They do not replace permissions or `where()`. In development, the CRUD warns about routes that conflict with its own (`Crud::checkRoutes()`).
+- **Signed URLs** (`requireSignature()`, `Crud::signUrl()`): the signature is an HMAC with a server key and covers the path (operation and id) and the expiry, so a link cannot be extended or pointed at another record; the domain and port are not covered. In a CRUD the parameters (`?q=`, `?page=`) stay free, so what the visitor can see must be limited with `where()`. Custom routes are strict: `Crud::checkSignature()` only accepts (unless `allowFreeQuery` is set) URLs signed as a whole with `signUrl()` or `signedUrl()`, never the ones a CRUD signs while browsing. Anyone with the link can open it until it expires; the only way to revoke it earlier is to change the key. See "Signed URLs" in [docs/functions_EN.md](docs/functions_EN.md) and [kpcrudy:signurl / kpcrudy:checkurl](docs/commands_EN.md#kpcrudysignurl).
 - URLs (`url` fields and action URLs returned by closures) are only used if they are relative or `http`, `https`, `mailto` or `tel`; links with `target` get `rel="noopener noreferrer"`.
 - Uploaded files are validated by extension (the real and the declared one), MIME type (images) and size, and are saved with a random name. When they are replaced or deleted, only files inside the field's upload directory are deleted.
 - The CSV export neutralizes values starting with `=`, `+`, `-` or `@` (also with leading spaces or line breaks, and their full-width variants) to prevent formula injection. It has a row limit (`$exportMaxRows`) and reads the records in chunks.

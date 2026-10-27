@@ -50,6 +50,8 @@ final class Installer
     {
         // public/uploads may not exist yet: if the demo creates it, uninstall removes it
         $createdUploadsRoot = $this->marker()['created_uploads_root'] ?? ! is_dir(dirname(Demo::uploadPath()));
+        // The CSV import of the demo stores its previews there (see Kpcrudy\Concerns\ImportsCsv)
+        $createdImportDir = $this->marker()['created_import_dir'] ?? ! is_dir(self::importDir());
 
         try {
             $this->createAndSeed();
@@ -60,7 +62,9 @@ final class Installer
                 'tables'               => Demo::TABLES,
                 'uploads'              => str_replace('\\', '/', Demo::uploadPath()),
                 'created_uploads_root' => $createdUploadsRoot,
+                'created_import_dir'   => $createdImportDir,
                 'allow_production'     => $allowProduction,
+                'mask_key'             => bin2hex(random_bytes(32)),
             ]);
         } catch (Throwable $e) {
             $this->uninstall();
@@ -91,9 +95,19 @@ final class Installer
             rmdir($uploadsRoot);
         }
 
+        // Import previews may contain personal data: removed if the demo created the folder
+        if (! $keepMarker && ($marker['created_import_dir'] ?? false)) {
+            $this->deleteDirectory(self::importDir());
+        }
+
         if (! $keepMarker && is_file(Demo::markerFile())) {
             unlink(Demo::markerFile());
         }
+    }
+
+    private static function importDir(): string
+    {
+        return WRITEPATH . 'uploads' . DIRECTORY_SEPARATOR . 'kpcrudy-import';
     }
 
     /**
@@ -134,7 +148,7 @@ final class Installer
      */
     private function writeMarker(array $data): void
     {
-        file_put_contents(Demo::markerFile(), json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+        Demo::writeMarker($data);
     }
 
     /**

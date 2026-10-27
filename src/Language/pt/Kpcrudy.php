@@ -70,6 +70,8 @@ return [
     'noSelection'      => 'Não selecionou nenhum registo.',
     'notFound'         => 'Registo não encontrado.',
     'notAllowed'       => 'Não tem permissão para realizar esta operação.',
+    'linkInvalid'      => 'Esta ligação não é válida.',
+    'linkExpired'      => 'Esta ligação expirou.',
     'exportTooMany'    => 'Há demasiados registos para exportar (máximo {0}). Filtre a lista e tente novamente.',
     'invalidRequest'   => 'Pedido inválido.',
     'invalidOption'    => 'O valor do campo {0} não é válido.',

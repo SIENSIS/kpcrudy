@@ -25,10 +25,19 @@ Als exemples, `$crud` és una instància de `Kpcrudy\Crud` dins d'un mètode de 
 - [Enllaçar a una pàgina del projecte amb l'id](#enllaçar-a-una-pàgina-del-projecte-amb-lid)
 - [Enllaçar a una pàgina externa amb l'id](#enllaçar-a-una-pàgina-externa-amb-lid)
 - [Enllaçar amb l'id emmascarat](#enllaçar-amb-lid-emmascarat)
+- [Saber a quin registre correspon un codi](#saber-a-quin-registre-correspon-un-codi)
 - [Accions que modifiquen dades](#accions-que-modifiquen-dades)
 - [Mostrar una acció només en alguns registres](#mostrar-una-acció-només-en-alguns-registres)
 - [Obrir el llistat ja filtrat o ordenat](#obrir-el-llistat-ja-filtrat-o-ordenat)
 - [Accions massives pròpies](#accions-massives-pròpies)
+
+**Enllaços signats**
+- [Compartir un llistat de només lectura sense login](#compartir-un-llistat-de-només-lectura-sense-login)
+- [Compartir un sol registre durant uns dies](#compartir-un-sol-registre-durant-uns-dies)
+- [Llistat intern que reparteix enllaços signats](#llistat-intern-que-reparteix-enllaços-signats)
+- [Descàrrega o pàgina pròpia amb enllaç signat](#descàrrega-o-pàgina-pròpia-amb-enllaç-signat)
+- [Enllaços signats amb ids emmascarats](#enllaços-signats-amb-ids-emmascarats)
+- [Esbrinar per què no funciona un enllaç signat](#esbrinar-per-què-no-funciona-un-enllaç-signat)
 
 **Importació CSV**
 - [Importar dades des d'un CSV](#importar-dades-des-dun-csv)
@@ -153,7 +162,7 @@ $crud->setModel(\App\Models\ClientModel::class)
      ->setSubject('client', 'Clients');
 ```
 
-Si les regles del model fan servir `{id}`, la clau primària ha de tenir una regla pròpia (CodeIgniter 4.5+):
+Si les regles del model fan servir `{id}`, la clau primària ha de tenir una regla pròpia (CodeIgniter 4.5+). El CRUD hi posa sempre l'id real, encara que la URL porti un [codi emmascarat](#enllaçar-amb-lid-emmascarat):
 
 ```php
 protected $validationRules = [
@@ -260,7 +269,7 @@ L'administrador no ha de veure ni escriure contrasenyes: un botó genera una con
 
 ```php
 // Controlador del CRUD
-$crud->addAction('Restableix la contrasenya', 'admin/users-reset-password/{id}', [
+$crud->addAction('Restableix la contrasenya', 'admin/users-reset-password/{kp_id}', [
     'icon'    => 'bi bi-key',
     'method'  => 'post',
     'confirm' => 'Es generarà una contrasenya nova i s\'enviarà per correu. Continuar?',
@@ -268,13 +277,15 @@ $crud->addAction('Restableix la contrasenya', 'admin/users-reset-password/{id}',
 ```
 
 ```php
-// Routes.php
-$routes->post('admin/users-reset-password/(:num)', 'Admin\Users::resetPassword/$1');
+// Routes.php: (:segment), perquè amb els ids emmascarats l'id és un codi
+$routes->post('admin/users-reset-password/(:segment)', 'Admin\Users::resetPassword/$1');
 
 // Controlador
-public function resetPassword(int $id)
+public function resetPassword(string $code)
 {
-    $user     = db_connect()->table('users')->where('id', $id)->get()->getRowArray();
+    // L'id real, tant si els ids estan emmascarats com si no
+    $id       = \Kpcrudy\Crud::idFromUrl($code, 'users') ?? throw \CodeIgniter\Exceptions\PageNotFoundException::forPageNotFound();
+    $user     = db_connect()->table('users')->where('id', $id)->get()->getRowArray() ?? throw \CodeIgniter\Exceptions\PageNotFoundException::forPageNotFound();
     $password = bin2hex(random_bytes(6));
 
     db_connect()->table('users')->where('id', $id)->update(['password' => password_hash($password, PASSWORD_DEFAULT)]);
@@ -296,12 +307,16 @@ Les accions amb `'method' => 'post'` envien el token CSRF; la ruta ha de ser `po
 
 ### Enllaçar a una pàgina del projecte amb l'id
 
-`{id}` és la clau primària, i `{camp}` qualsevol camp del registre. Les URL relatives passen per `site_url()`:
+`{kp_id}` és l'id tal com surt a les URL del CRUD (un codi si els ids estan [emmascarats](#enllaçar-amb-lid-emmascarat), i si no, l'id real), `{id}` és sempre la clau primària real, i `{camp}` qualsevol camp del registre. Les URL relatives passen per `site_url()`:
 
 ```php
-$crud->addAction('Factures', 'invoices/client/{id}', ['icon' => 'bi bi-receipt']);
-$crud->addAction('Comandes', 'orders?client={id}&year={year}', ['icon' => 'bi bi-cart']);
+$crud->addAction('Factures', 'invoices/client/{kp_id}', ['icon' => 'bi bi-receipt']);
+$crud->addAction('Comandes', 'orders?client={kp_id}&year={year}', ['icon' => 'bi bi-cart']);
 ```
+
+Per a les pàgines pròpies, fes servir `{kp_id}`: la ruta, amb `(:segment)` (no `(:num)`), n'obté l'id real amb [`Crud::idFromUrl()`](functions_CA.md#crudidfromurlstring-value-string-context-bool-masked--null-kpcrudyconfig-config--null-string-estàtica), i funciona tant si els ids estan emmascarats com si no (vegeu [Accions que modifiquen dades](#accions-que-modifiquen-dades)). Per obrir un altre CRUD filtrat, en canvi, cal `{id}`, perquè els filtres fan servir els valors reals (vegeu [Obrir el llistat ja filtrat o ordenat](#obrir-el-llistat-ja-filtrat-o-ordenat)).
+
+> `{id}` i `{kp_id}` apunten sempre a la **clau primària** de la taula, encara que el camp no es digui `id`. Si la clau és `codi`, `{id}` dona el valor de `codi` i `{kp_id}`, aquest valor tal com surt a les URL del CRUD. `{kp_codi}` no existeix: el prefix `kp_` només és per a la clau (vegeu [`addAction()`](functions_CA.md#addactionstring-label-closurestring-url-array-options---static)).
 
 Si cal construir la URL amb lògica, fes servir una closure:
 
@@ -338,129 +353,102 @@ $crud->addAction('Mapa', fn (array $row) =>
 
 ### Enllaçar amb l'id emmascarat
 
-Quan l'enllaç surt del CRUD (una pàgina pública, un correu, un sistema extern) potser no vols que l'id es vegi o es pugui endevinar. La URL es construeix amb una closure, i la pàgina de destí desfà el canvi. Hi ha tres opcions:
+Potser no vols que l'id es vegi o es pugui endevinar: ni a les URL del CRUD (`edit/5`) ni als enllaços que en surten (una pàgina pública, un correu, un sistema extern). Hi ha tres opcions, i la C es combina amb la A:
 
 | Opció | URL | Per a què |
 |---|---|---|
-| A. Xifrat | llarga, canvia cada vegada | Que l'id no es pugui conèixer de cap manera |
-| B. Ofuscat (Sqids) | curta i fixa: `/invoice/Uk9pQ2` | Que no es vegi un número consecutiu |
-| C. Signat | id visible + signatura: `/invoice/123/9f2c...` | Que l'id no es pugui canviar, i que l'enllaç caduqui |
+| A. `maskIds()` (recomanada) | curta i fixa: `/invoice/Xk3f9QaLm2PwE7` | Que l'id no es vegi ni es pugui canviar, al CRUD i fora |
+| B. Emmascarador propi (Sqids) | més curta: `/invoice/Uk9pQ2xa` | Que no es vegi un número consecutiu |
+| C. A + signatura (`Crud::signUrl()`) | `/invoice/Xk3f9QaLm2PwE7?kp_exp=…&kp_sig=…` | A més, que l'enllaç caduqui i que només l'obri qui l'ha rebut |
 
 Cap de les tres substitueix la comprovació de permisos a la pàgina de destí.
 
-**A. Xifrat amb l'Encrypter de CodeIgniter.** Cal una clau: `php spark key:generate`.
-
-```php
-// app/Helpers/mask_helper.php
-function mask_id(int|string $id): string
-{
-    $cipher = service('encrypter')->encrypt((string) $id);
-
-    return rtrim(strtr(base64_encode($cipher), '+/', '-_'), '=');
-}
-
-function unmask_id(string $token): ?string
-{
-    try {
-        $cipher = base64_decode(strtr($token, '-_', '+/'), true);
-
-        return $cipher === false ? null : service('encrypter')->decrypt($cipher);
-    } catch (\CodeIgniter\Encryption\Exceptions\EncryptionException) {
-        return null;
-    }
-}
-```
+**A. Identificadors emmascarats del CRUD.** Amb [`maskIds()`](functions_CA.md#identificadors-emmascarats), totes les URL del CRUD porten un codi en lloc de l'id (`admin/invoices/edit/Xk3f9QaLm2PwE7`), i els enllaços que en surten fan servir el mateix codi. No cal cap ruta més: el CRUD fa servir les de `Crud::routes()`. Els hooks, els permisos i els callbacks continuen rebent l'id real.
 
 ```php
 // Controlador del CRUD
-helper('mask');
-
-$crud->addAction('Enllaç per al client', fn (array $row) => site_url('invoice/' . mask_id($row['id'])), [
-    'icon'   => 'bi bi-link-45deg',
-    'target' => '_blank',
-]);
+$crud->setTable('invoices')
+     ->maskIds()
+     ->addAction('Enllaç per al client', 'invoice/{kp_id}', [   // {kp_id}: l'id emmascarat; {id}: el real
+         'icon'   => 'bi bi-link-45deg',
+         'target' => '_blank',
+     ]);
 ```
+
+La pàgina pública desfà el codi amb `Crud::unmaskId()`, amb el mateix context que el CRUD (per defecte, el nom de la taula). Un codi fals o modificat retorna `null`:
 
 ```php
 // Routes.php
-$routes->get('invoice/(:segment)', 'PublicInvoice::show/$1');
+Crud::routes($routes, 'admin/invoices', 'Admin\Invoices::index', ['filter' => 'auth:admin']);
+$routes->get('invoice/(:segment)', 'PublicInvoice::show/$1');   // un altre prefix!
 
 // Controlador de destí
-public function show(string $token)
+use Kpcrudy\Crud;
+
+public function show(string $code)
 {
-    helper('mask');
-    $id = unmask_id($token) ?? throw \CodeIgniter\Exceptions\PageNotFoundException::forPageNotFound();
+    $id = Crud::unmaskId($code, 'invoices') ?? throw \CodeIgniter\Exceptions\PageNotFoundException::forPageNotFound();
 
     $invoice = model('InvoiceModel')->find($id);
     // ...
 }
 ```
 
-**B. Ofuscat amb Sqids.** Dona URL curtes i sempre iguals per al mateix id. No és xifratge: amb l'alfabet es pot desfer, però no es veu l'ordre ni la quantitat de registres.
+Per fer l'enllaç fora del CRUD (p. ex. en un correu), `Crud::maskId()` dona el mateix codi:
+
+```php
+$link = site_url('invoice/' . Crud::maskId($invoice['id'], 'invoices'));
+```
+
+**Si la ruta pròpia ha de funcionar amb els ids emmascarats o sense** (p. ex. rep el `{kp_id}` d'una acció i l'emmascarament es pot activar o desactivar a la configuració), fes servir [`Crud::idFromUrl()`](functions_CA.md#crudidfromurlstring-value-string-context-bool-masked--null-kpcrudyconfig-config--null-string-estàtica) en lloc d'`unmaskId()`, i `Crud::idForUrl()` en lloc de `maskId()`: desfan i fan el codi només si els ids estan emmascarats. Si el CRUD l'activa només amb `maskIds()` (no a la configuració), passa `true` com a tercer paràmetre:
+
+```php
+$id   = Crud::idFromUrl($code, 'invoices', true) ?? throw \CodeIgniter\Exceptions\PageNotFoundException::forPageNotFound();
+$link = site_url('invoice/' . Crud::idForUrl($invoice['id'], 'invoices', true));
+```
+
+**La ruta pública ha d'anar amb un altre prefix** (`invoice/...`, no `admin/invoices/...`). `Crud::routes()` registra `admin/invoices/(:any)`, que captura tot el que comenci per `admin/invoices/`: una ruta `admin/invoices/(:segment)` definida després no s'executaria mai, i definida abans s'emportaria `admin/invoices/add`, `admin/invoices/trash`... En desenvolupament, el CRUD ho detecta i llança una excepció que explica el problema (vegeu [`Crud::checkRoutes()`](functions_CA.md#crudcheckroutes-void-estàtica)). Les rutes més concretes que no capturen cap URL del CRUD (p. ex. `admin/invoices/pdf/(:segment)` definida abans de `Crud::routes()`) sí que són correctes.
+
+Per activar-ho a tots els CRUD, posa `public bool $maskIds = true;` a `app/Config/Kpcrudy.php`. La clau és `$maskKey` (com a mínim 32 caràcters) o la d'encriptació del projecte (`php spark key:generate`); si canvia, els enllaços antics deixen de funcionar (vegeu [Context i clau](functions_CA.md#context-i-clau)).
+
+**B. Codis més curts amb Sqids.** Si prefereixes un altre format de codi, implementa `Kpcrudy\IdMasker` i indica-la a `Config\Kpcrudy::$idMasker`: la resta (rutes, `{kp_id}`, `Crud::maskId()`...) funciona igual. A [Interfície `Kpcrudy\IdMasker`](functions_CA.md#interfície-kpcrudyidmasker) hi ha un exemple complet amb [Sqids](https://sqids.org/php). No és xifratge: amb l'alfabet es pot desfer, però no es veu l'ordre ni la quantitat de registres.
+
+**C. Enllaç signat i amb caducitat.** Si a més l'enllaç ha de caducar, i la pàgina no s'ha de poder obrir només sabent el codi, signa'l amb `Crud::signUrl()` i comprova'l a la pàgina pública amb `Crud::hasValidSignature()` (o `Crud::checkSignature()`, per distingir un enllaç caducat d'un de fals). Si algú canvia el codi o la caducitat, la signatura deixa de ser vàlida:
+
+```php
+// Controlador del CRUD: enllaç de 24 h amb l'id emmascarat
+$crud->addAction('Enllaç de 24 h', fn (array $row) => Crud::signUrl('invoice/' . Crud::maskId($row['id'], 'invoices'), 86400));
+
+// PublicInvoice::show(string $code), abans de desfer el codi
+if (! Crud::hasValidSignature()) {
+    throw \CodeIgniter\Exceptions\PageNotFoundException::forPageNotFound(lang('Kpcrudy.linkInvalid'));
+}
+```
+
+Per compartir un CRUD sencer (un llistat o una fitxa) en lloc d'una pàgina pròpia, vegeu el grup [Enllaços signats](#compartir-un-llistat-de-només-lectura-sense-login).
+
+### Saber a quin registre correspon un codi
+
+Amb els identificadors emmascarats, una URL d'un error o d'una queixa (`admin/invoices/edit/Xk3f9QaLm2PwE7`) no diu de quin registre es tracta. La comanda `kpcrudy:unmaskid` ho desfà; el primer paràmetre és el context (el nom de la taula, o el que s'hagi passat a `maskIds(context: ...)`):
 
 ```bash
-composer require sqids/sqids
+php spark kpcrudy:unmaskid invoices Xk3f9QaLm2PwE7 Pq81LmZt0aXcW9
 ```
 
-```php
-$sqids = new \Sqids\Sqids(alphabet: 'k3G7QAe51FCsPW92uEOyq4Bg6Sp8YzVTmnU0liwDdHXLajZrfxNhobJIRcMvKt', minLength: 6);
+I a l'inrevés, per saber quina URL té un registre:
 
-$crud->addAction('Enllaç curt', fn (array $row) => site_url('i/' . $sqids->encode([(int) $row['id']])));
-
-// Destí
-$id = $sqids->decode($code)[0] ?? null;
+```bash
+php spark kpcrudy:maskid invoices 5 6 7
 ```
 
-Desa l'alfabet en un lloc compartit (una configuració) i barreja'l amb un ordre propi perquè els codis no coincideixin amb els d'altres projectes.
-
-**C. Enllaç signat i amb caducitat.** L'id es veu, però si algú el canvia, la signatura deixa de ser vàlida. És útil per enviar enllaços per correu o a un sistema extern que comparteix el secret.
-
-```php
-// app/Helpers/signed_helper.php
-function signed_url(string $path, int|string $id, int $ttl = 86400): string
-{
-    $expires = time() + $ttl;
-    $sign    = hash_hmac('sha256', "{$path}|{$id}|{$expires}", config('Encryption')->key);
-
-    return site_url("{$path}/{$id}/{$expires}/{$sign}");
-}
-
-function signed_ok(string $path, string $id, string $expires, string $sign): bool
-{
-    $expected = hash_hmac('sha256', "{$path}|{$id}|{$expires}", config('Encryption')->key);
-
-    return (int) $expires >= time() && hash_equals($expected, $sign);
-}
-```
-
-```php
-// Controlador del CRUD
-helper('signed');
-$crud->addAction('Enllaç de 24 h', fn (array $row) => signed_url('download', $row['id']));
-
-// Routes.php
-$routes->get('download/(:num)/(:num)/(:alphanum)', 'Downloads::get/$1/$2/$3');
-
-// Destí
-public function get(string $id, string $expires, string $sign)
-{
-    helper('signed');
-
-    if (! signed_ok('download', $id, $expires, $sign)) {
-        throw \CodeIgniter\Exceptions\PageNotFoundException::forPageNotFound();
-    }
-    // ...
-}
-```
-
-> Aquestes tècniques són per als enllaços que **surten** del CRUD. Les URL internes del CRUD (`edit/5`, `show/5`) fan servir l'id real; la protecció d'aquestes URL la donen els permisos i `where()`.
+Els codis que no són vàlids per a aquest context surten marcats (potser són d'una altra taula o d'una clau anterior). Si els CRUD fan servir una configuració pròpia (`new Crud(new \Config\KpcrudyPublic())`), indica-la amb `--config "Config\KpcrudyPublic"`, perquè pot tenir una altra clau. Vegeu [les comandes](functions_CA.md#comandes-de-spark). Si el codi ve d'un enllaç signat que no funciona, vegeu [Esbrinar per què no funciona un enllaç signat](#esbrinar-per-què-no-funciona-un-enllaç-signat).
 
 ### Accions que modifiquen dades
 
 Una acció que canvia dades no ha de ser un enllaç GET: un cercador o una previsualització podria executar-la. Amb `'method' => 'post'` el botó envia un formulari amb el token CSRF:
 
 ```php
-$crud->addAction('Duplica', 'admin/events-duplicate/{id}', [
+$crud->addAction('Duplica', 'admin/events-duplicate/{kp_id}', [   // {kp_id}: l'id com a les URL del CRUD
     'icon'    => 'bi bi-copy',
     'method'  => 'post',
     'confirm' => 'Vols crear una còpia d\'aquest esdeveniment?',
@@ -469,22 +457,28 @@ $crud->addAction('Duplica', 'admin/events-duplicate/{id}', [
 
 ```php
 // Routes.php: una ruta POST que no comenci com les del CRUD
-$routes->post('admin/events-duplicate/(:num)', 'Admin\Events::duplicate/$1');
+// (:segment), no (:num): amb els ids emmascarats arriba un codi (DxbBosxVUi2fWpPq3w)
+$routes->post('admin/events-duplicate/(:segment)', 'Admin\Events::duplicate/$1');
 
 // Controlador
-public function duplicate(int $id)
+use Kpcrudy\Crud;
+
+public function duplicate(string $code)
 {
+    $id = Crud::idFromUrl($code, 'events') ?? throw \CodeIgniter\Exceptions\PageNotFoundException::forPageNotFound();
     // ... crea la còpia ...
-    return redirect()->to(site_url('admin/events/edit/' . $newId))->with('message', 'Còpia creada.');
+    return redirect()->to(site_url('admin/events/edit/' . Crud::idForUrl($newId, 'events')))->with('message', 'Còpia creada.');
 }
 ```
 
-La ruta no pot ser `admin/events/duplicate/5`, perquè `admin/events/(:any)` ja és del CRUD. Fes servir un altre prefix, com `admin/events-duplicate/5`.
+`Crud::idFromUrl()` i `Crud::idForUrl()` desfan i fan el codi només si els ids estan emmascarats, de manera que l'exemple funciona en els dos casos (si el CRUD l'activa només amb `maskIds()`, passa'ls `true` com a tercer paràmetre).
+
+La ruta no pot ser `admin/events/duplicate/<id>`, perquè `admin/events/(:any)` ja és del CRUD. Fes servir un altre prefix, com `admin/events-duplicate/<id>`.
 
 ### Mostrar una acció només en alguns registres
 
 ```php
-$crud->addAction('Paga', 'invoices/pay/{id}', [
+$crud->addAction('Paga', 'invoices/pay/{kp_id}', [
     'icon'    => 'bi bi-credit-card',
     'class'   => 'btn-success',
     'method'  => 'post',
@@ -497,13 +491,13 @@ Si la condició depèn d'altres taules, calcula-ho abans del CRUD (vegeu [Column
 ```php
 $registered = array_column(db_connect()->table('attendances')->select('event_id')->where('user_id', $userId)->get()->getResultArray(), 'event_id');
 
-$crud->addAction('Apunta-m\'hi', 'events-join/{id}', [
+$crud->addAction('Apunta-m\'hi', 'events-join/{kp_id}', [
     'method'  => 'post',
     'visible' => fn (array $row) => ! in_array($row['id'], $registered),
 ]);
 ```
 
-`visible` només amaga el botó. La ruta de destí ha de tornar a comprovar que l'acció és permesa.
+`visible` només amaga el botó. La ruta de destí (amb `(:segment)` i `Crud::idFromUrl()`, com a [Accions que modifiquen dades](#accions-que-modifiquen-dades)) ha de tornar a comprovar que l'acció és permesa.
 
 ### Obrir el llistat ja filtrat o ordenat
 
@@ -520,7 +514,8 @@ L'estat del llistat va a la URL, de manera que es pot enllaçar directament:
 El camp ha de ser a `filters()` (o als filtres per defecte) i a les columnes ordenables.
 
 ```php
-// Al CRUD de clients, un botó per veure'n les comandes ja filtrades
+// Al CRUD de clients, un botó per veure'n les comandes ja filtrades.
+// {id}, no {kp_id}: els filtres fan servir l'id real, també amb els ids emmascarats
 $crud->addAction('Comandes', 'admin/orders?f[client_id]={id}&sort=date&dir=desc', ['icon' => 'bi bi-cart']);
 ```
 
@@ -547,6 +542,262 @@ $crud->addBulkAction('anonymize', 'Anonimitza', function (array $ids) {
 ```
 
 `$ids` ja està filtrat per l'abast del CRUD (`where()`): no cal comprovar que els registres siguin "teus".
+
+---
+
+## Enllaços signats
+
+Un enllaç signat obre una pàgina sense iniciar sessió, només a qui l'ha rebut i fins que caduca. Com funciona, què cobreix la signatura i totes les opcions: [URL signades](functions_CA.md#url-signades).
+
+### Compartir un llistat de només lectura sense login
+
+Una agenda d'esdeveniments que qualsevol pot consultar durant 7 dies amb l'enllaç, sense compte. És el que fa el controlador [Shared](../src/Demo/Controllers/Shared.php) de la demo.
+
+```php
+// app/Config/Routes.php
+use Kpcrudy\Crud;
+
+Crud::routes($routes, 'admin/events', 'Admin\Events::index', ['filter' => 'auth:admin']);
+// Sense filtre de login (el permís és la signatura) i amb un altre prefix que l'administració
+Crud::routes($routes, 'shared/agenda', 'Shared::agenda');
+```
+
+```php
+// app/Controllers/Shared.php
+namespace App\Controllers;
+
+use Kpcrudy\Crud;
+
+class Shared extends BaseController
+{
+    public const TTL = 7 * 86400;   // 7 dies
+
+    public function agenda()
+    {
+        $crud = new Crud();
+        $crud->setTable('events')
+             ->setSubject('esdeveniment', 'Agenda')
+             // El que pot veure el visitant: la signatura no cobreix ?q=, ?page=, ?f[...]=...
+             ->where('status', 'published')
+             ->where('starts_at >=', date('Y-m-d H:i:s'))
+             ->readOnly()
+             ->unsetTrash()
+             ->unsetBulk()
+             ->unsetExport()
+             ->maskIds()                 // recomanat als enllaços compartits
+             ->requireSignature()        // '*': totes les pàgines necessiten signatura
+             ->setLayout('default')      // sense el menú de l'aplicació: el visitant no ha iniciat sessió
+             ->columns(['title', 'starts_at', 'location']);
+
+        return $crud->render();
+    }
+
+    /**
+     * Enllaç d'entrada a l'agenda. Només se signa el camí ($lockQuery = false):
+     * el visitant pot cercar i canviar de pàgina, però no allargar l'enllaç.
+     */
+    public static function link(): string
+    {
+        return Crud::signUrl('shared/agenda', self::TTL, false);
+    }
+}
+```
+
+```php
+// app/Controllers/Admin/Events.php: on es crea l'enllaç (un botó de l'administració)
+$crud->addHeaderAction('Comparteix l\'agenda', \App\Controllers\Shared::link(), [
+    'icon'   => 'bi bi-share',
+    'target' => '_blank',
+]);
+```
+
+Cada vegada que es mostra l'administració es crea un enllaç nou, vàlid 7 dies des d'aquell moment. Mentre el visitant navega (pàgines, ordenació, cerca, fitxes), el CRUD signa els enllaços sol, amb la mateixa caducitat.
+
+**El visitant pot** veure, cercar, ordenar i obrir la fitxa dels esdeveniments publicats i futurs durant 7 dies; **no pot** editar res, veure altres esdeveniments (tampoc canviant la cerca a la URL), allargar l'enllaç ni obrir cap altra pàgina de l'aplicació.
+
+### Compartir un sol registre durant uns dies
+
+Un enllaç a la fitxa d'una factura, vàlid 3 dies, per enviar-lo al client. Qui el rep veu aquella factura i res més.
+
+```php
+// app/Config/Routes.php
+Crud::routes($routes, 'admin/invoices', 'Admin\Invoices::index', ['filter' => 'auth:admin']);
+Crud::routes($routes, 'shared/invoices', 'SharedInvoices::index');   // sense login
+```
+
+```php
+// app/Controllers/SharedInvoices.php
+public function index()
+{
+    $crud = new Crud();
+    $crud->setTable('invoices')
+         ->where('status', 'sent')        // només es poden compartir factures enviades
+         ->maskIds()
+         ->readOnly()
+         ->unsetExport()
+         ->requireSignature()             // també el llistat: només el donaria un enllaç signat del llistat
+         ->setLayout('default')
+         ->showFields(['number', 'date', 'client_id', 'total']);
+
+    return $crud->render();
+}
+```
+
+```php
+// app/Controllers/Admin/Invoices.php: una acció a cada fila de l'administració
+$crud->addAction('Enllaç per al client (3 dies)', fn (array $row) =>
+    Crud::signUrl('shared/invoices/show/' . Crud::maskId($row['id'], 'invoices'), 3 * 86400, false),
+    ['icon' => 'bi bi-share', 'target' => '_blank']
+);
+```
+
+L'enllaç ha de portar el codi emmascarat amb el mateix context que el CRUD públic (el nom de la taula). No facis servir `$crud->signedUrl()` del CRUD d'administració: signaria una URL de l'administració. Com que l'enllaç és d'una fitxa, el CRUD no signa cap altre enllaç: no hi ha botó de tornar al llistat, i si la factura s'esborra o deixa de complir el `where()`, el visitant veu un 404 amb "No s'ha trobat el registre.".
+
+**El visitant pot** veure aquella factura durant 3 dies; **no pot** arribar al llistat (`shared/invoices` sense signatura dona un 404), obrir cap altra factura ni allargar l'enllaç.
+
+### Llistat intern que reparteix enllaços signats
+
+El personal veu el llistat de comandes amb login, i cada fitxa del llistat té un enllaç signat de 7 dies que pot copiar i enviar a qui no té compte.
+
+```php
+// app/Config/Routes.php: sense filtre a la ruta. Un filtre de login també bloquejaria
+// les fitxes compartides, perquè tenen el mateix prefix: ho decideix el controlador.
+Crud::routes($routes, 'orders', 'Orders::index');
+```
+
+```php
+// app/Controllers/Orders.php
+public function index()
+{
+    $loggedIn = session('user_id') !== null;
+
+    // Sense login ni signatura: a iniciar sessió
+    if (! $loggedIn && $this->request->getGet('kp_sig') === null) {
+        return redirect()->to('login');
+    }
+
+    $crud = new Crud();
+    $crud->setTable('orders')
+         ->maskIds()
+         ->readOnly();
+
+    if ($loggedIn) {
+        // El llistat s'obre sense signatura i dona enllaços de 7 dies a les fitxes
+        $crud->requireSignature(['show'], 7 * 86400, ['list']);
+    } else {
+        // Sense login, tot necessita signatura: només s'obren les fitxes que ha repartit el llistat
+        $crud->requireSignature();
+    }
+
+    return $crud->render();
+}
+```
+
+**Per què cal protegir la resta.** Amb `requireSignature(['show'], ...)`, només la fitxa necessita signatura: el llistat i qualsevol altra operació que no hagis tret quedarien oberts a tothom que arribi a la ruta. Per això, sense login, el controlador redirigeix al login o exigeix signatura a tot (`requireSignature()`). Si els destinataris també tenen compte, n'hi ha prou amb un filtre de login a la ruta i `requireSignature(['show'], 7 * 86400, ['list'])`.
+
+**Qui rep l'enllaç pot** veure aquella comanda durant 7 dies sense login; **no pot** veure el llistat (el porta al login), ni cap altra comanda, ni allargar l'enllaç.
+
+### Descàrrega o pàgina pròpia amb enllaç signat
+
+Un enllaç de descàrrega d'un informe, vàlid 1 hora, a una ruta pròpia (no és un CRUD). Aquí la signatura cobreix el camí **i** els paràmetres (`$lockQuery = true`, el valor per defecte).
+
+```php
+// app/Config/Routes.php: sense login, i amb un prefix diferent de qualsevol CRUD
+$routes->get('reports/(:segment)/pdf', 'Reports::pdf/$1');
+```
+
+```php
+// app/Controllers/Admin/Reports.php: on es crea l'enllaç (acció del CRUD d'administració)
+$crud->maskIds()
+     ->addAction('Enllaç de descàrrega (1 h)', fn (array $row) =>
+         Crud::signUrl('reports/' . Crud::maskId($row['id'], 'reports') . '/pdf'),   // 3600 s per defecte
+         ['icon' => 'bi bi-file-earmark-pdf']
+     );
+```
+
+```php
+// app/Controllers/Reports.php
+use CodeIgniter\Exceptions\PageNotFoundException;
+use Kpcrudy\Crud;
+use Kpcrudy\UrlSigner;
+
+public function pdf(string $code)
+{
+    $status = Crud::checkSignature();
+
+    if ($status === UrlSigner::EXPIRED) {
+        // La signatura és bona però ha passat l'hora: es pot dir clarament
+        return $this->response->setStatusCode(410)->setBody(lang('Kpcrudy.linkExpired') . ' Demana un enllaç nou.');
+    }
+
+    if ($status !== UrlSigner::VALID) {   // 'missing' o 'invalid': no es dona cap pista
+        throw PageNotFoundException::forPageNotFound(lang('Kpcrudy.linkInvalid'));
+    }
+
+    $id     = Crud::unmaskId($code, 'reports') ?? throw PageNotFoundException::forPageNotFound();
+    $report = model('ReportModel')->find($id) ?? throw PageNotFoundException::forPageNotFound();
+
+    return $this->response->download(WRITEPATH . 'reports/' . $report['file'], null);
+}
+```
+
+Si l'enllaç s'ha fet amb `$lockQuery = false`, comprova'l amb `Crud::checkSignature(allowFreeQuery: true)`. `checkSignature()` només accepta enllaços fets amb `Crud::signUrl()` o `signedUrl()`: els que signa un CRUD mentre es navega no obren pàgines pròpies.
+
+**Qui rep l'enllaç pot** descarregar aquell informe durant 1 hora; **no pot** canviar el codi, afegir-hi o treure'n paràmetres, ni fer-lo servir per a un altre informe.
+
+### Enllaços signats amb ids emmascarats
+
+Es poden fer servir per separat, però per als enllaços compartits és recomanable combinar-los:
+
+| | Només signatura | Signatura + `maskIds()` |
+|---|---|---|
+| URL | `shared/invoices/show/123?kp_exp=…&kp_sig=…` | `shared/invoices/show/Xk3f9QaLm2PwE7?kp_exp=…&kp_sig=…` |
+| Es pot obrir un altre registre canviant la URL? | No | No |
+| Es veu l'id real (quantes factures hi ha, l'ordre)? | Sí | No |
+
+```php
+// CRUD públic
+$crud->setTable('invoices')->maskIds()->readOnly()->requireSignature();
+
+// Amb signedUrl(), l'id real s'emmascara sol
+$link = $crud->signedUrl('show', 123, 3 * 86400);
+
+// Amb Crud::signUrl(), emmascara'l tu, amb el mateix context que el CRUD (el nom de la taula)
+$link = Crud::signUrl('shared/invoices/show/' . Crud::maskId(123, 'invoices'), 3 * 86400, false);
+```
+
+Totes dues coses fan servir la mateixa [clau](functions_CA.md#context-i-clau): si canvia, deixen de funcionar alhora els codis i les signatures.
+
+### Esbrinar per què no funciona un enllaç signat
+
+Quan algú diu "l'enllaç no em funciona", demana-li l'enllaç sencer i comprova'l amb `kpcrudy:checkurl` (entre cometes, perquè porta `&`):
+
+```bash
+php spark kpcrudy:checkurl "https://example.com/shared/invoices/show/Xk3f9QaLm2PwE7?kp_exp=1767225600&kp_sig=Qm9..."
+```
+
+```text
+Valid signature (path only: the parameters can change)
+Expires: 2026-01-01 00:00:00
+```
+
+| Resultat | Què vol dir | Què fer |
+|---|---|---|
+| `Valid signature` | L'enllaç és bo | El problema és a les dades: el registre s'ha esborrat o ja no compleix el `where()`, o l'operació s'ha tret |
+| `Expired` | La signatura és bona, però ha passat `kp_exp` | Crea'n un de nou |
+| `Invalid signature` | S'ha modificat o tallat, o s'ha signat amb una altra clau (un altre entorn o una altra configuració) | Torna'l a copiar sencer; passa `--config` si el CRUD fa servir una configuració pròpia |
+| `Not signed` | No porta `kp_sig` (s'ha tallat l'enllaç) | Torna'l a copiar sencer |
+
+La comanda també diu qui ha signat l'enllaç: `signed with signUrl() or signedUrl()` (un enllaç d'entrada) o `signed by a CRUD while browsing` (copiat d'una pàgina del llistat signat, com la pàgina 2 o una fitxa). Aquests darrers només els accepta aquell CRUD i caduquen alhora que l'enllaç d'entrada.
+
+Per saber de quin registre es tracta, desfés el codi de la URL; i per enviar un enllaç nou sense passar per l'aplicació, crea'l amb `kpcrudy:signurl` (`--ttl` en segons; `--free-query` per a pàgines d'un CRUD):
+
+```bash
+php spark kpcrudy:unmaskid invoices Xk3f9QaLm2PwE7
+php spark kpcrudy:signurl "shared/invoices/show/Xk3f9QaLm2PwE7" --ttl 259200 --free-query
+```
+
+Totes les opcions de les comandes són a [commands_CA.md](commands_CA.md).
 
 ---
 
@@ -831,16 +1082,19 @@ public function profile()
 {
     $userId = session('user_id');
 
+    // La fitxa del perfil: profile/show/<id>, o el codi si els ids estan emmascarats
+    $showUrl = site_url('profile/show/' . Crud::idForUrl($userId, 'users'));
+
     // No hi ha llistat: la pàgina és la fitxa
     if (uri_string() === 'profile') {
-        return redirect()->to(site_url('profile/show/' . $userId));
+        return redirect()->to($showUrl);
     }
 
     $crud = new Crud();
     $crud->setTable('users')
          ->setSubject('perfil', 'El meu perfil')
          ->where('id', $userId)
-         ->setBackUrl(site_url('profile/show/' . $userId))
+         ->setBackUrl($showUrl)
          ->unsetAdd()->unsetDelete()->unsetTrash()->unsetExport()->unsetBulk()
          ->editFields(['first_name', 'last_name', 'email', 'avatar', 'password'])
          ->showFields(['avatar', 'username', 'first_name', 'last_name', 'email']);
@@ -908,36 +1162,47 @@ $crud->setRelationNN('attendees', 'attendances', 'users', 'event_id', 'user_id',
 
 ### CRUD dels fills d'un registre
 
-Les notes d'un client, a `clients/5/notes`. `Crud::routes()` accepta rutes amb paràmetres:
+Les notes d'un client, a `clients/5/notes` o, amb els [ids emmascarats](#enllaçar-amb-lid-emmascarat), a `clients/DxbBosxVUi2fWpPq3w/notes`. `Crud::routes()` accepta rutes amb paràmetres. Amb `(:segment)` (no `(:num)`, que no accepta les lletres, `-` i `_` del codi) la mateixa ruta serveix en els dos casos:
 
 ```php
 // Routes.php
-\Kpcrudy\Crud::routes($routes, 'clients/(:num)/notes', 'Clients::notes/$1');
+\Kpcrudy\Crud::routes($routes, 'clients/(:segment)/notes', 'Clients::notes/$1');
 ```
 
 ```php
-// Controlador: el primer paràmetre és l'id del client
-public function notes(int $clientId)
+use CodeIgniter\Exceptions\PageNotFoundException;
+use Kpcrudy\Crud;
+
+// Controlador: el primer paràmetre és l'id del client tal com surt a la URL
+public function notes(string $clientCode)
 {
-    $client = model('ClientModel')->find($clientId) ?? throw \CodeIgniter\Exceptions\PageNotFoundException::forPageNotFound();
+    // L'id real: desfà el codi si els ids estan emmascarats (un codi fals dona null).
+    // El context és el del CRUD de clients: per defecte, el nom de la taula
+    $clientId = Crud::idFromUrl($clientCode, 'clients') ?? throw PageNotFoundException::forPageNotFound();
+    $client   = model('ClientModel')->find($clientId) ?? throw PageNotFoundException::forPageNotFound();
 
     $crud = new Crud();
     $crud->setTable('client_notes')
          ->setSubject('nota', 'Notes de ' . $client['name'])
-         ->where('client_id', $clientId)
-         ->fieldType('client_id', 'hidden', ['value' => $clientId])
+         ->where('client_id', $clientId)   // amb l'id real; també fa que les notes noves siguin d'aquest client
          ->columns(['created_at', 'text'])
-         ->addHeaderAction('Torna al client', 'admin/clients/show/' . $clientId, ['icon' => 'bi bi-arrow-left']);
+         ->addHeaderAction('Torna al client', 'admin/clients/show/' . Crud::idForUrl($clientId, 'clients'), ['icon' => 'bi bi-arrow-left']);
 
     return $crud->render();
 }
 ```
 
-I des del CRUD de clients:
+I des del CRUD de clients, amb `{kp_id}` (l'id tal com surt a les URL del CRUD; `{id}` és sempre el real):
 
 ```php
-$crud->addAction('Notes', 'clients/{id}/notes', ['icon' => 'bi bi-journal-text']);
+$crud->addAction('Notes', 'clients/{kp_id}/notes', ['icon' => 'bi bi-journal-text']);
 ```
+
+`where('client_id', $clientId)` limita les notes al client i, a més, amaga el camp `client_id` del formulari i el desa sempre amb aquest valor: no cal cap camp ocult. Canviar l'id de la URL només dona accés a les notes d'un altre client si l'usuari hi té permís; si no és així, comprova-ho al controlador (p. ex. que el client sigui de l'usuari connectat).
+
+Si els ids s'emmascaren només amb `maskIds()` al CRUD de clients (no a la configuració), passa `true` com a tercer paràmetre a `idFromUrl()` i `idForUrl()`. Sense emmascarar, `idFromUrl()` retorna el valor de la URL tal qual: si només vols acceptar números, comprova-ho al controlador.
+
+> **Ordre de les rutes.** Si el CRUD de clients també penja de `clients` (`Crud::routes($routes, 'clients', ...)`), defineix primer la ruta dels fills: `clients/(:any)` capturaria `clients/<codi>/notes`. En desenvolupament, `Crud::checkRoutes()` ho detecta i ho explica amb una excepció.
 
 ---
 
@@ -1098,6 +1363,14 @@ public function dashboard()
 
 Un tema propi només ha de contenir les plantilles que canvien; la resta es carrega del tema `bootstrap5`.
 
+La manera més ràpida és la comanda [kpcrudy:publish](commands_CA.md#kpcrudypublish), que copia la plantilla i registra el tema en un sol pas:
+
+```bash
+php spark kpcrudy:publish theme bootstrap5 --as compact --only show
+```
+
+Després, modifica `app/Views/kpcrudy/compact/show.php` i fes el pas 3. A mà, els passos són aquests:
+
 1. Copia la plantilla, per exemple [src/Views/bootstrap5/show.php](../src/Views/bootstrap5/show.php), a `app/Views/kpcrudy/compact/show.php`, i modifica-la. Les variables que rep estan documentades a la capçalera del fitxer.
 2. Registra el tema:
 
@@ -1127,7 +1400,11 @@ $config->listTruncate = 0;
 $crud = new Crud($config);
 ```
 
+Per canviar-la per a tots els CRUD, `php spark kpcrudy:publish config` crea `app/Config/Kpcrudy.php` amb totes les opcions i el seu valor per defecte: canvia-hi només el que necessitis (vegeu [kpcrudy:publish](commands_CA.md#kpcrudypublish)). `config('Kpcrudy')`, i per tant la còpia de dalt, parteix d'aquests valors.
+
 ### Canviar un text o afegir un idioma
+
+La manera més ràpida és `php spark kpcrudy:publish lang ca` (vegeu [kpcrudy:publish](commands_CA.md#kpcrudypublish)): copia tots els textos de l'idioma a `app/Language/ca/Kpcrudy.php`. Canvia-hi els que vulguis i esborra la resta: les claus que hi falten surten de la llibreria.
 
 Per canviar algun text de la llibreria, crea al projecte un fitxer amb només les claus que vols sobreescriure:
 

@@ -85,7 +85,7 @@ $pages = [
         <h2 class="h5 mb-3">Upcoming events</h2>
         <div class="list-group">
             <?php foreach ($upcoming as $event): ?>
-                <a href="<?= Demo::url('agenda/show/' . $event['id']) ?>" class="list-group-item list-group-item-action">
+                <a href="<?= Demo::url('agenda/show/' . Demo::maskId('kpdemo_events', $event['id'])) ?>" class="list-group-item list-group-item-action">
                     <div class="d-flex justify-content-between">
                         <strong><?= esc($event['title']) ?></strong>
                         <span class="badge" style="background: <?= esc($event['color'], 'attr') ?>"><?= esc($event['category']) ?></span>
