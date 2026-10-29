@@ -24,19 +24,21 @@ For complete recipes for common cases, see [howto_EN.md](howto_EN.md).
 - [Columns and fields](#columns-and-fields): `columns`, `fields`, `addFields`, `editFields`, `showFields`, `searchFields`, `filters`, `exportColumns`, `unsortable`, `displayAs`
 - [Field types and validation](#field-types-and-validation): `fieldType`, `setRules`, `requiredFields`, `readonlyFields`, `setDefault`, `setHelp`
 - [Relations](#relations): `setRelation`, `setRelationNN`
+- [Translations](#translations): `setTranslations`, `postedTranslations`
 - [Display callbacks](#display-callbacks): `callbackColumn`, `callbackField`, `callbackExport`
-- [Hooks](#hooks): `beforeInsert`, `afterInsert`, `beforeUpdate`, `afterUpdate`, `beforeDelete`, `afterDelete`, `afterRestore`
+- [Hooks](#hooks): `beforeInsert`, `afterInsert`, `beforeUpdate`, `afterUpdate`, `beforeDelete`, `afterDelete`, `afterRestore`, `afterWrite`
 - [Actions](#actions): `addAction`, `addHeaderAction`, `addBulkAction`
+- [Custom operations](#custom-operations): `addOperation`, `backToList`, `page`
 - [CSV import](#csv-import): `enableImport`, `callbackImport`
-- [Permissions](#permissions): `setPermission`, `unsetAdd`, `unsetEdit`, `unsetDelete`, `unsetShow`, `unsetExport`, `unsetTrash`, `unsetPurge`, `unsetSearch`, `unsetFilters`, `unsetBulk`, `readOnly`
-- [Display and navigation](#display-and-navigation): `setPerPage`, `defaultOrder`, `setBaseUrl`, `setBackUrl`, `setTheme`, `setLayout`
+- [Permissions](#permissions): `setPermission`, `unsetAdd`, `unsetEdit`, `unsetDelete`, `unsetShow`, `unsetExport`, `unsetTrash`, `unsetPurge`, `unsetSearch`, `unsetFilters`, `unsetBulk`, `readOnly`, `setResource`, `getResource`, `setPermissionResolver`, `isAllowed`, `PermissionResolver`
+- [Display and navigation](#display-and-navigation): `setPerPage`, `defaultOrder`, `setBaseUrl`, `setBackUrl`, `setTheme`, `setLayout`, `setLayoutData`, `showTitle`, `getTitle`
 - [Access from callbacks](#access-from-callbacks): `getModel`, `getTable`, `getPrimaryKey`, `getBaseUrl`, `url`
 - [Masked ids](#masked-ids): `maskIds`, `encodeId`, `decodeId`, `maskId`, `unmaskId`, `idFromUrl`, `idForUrl`, `IdMasker`, `checkRoutes`
 - [Signed URLs](#signed-urls): `requireSignature`, `signedUrl`, `signUrl`, `checkSignature`, `hasValidSignature`
 - [Constants](#constants): `ID_OPERATIONS`, `OPERATIONS`
 - [Spark commands](#spark-commands): `kpcrudy:make`, `kpcrudy:demo`, `kpcrudy:maskid`, `kpcrudy:unmaskid`, `kpcrudy:signurl`, `kpcrudy:checkurl`
-- [Global configuration](#global-configuration): properties of `Config\Kpcrudy`
-- [Templates](#templates): `Renderer::render`, `Renderer::renderParent`, `Renderer::locate`, `Renderer::hidden`, `Renderer::attrs`
+- [Global configuration](#global-configuration): properties of `Config\Kpcrudy`, languages
+- [Templates](#templates): `Renderer::render`, `Renderer::renderParent`, `Renderer::locate`, `Renderer::hidden`, `Renderer::attrs`, `Renderer::nonce`, Content-Security-Policy, `kpcrudy:confirm` event
 
 ---
 
@@ -89,7 +91,12 @@ $routes->group('', ['filter' => 'auth'], static function ($routes) {
 
 // The route can have parameters: the controller receives them first
 Crud::routes($routes, 'clients/(:segment)/notes', 'Clients::notes/$1');   // notes(string $code): the real id with Crud::idFromUrl($code, 'clients')
+
+// With a route name
+Crud::routes($routes, 'admin/clients', 'Admin::clients', ['as' => 'admin-clients']);
 ```
+
+The name (`as`) is given **only to the base route** (`admin/clients`); the `admin/clients/(:any)` route has no name. CodeIgniter does not register a second route with a name that already exists, so if both had it, the operation URLs (`add`, `edit/5`...) would be left without a route. `route_to('admin-clients')` and `url_to('admin-clients')` give the CRUD's base URL; for an operation, add it to the end (`url_to('admin-clients') . '/add'`) or use [`url()`](#getbaseurl-string--urlstring-operation-string-id--null-string) from the CRUD.
 
 The routes it registers carry the option `'kpcrudy' => true`, which lets [`Crud::checkRoutes()`](#crudcheckroutes-void-static) find them. In development, `render()` checks that no other route conflicts with the CRUD's: a route with the same prefix defined **after** `Crud::routes()` would never run (`prefix/(:any)` captures it first), and one defined **before** that captures CRUD URLs (`prefix/add`, `prefix/edit/1`...) would stop them from working. Your own pages (e.g. a public link with a [masked id](#masked-ids)) must use a different prefix.
 
@@ -314,6 +321,7 @@ Forces the type of a field. If not forced, it is inferred from the database (int
 | `boolean` | switch | Yes / No |
 | `enum` | dropdown | label |
 | `select` | dropdown | label |
+| `multiselect` | several checkboxes | labels separated by commas |
 | `hidden` | hidden field | value |
 | `readonly` | read-only | value |
 | `upload` | file | link |
@@ -323,7 +331,8 @@ Options:
 
 | Option | Type | Description |
 |---|---|---|
-| `options` | `enum`, `select` | `[value => label]`. For MySQL `ENUM`s, if not given, the column values are used |
+| `options` | `enum`, `select`, `multiselect` | `[value => label]`. For MySQL `ENUM`s, if not given, the column values are used |
+| `storage` | `multiselect` | How the values are saved in the column: `'json'` (default, `["kids","adults"]`) or `'csv'` (`kids,adults`) |
 | `value` | `hidden` | Value that is always saved, when adding and when editing. The field does not appear in the form, but it must be in the field list (`fields()` or the default one) |
 | `hash` | `password` | `true` (default): saved with `password_hash()`. `false`: saved as is |
 | `path` | `upload`, `image` | Directory where the files are saved. By default, `uploadPath/{table}` |
@@ -342,6 +351,22 @@ $crud->fieldType('notes', 'textarea', ['attrs' => ['rows' => 8]])
      ->fieldType('contract', 'upload', ['allowed' => ['pdf'], 'subdir' => '{client_id}'])
      ->fieldType('price', 'decimal', ['attrs' => ['min' => 0, 'step' => '0.01']])
      ->fieldType('code', 'readonly');
+```
+
+**`multiselect`**: several values from a fixed list in **a single column** (a `VARCHAR`, `TEXT` or `JSON` column), without a junction table. For values that are records of another table, use [`setRelationNN()`](#relations) instead.
+
+- Only the values that are in `options` are saved: the others (a tampered form, an option that no longer exists) are dropped. With no value selected, the column is saved as `NULL` (or `''` if it does not accept `NULL`).
+- In the list and the detail view, the labels are shown separated by commas.
+- As a [filter](#filtersarray-fields-static), it shows the options and finds the records that **contain** the chosen value. It is not included in the search box by default.
+- In the [CSV import](#csv-import), the column holds values or labels separated by `,` or `|` (`Kids, Adults`); an unknown value is an error on that row.
+
+```php
+$crud->fieldType('audience', 'multiselect', [
+    'options' => ['kids' => 'Kids', 'adults' => 'Adults', 'seniors' => 'Seniors'],
+])->filters(['audience']);
+
+// Saved as "mon,wed,fri" instead of JSON
+$crud->fieldType('days', 'multiselect', ['options' => ['mon' => 'Monday', 'wed' => 'Wednesday', 'fri' => 'Friday'], 'storage' => 'csv']);
 ```
 
 ### `setRules(array|string $field, array|string|null $rules = null): static`
@@ -442,6 +467,59 @@ $crud->columns(['name', 'tags'])->filters(['tags']);
 ```
 
 > When a record is permanently deleted, its rows in the junction table are deleted. If the junction table holds more data than the two keys (status, date...), do not put it in `fields()`: that data would be lost when the form is saved. Give it its own CRUD instead (see the recipe [Junction table with its own data](howto_EN.md#junction-table-with-its-own-data)).
+
+---
+
+## Translations
+
+### `setTranslations(string $table, string $foreignKey, string $localeField, array $fields, array $locales, array $options = []): static`
+
+Translatable fields saved in a child table, **one row per language**. For example, `news` (`id`, `published_at`...) and `news_translations` (`news_id`, `locale`, `title`, `body`).
+
+- `$table`: the translations table.
+- `$foreignKey`: the field of the translations table that points to this one (`news_id`).
+- `$localeField`: the field with the language code (`locale`).
+- `$fields`: the translatable fields (columns of the translations table).
+- `$locales`: the languages, `['ca', 'en']` or with a name, `['ca' => 'Català', 'en' => 'English']`.
+
+| Option | Default | Description |
+|---|---|---|
+| `required` | the first language | Languages that must be filled in (list). The other ones are optional |
+| `rules` | inferred from the translations table | `[field => rules]`, as in `setRules()` |
+| `types` | inferred (`TEXT` => `textarea`, otherwise `text`) | `[field => 'text' \| 'textarea']` |
+| `listLocale` | the language of the request if it is one of `$locales`; otherwise, the first one | Language used in the list, the search, the sorting, the filters and the export |
+
+The translated fields are used like any other field in `columns()`, `fields()`, `showFields()`, `searchFields()`, `filters()`, `displayAs()`...:
+
+- **List, search, sorting, filters and export**: they work with the `listLocale` translation (a `LEFT JOIN` with the translations table). A record without a translation in that language shows the field empty.
+- **Form**: all the translated fields go together in a block with **one tab per language** (template `partials/translations`). The required languages are marked.
+- **Detail view**: each field shows every filled-in translation, preceded by a badge with the language code.
+- **Validation**: the rules apply per language; the error keys are `kp_tr.{locale}.{field}` (e.g. `kp_tr.en.title`). The `required` rule only applies to the **required languages**: an optional language left completely empty is not validated, and if it was filled in only what was written is validated.
+- **Saving**: one row is written (or updated) per filled-in language, in the same transaction as the record. An optional language left empty is **deleted** from the translations table. A permanent delete (or a table without trash) also deletes the translations; sending to the trash keeps them.
+- They work with `setTable()` and with `setModel()`: the translated fields are not columns of the main table, so they do **not** go in the model's `allowedFields`.
+- They are not included in the [CSV import](#csv-import).
+
+```php
+$crud->setTable('news')
+     ->setTranslations('news_translations', 'news_id', 'locale', ['title', 'body'],
+         ['ca' => 'Català', 'en' => 'English', 'es' => 'Español'],
+         ['required' => ['ca', 'en'], 'rules' => ['title' => 'required|max_length[200]']])
+     ->columns(['title', 'published_at'])
+     ->fields(['published_at', 'title', 'body'])
+     ->searchFields(['title']);
+```
+
+### `postedTranslations(): array`
+
+The translations posted with the form being saved, as `[locale => [field => value]]` (trimmed values; empty languages included). Useful in a `beforeInsert` or `beforeUpdate` hook, which only receive the main table's data.
+
+```php
+$crud->beforeInsert(function (array $data) use ($crud) {
+    $data['slug'] = url_title($crud->postedTranslations()['ca']['title'] ?? '', '-', true);
+
+    return $data;
+});
+```
 
 ---
 
@@ -582,6 +660,31 @@ $crud->afterDelete(function (string $id, array $row, bool $purge) {
 $crud->afterRestore(fn (string $id) => log_message('info', "Client {$id} restored"));
 ```
 
+### `afterWrite(Closure $callback): static`
+
+`fn (string $operation, string $id, array $data, ?array $old): void`. Runs after **any** write the CRUD makes, to have a single place for an audit log, clearing a cache, etc.
+
+- `$operation`: `'insert'`, `'update'`, `'delete'` (to the trash or permanent) or `'restore'`.
+- `$data`: the values saved (empty for `delete` and `restore`).
+- `$old`: the record before the change (`null` for `insert`).
+
+It runs **after** the specific `after*` hook of the operation (`afterInsert`, `afterUpdate`...), and also for the writes made by the bulk actions (delete, restore, purge, empty the trash) and by the [CSV import](#csv-import).
+
+```php
+$crud->afterWrite(function (string $operation, string $id, array $data, ?array $old) {
+    db_connect()->table('audit_log')->insert([
+        'user_id'    => session('user_id'),
+        'table_name' => 'clients',
+        'record_id'  => $id,
+        'operation'  => $operation,
+        'changes'    => json_encode($data),
+        'created_at' => date('Y-m-d H:i:s'),
+    ]);
+
+    cache()->delete('clients_count');
+});
+```
+
 ---
 
 ## Actions
@@ -614,6 +717,9 @@ The URL can be:
 | `confirm` | none | Confirmation message before running the action |
 | `visible` | always | `fn (array $row): bool` to show it only on some records |
 | `method` | `'get'` | `'post'` for actions that modify data. A form with the CSRF token is submitted |
+| `permission` | none | Operation or permission the user must have on the record (e.g. `'edit'` or `'invoice'`) for the button to be shown. It is checked like the CRUD's operations: with [`setPermission()`](#setpermissionstring-operation-boolclosure-allowed-static) and the [permission resolver](#central-permissions) |
+
+The button is only a link: if the URL leads to a route of your own, that route must check permissions by itself. With [`addOperation()`](#custom-operations), the CRUD does that check.
 
 ```php
 // {kp_id}: the id as it appears in the CRUD's URLs (a code if masked).
@@ -625,9 +731,10 @@ $crud->addAction('Map', 'https://www.openstreetmap.org/search?query={address}', 
 ]);
 
 $crud->addAction('Send reminder', 'clients/remind/{kp_id}', [
-    'method'  => 'post',
-    'confirm' => 'Do you want to send the reminder?',
-    'visible' => fn (array $row) => $row['balance'] > 0,
+    'method'     => 'post',
+    'confirm'    => 'Do you want to send the reminder?',
+    'visible'    => fn (array $row) => $row['balance'] > 0,
+    'permission' => 'edit',   // only on the records the user can edit
 ]);
 ```
 
@@ -650,6 +757,7 @@ Action on the records **selected** with the checkboxes: `fn (array $ids, Crud $c
 |---|---|---|
 | `confirm` | none | Confirmation message |
 | `trash` | `false` | `true` to offer the action in the trash instead of the list |
+| `permission` | none | Operation or permission needed (e.g. `'edit'`). The action is only offered if the user has it in general (`$row = null`), and the callback **only receives the ids of the records on which the user has it**: it is checked record by record. If none is left, the action is not run |
 
 ```php
 $crud->addBulkAction('activate', 'Activate', function (array $ids) {
@@ -666,7 +774,111 @@ $crud->addBulkAction('labels', 'PDF labels', function (array $ids) {
 });
 ```
 
-Custom bulk actions do not check permissions record by record: if needed, do it inside the callback.
+Without `permission`, a custom bulk action is available to any user who can use bulk actions (`bulk`), and it does not check permissions record by record: if needed, do it inside the callback.
+
+```php
+// Only the records the user can edit reach the callback
+$crud->addBulkAction('archive', 'Archive', fn (array $ids, Crud $crud) => ..., ['permission' => 'edit']);
+```
+
+---
+
+## Custom operations
+
+### `addOperation(string $key, Closure $callback, array $options = []): static`
+
+An operation of your own **served by the CRUD's own route**: `base/{key}/{id}` (on a record) or `base/{key}` (general). For example, `admin/invoices/duplicate/5` or `admin/invoices/recalculate`. Unlike an `addAction()` that points to a route of your own, the CRUD applies everything it applies to its own operations:
+
+- the CSRF token (with `method` `post`);
+- [masked ids](#masked-ids): `{id}` in the URL is the code, and the callback receives the real id;
+- the CRUD's scope (`where()`): a record outside it is "not found";
+- permissions (`permission`, `visible`, the [permission resolver](#central-permissions));
+- [signed URLs](#signed-urls), if the CRUD requires them;
+- back to the list with the message, keeping the page, search and filters.
+
+`$callback`: `fn (?string $id, ?array $row, Crud $crud): ResponseInterface|string|false|null`
+
+- `$id` and `$row`: the real id and the record (`null` in general operations).
+- It returns:
+
+| Return | Effect |
+|---|---|
+| a response | Returned as is: a redirect, a download, a page made with `$crud->page()` |
+| `string` | Back to the list with this text as a success message |
+| `null` | Back to the list with the generic message "Operation completed" |
+| `false` | Back to the list with the message "The operation was cancelled" |
+
+To go back to the list with an error: `return $crud->backToList('danger', 'Message');`
+
+| Option | Default | Description |
+|---|---|---|
+| `row` | `true` | `true`: it works on a record (`base/{key}/{id}`) and the button goes on each row and in the detail view. `false`: general operation (`base/{key}`), with the button in the list header |
+| `method` | `'post'` | `'post'` (a form with the CSRF token; a GET request is rejected) or `'get'` (for pages and downloads that change nothing) |
+| `permission` | the key | Operation or permission that is checked, with the record. It can be decided with `setPermission('key', ...)` or with the [permission resolver](#central-permissions). If nothing decides it, it is allowed (unless `denyByDefault`) |
+| `visible` | always | `fn (?array $row): bool`. If it returns `false`, the button is not shown **and** the operation is denied |
+| `trash` | `false` | `true`: it works on records in the trash (only with `row`); the button is shown in the trash. It also requires the `trash` permission |
+| `button` | `true` | `false` to add no button (e.g. if it is reached from a link of your own: use `$crud->url('key', $id)`) |
+| `label` | the key, capitalised | Button text |
+| `icon`, `class`, `confirm`, `target` | | As in [`addAction()`](#actions) |
+
+The key must start with a lowercase letter and contain only lowercase letters, numbers, `-` and `_`. It cannot be `list` or a CRUD operation ([`ID_OPERATIONS` and `OPERATIONS`](#crudid_operations--crudoperations)): an invalid key throws an exception.
+
+```php
+// On a record: admin/invoices/duplicate/5 (POST)
+$crud->addOperation('duplicate', function (string $id, array $row, Crud $crud) {
+    unset($row['id']);
+    $row['number'] = null;
+    $row['status'] = 'draft';
+    $crud->getModel()->insert($row);
+
+    return redirect()->to($crud->url('edit', (string) $crud->getModel()->getInsertID()));
+}, [
+    'label'      => 'Duplicate',
+    'icon'       => 'bi bi-copy',
+    'confirm'    => 'Duplicate this invoice?',
+    'permission' => 'add',
+]);
+
+// With a condition and an error message
+$crud->addOperation('send', function (string $id, array $row, Crud $crud) {
+    if (! service('email')->setTo($row['email'])->setSubject('Your invoice')->send()) {
+        return $crud->backToList('danger', 'The email could not be sent.');
+    }
+
+    return 'Invoice sent.';
+}, ['icon' => 'bi bi-envelope', 'visible' => fn (?array $row) => $row === null || $row['status'] === 'issued']);
+
+// General, as a page: admin/invoices/summary (GET)
+$crud->addOperation('summary', function (?string $id, ?array $row, Crud $crud) {
+    $html = view('invoices/summary', ['totals' => model('InvoiceModel')->totals()]);
+
+    return service('response')->setBody($crud->page($html, 'Summary'));
+}, ['row' => false, 'method' => 'get', 'icon' => 'bi bi-bar-chart']);
+```
+
+To decide who can run it, use its key as a permission:
+
+```php
+$crud->setPermission('send', auth()->user()->inGroup('admin', 'billing'));
+```
+
+[`requireSignature()`](#requiresignaturearraystring-operations---int-ttl--null-arraystring-signfrom---static) also accepts the keys of custom operations. With `'*'` (the default), they are always included; in an explicit list, add the operation **before** calling `requireSignature()`.
+
+### `backToList(string $type, string $text): ResponseInterface`
+
+Redirect to the list (or to `setBackUrl()`) with a message, keeping the page, search and filters. `$type`: `success`, `danger`, `warning` or `info`. For custom operations that end with an error, or to return a message of a type other than `success`.
+
+```php
+return $crud->backToList('warning', 'The invoice has no lines.');
+```
+
+### `page(string $html, string $title): string`
+
+Wraps your own HTML with the same layout as the CRUD's pages (the theme's, or the project's with `setLayout()`) and sets the title (`getTitle()`). For custom operations that show a page instead of redirecting.
+
+```php
+return service('response')->setBody($crud->page($html, 'Invoice preview'));
+```
 
 ---
 
@@ -764,7 +976,9 @@ The callback only runs if the column is in the file.
 
 ### `setPermission(string $operation, bool|Closure $allowed): static`
 
-Allows or denies an operation. All operations are allowed by default, except `trash`, `restore` and `purge`, which only exist if the table has a trash.
+Allows or denies an operation. All operations are allowed by default (unless [`denyByDefault`](#central-permissions) is enabled), except `trash`, `restore` and `purge`, which only exist if the table has a trash.
+
+`$operation` can also be the permission of an action (option `permission` of [`addAction()`](#actions)) or the key of a [custom operation](#custom-operations).
 
 Permissions are checked on the **server**, not only in the interface: if an action is not allowed, its button is not shown and, if someone accesses it by URL, they get an error.
 
@@ -895,6 +1109,100 @@ View only: equivalent to `unsetAdd()->unsetEdit()->unsetDelete()->unsetPurge()` 
 $crud->setTable('logs')->readOnly()->unsetTrash();
 ```
 
+### Central permissions
+
+`setPermission()` decides the permissions of one CRUD. To decide those of **every CRUD of the project from a single place** (for example, from the user's roles or permissions), use a **permission resolver**: a class that receives the CRUD's name (the *resource*), the operation and the record, and answers.
+
+**How the decision is made** for each operation (and for each record):
+
+1. If the table has no trash, `trash`, `restore` and `purge` are denied.
+2. The **resolver** answers `true` (allows), `false` (denies) or `null` (has no opinion). If it denies, the operation is denied: **the resolver has the last word on denying**, and `setPermission()` cannot allow it again.
+3. If the CRUD has a `setPermission()` rule for that operation, the rule decides (it can still restrict what the resolver allowed).
+4. Otherwise, the resolver's answer counts; and if it had no opinion (or there is no resolver), `Config\Kpcrudy::$denyByDefault` decides: `false` (default) allows, `true` denies.
+
+With `denyByDefault = true`, every operation, also `list`, `search`, `filters`, `bulk` and custom operations, must be explicitly allowed by the resolver or by `setPermission()`.
+
+### Interface `Kpcrudy\PermissionResolver`
+
+```php
+interface PermissionResolver
+{
+    public function allows(string $resource, string $operation, ?array $row, Crud $crud): ?bool;
+}
+```
+
+- `$resource`: the CRUD's name (`setResource()`; by default, the table name).
+- `$operation`: `list`, `show`, `add`, `edit`, `delete`, `export`, `import`, `trash`, `restore`, `purge`, `search`, `filters`, `bulk`, or the `permission` of an action or custom operation.
+- `$row`: the record, or `null` if the check is general (e.g. whether to show the "Add" button). See the table in [`setPermission()`](#setpermissionstring-operation-boolclosure-allowed-static).
+- It returns `true`, `false` or `null` (no opinion).
+
+It is set up for every CRUD in `app/Config/Kpcrudy.php`:
+
+```php
+public ?string $permissionResolver = \App\Libraries\CrudPermissions::class;
+public bool $denyByDefault         = true;   // optional: deny what nobody allows
+```
+
+The library does not depend on any authentication system. As an example, a resolver backed by [CodeIgniter Shield](https://shield.codeigniter.com/), with permissions named `resource.operation` (`clients.edit`, `blog.posts.delete`...):
+
+```php
+<?php
+
+namespace App\Libraries;
+
+use Kpcrudy\Crud;
+use Kpcrudy\PermissionResolver;
+
+class CrudPermissions implements PermissionResolver
+{
+    public function allows(string $resource, string $operation, ?array $row, Crud $crud): ?bool
+    {
+        $user = auth()->user();
+
+        if ($user === null) {
+            return false;
+        }
+
+        // Searching, filtering and selecting: decided by each CRUD (or denyByDefault)
+        if (in_array($operation, ['search', 'filters', 'bulk'], true)) {
+            return null;
+        }
+
+        return $user->can("{$resource}.{$operation}");
+    }
+}
+```
+
+In the same way it could read the permissions from the session, from a table of your own or from another library. Record-level rules (only the owner can edit...) still go in each CRUD with `setPermission()`, which can restrict what the resolver allows.
+
+### `setResource(string $resource): static` · `getResource(): string`
+
+Name of the CRUD for the permission resolver (e.g. `'events'` or `'blog.posts'`). By default, the table name. Useful when two CRUDs use the same table with different permissions, or to group them.
+
+```php
+$crud->setTable('posts')->setResource('blog.posts');
+```
+
+### `setPermissionResolver(PermissionResolver|Closure|null $resolver): static`
+
+Resolver for this CRUD only, instead of the one in the configuration. It accepts an instance of `PermissionResolver` or a closure with the same signature, `fn (string $resource, string $operation, ?array $row, Crud $crud): ?bool`. `null` removes the configured one for this CRUD.
+
+```php
+$crud->setPermissionResolver(function (string $resource, string $operation, ?array $row) {
+    return in_array($operation, ['list', 'show', 'search', 'filters', 'export'], true) ? true : null;
+});
+```
+
+### `isAllowed(string $operation, ?array $row = null): bool`
+
+Whether the user can do an operation (or has the `permission` of an action), in general or on a specific record. It combines the resolver, `setPermission()` and `denyByDefault` exactly as the CRUD does. Useful in callbacks and in your own views.
+
+```php
+$crud->callbackColumn('total', function ($value, array $row) use ($crud) {
+    return $crud->isAllowed('edit', $row) ? esc($value) : '***';
+});
+```
+
 ---
 
 ## Display and navigation
@@ -946,7 +1254,7 @@ $crud->setTheme('w3css');
 $crud->setTheme('compact');   // custom theme
 ```
 
-### `setLayout(string|false $layout): static`
+### `setLayout(string|false $layout, ?string $section = null): static`
 
 How the CRUD's HTML is wrapped:
 
@@ -954,10 +1262,50 @@ How the CRUD's HTML is wrapped:
 |---|---|
 | `'default'` | Full HTML page of the theme (`layout.php`) with Bootstrap from a CDN |
 | `false` | Only the CRUD's HTML fragment |
-| a view name | CodeIgniter view that receives `$kpcrudy` (the CRUD's HTML) and `$title` |
+| a view name | CodeIgniter view that receives `$kpcrudy` (the CRUD's HTML), `$title` and the variables of `setLayoutData()` |
+| a view name + `$section` | Layout **with sections**: the CRUD goes into the section `$section` of the view, which is extended as with `$this->extend()` |
+
+`$section` is for layouts that use `$this->renderSection('content')`, the usual way in CodeIgniter 4. Without it (or with `null`), the view receives `$kpcrudy` and has to print it. If it is not passed, the configured `layoutSection` is kept.
 
 ```php
+// The view prints <?= $kpcrudy ?>
 $crud->setLayout('layouts/admin');
+
+// The view has <?= $this->renderSection('content') ?>
+$crud->setLayout('layouts/admin', 'content');
+```
+
+With sections, the layout also receives `$title` and the variables of `setLayoutData()` (e.g. for `<title><?= esc($title) ?></title>`).
+
+### `setLayoutData(array $data): static`
+
+Variables the project's layout receives besides `$kpcrudy` and `$title` (menu, user, breadcrumbs...). It can be called several times; the values are merged.
+
+```php
+$crud->setLayout('layouts/admin', 'content')
+     ->setLayoutData(['menu' => 'clients', 'breadcrumbs' => ['Admin', 'Clients']]);
+```
+
+### `showTitle(bool $show = true): static`
+
+Shows or hides the CRUD's title (`<h1>`), e.g. if the layout already shows the page title. By default, `Config\Kpcrudy::$showTitle`.
+
+```php
+$crud->showTitle(false);
+```
+
+### `getTitle(): ?string`
+
+Title of the page generated by `render()` (e.g. "New: client" or "Clients"), to use it in your own layout or view. `null` before `render()`.
+
+```php
+$output = $crud->render();
+
+if ($output instanceof ResponseInterface) {
+    return $output;
+}
+
+return view('admin/page', ['content' => $output, 'title' => $crud->getTitle()]);
 ```
 
 ---
@@ -1294,7 +1642,7 @@ Crud::signUrl('shared/agenda', 7 days) ───►  shared/agenda?kp_exp=…&kp
 
 The given operations only open with a valid signed URL. Without a signature, with a signature that does not match or with an expired one, the CRUD answers with a 404 and the message "This link is not valid." or "This link has expired." (language keys `linkInvalid` and `linkExpired`).
 
-- `$operations`: `'*'` (the default, and the safest): every operation. Or a list (`['list', 'show']`): the ones not in it stay **open to anyone** who reaches the route; protect them with an authentication filter or remove them with `unset*()`. A name that does not exist (`'lsit'`) throws an exception, because it would leave the operation open without warning. The operations are `list` and those in [`ID_OPERATIONS` and `OPERATIONS`](#crudid_operations--crudoperations).
+- `$operations`: `'*'` (the default, and the safest): every operation. Or a list (`['list', 'show']`): the ones not in it stay **open to anyone** who reaches the route; protect them with an authentication filter or remove them with `unset*()`. A name that does not exist (`'lsit'`) throws an exception, because it would leave the operation open without warning. The operations are `list`, those in [`ID_OPERATIONS` and `OPERATIONS`](#crudid_operations--crudoperations) and the keys of the [custom operations](#custom-operations) added before (with `'*'`, also those added after).
 - `$signFrom`: operations that open **without** a signature and hand out signed links. E.g. `['list']` for an internal list, protected by login, that gives signed links to the detail views. An operation cannot be both in `$operations` and in `$signFrom`.
 - `$ttl`: lifetime, in seconds, of the links handed out by the `$signFrom` operations (`null` = they never expire). Links signed while browsing with a signed URL do not use it: they inherit the entry link's expiry.
 
@@ -1440,17 +1788,27 @@ Generates the controller method for a CRUD and its route from a table's structur
 
 | Option | Default | Description |
 |---|---|---|
-| `--controller` | the table in *StudlyCase* | Class relative to `App\Controllers` (`Admin/Clients`). It is created if it does not exist; if it exists, the method is added to it |
+| `--namespace` | `App` | Base namespace of the application or of a module/package. Controllers go to `<ns>\Controllers` and models to `<ns>\Models` |
+| `--path` | the directory of the namespace in the autoloader (`app/` for `App`) | Directory of the base namespace, if the autoloader does not know it |
+| `--routes` | `<path>/Config/Routes.php` | Routes file where the route is added. It is created if it does not exist |
+| `--extends` | `<ns>\Controllers\BaseController`, `App\Controllers\BaseController` or `CodeIgniter\Controller` (the first that exists) | Parent class of a new controller |
+| `--controller` | the table in *StudlyCase* | Class relative to `<ns>\Controllers` (`Admin/Clients`). It is created if it does not exist; if it exists, the method is added to it |
 | `--method` | `index` | Method name |
 | `--route` | based on the controller | Route registered with `Crud::routes()` |
 | `--filter` | none | Route filter |
-| `--model` | no | Also generates a model in `app/Models` and uses `setModel()` |
+| `--as` | none | Route name, for `route_to()` and `url_to()` (see [`Crud::routes()`](#creating-and-running)) |
+| `--model` | no | Also generates a model in `<ns>\Models` and uses `setModel()` |
 | `--dry-run` | no | Shows the code without writing anything |
 | `--force` | no | Replaces the method and the model if they already exist |
 
 ```bash
 php spark kpcrudy:make products --controller Admin/Shop --method products --route admin/products --filter auth:admin
+
+# Into a module: Modules\Blog\Controllers\Posts, modules/Blog/Config/Routes.php
+php spark kpcrudy:make posts --namespace "Modules\Blog" --route admin/posts --as blog-posts --model
 ```
+
+**Modules and packages.** With `--namespace` (other than `App`), the code is generated inside the module: the namespace must be registered in `Config\Autoload::$psr4` (or its directory given with `--path`). The route uses the controller's **full class name** (`'\Modules\Blog\Controllers\Posts::index'`), because the default namespace of the routes is `App\Controllers`. If the module's routes file does not exist, it is created; CodeIgniter only loads it if route discovery is enabled (`Config\Modules`: `$enabled`, `$discoverInComposer` and `'routes'` in `$aliases`) or if `app/Config/Routes.php` includes it. The command reminds you of this.
 
 Before writing any file it checks everything, and stops without touching anything if something is wrong: tables or columns whose names are not only letters, numbers and `_` (they cannot be safely put in the generated code), a method that starts with `_` or that the base controller already has (`initController`...), a route that already points to another controller or a model with the same name that belongs to another table. `--dry-run` runs these checks too.
 
@@ -1537,7 +1895,10 @@ class Kpcrudy extends \Kpcrudy\Config\Kpcrudy
 |---|---|---|
 | `string $theme` | `'bootstrap5'` | Default theme |
 | `array $themes` | `[]` | Additional themes: `['name' => directory]` or `['name' => ['path' => directory, 'parent' => 'w3css']]` to extend another theme |
-| `string\|false $layout` | `'default'` | Default layout (see `setLayout`) |
+| `string\|false $layout` | `'default'` | Default layout (see [`setLayout`](#setlayoutstringfalse-layout-string-section--null-static)) |
+| `?string $layoutSection` | `null` | With a project layout that uses sections, the section where the CRUD goes (e.g. `'content'`). Then `$layout` is the view that is extended. `null` = the layout receives `$kpcrudy` |
+| `bool $showTitle` | `true` | Whether the CRUD shows its title (`<h1>`). Set it to `false` if the layout already shows the page title (it receives `$title`, or use `getTitle()`) |
+| `array $flashKeys` | `[]` | The CRUD's messages (saved, deleted, error...) in the project's session keys instead of the CRUD's own alert block: `[type => flashdata key]`. Types: `success`, `danger`, `warning`, `info`. E.g. `['success' => 'message', 'danger' => 'error']`. The types not listed are still shown inside the CRUD |
 | `int $perPage` | `25` | Records per page |
 | `array $perPageOptions` | `[10, 25, 50, 100]` | Options of the "Per page" selector |
 | `string $dateFormat` | `'d/m/Y'` | Date format in the list, the detail view and the CSV |
@@ -1549,6 +1910,8 @@ class Kpcrudy extends \Kpcrudy\Config\Kpcrudy
 | `int $exportMaxRows` | `100000` | Maximum rows of a CSV export (`0` = no limit). If the filtered list has more, the user is asked to filter it |
 | `bool $checkRoutes` | `true` | In development, check that no project route conflicts with those of `Crud::routes()` (see [`Crud::checkRoutes()`](#crudcheckroutes-void-static)). Disable it only if you have a route that replaces a CRUD operation on purpose |
 | `bool $csrfProtection` | `true` | Verify the CSRF token of the CRUD's POST requests when CodeIgniter's `csrf` filter (or a subclass of `CodeIgniter\Filters\CSRF`) is not active for the request. Disable it only if the project protects requests in another way |
+| `?string $permissionResolver` | `null` | Class that decides the permissions of every CRUD; it must implement [`Kpcrudy\PermissionResolver`](#central-permissions). `null` = no resolver: only each CRUD's `setPermission()` rules count |
+| `bool $denyByDefault` | `false` | What happens to an operation on which neither the resolver nor `setPermission()` say anything: `false` allows it; `true` denies it (everything must be allowed explicitly) |
 | `bool $maskIds` | `false` | [Mask the ids](#masked-ids) in the URLs of every CRUD (`edit/Xk3f9...` instead of `edit/5`). Each CRUD can change it with `maskIds()` |
 | `string $maskKey` | `''` | The library key: it masks the ids and signs [signed URLs](#signed-urls). It must be at least 32 characters long (e.g. `bin2hex(random_bytes(32))`); if it is shorter, an exception is thrown. If empty, CodeIgniter's encryption key (`encryption.key`) and, if there is none, a random key stored in `writable/kpcrudy/mask.key`. If it changes, every code changes and old links stop working, signed ones too |
 | `string $idMasker` | `Kpcrudy\DefaultIdMasker` | Class that masks the ids; it must implement [`Kpcrudy\IdMasker`](#interface-kpcrudyidmasker) |
@@ -1578,6 +1941,25 @@ With `$inferRules` enabled, these rules are inferred (only for fields without th
 | color | `regex_match` for `#rrggbb` |
 | name containing `email` | `valid_email` |
 | name `url`, `web`, `website` | `valid_url_strict[http,https]` |
+
+With `$flashKeys`, the layout shows the messages like the rest of the application's:
+
+```php
+// app/Config/Kpcrudy.php
+public array $flashKeys = ['success' => 'message', 'danger' => 'error', 'warning' => 'warning'];
+```
+
+```php
+<!-- app/Views/layouts/admin.php -->
+<?php if (session('message')): ?><div class="alert alert-success"><?= esc(session('message')) ?></div><?php endif ?>
+<?php if (session('error')): ?><div class="alert alert-danger"><?= esc(session('error')) ?></div><?php endif ?>
+```
+
+### Languages
+
+The interface texts and the messages are in `Language/{locale}/Kpcrudy.php`, in six languages: Catalan (`ca`), English (`en`), Spanish (`es`), French (`fr`), German (`de`) and Portuguese (`pt`). The language is the one of the request (`$request->getLocale()`). The **exception messages** (configuration mistakes: an unknown operation, a short `maskKey`, an invalid resolver...) are translated too, under the keys `Kpcrudy.exceptions.*`.
+
+For a language without a kpcrudy translation (or a key missing in a translation of your own), CodeIgniter falls back to the language without region (`pt-BR` → `pt`) and, after that, to **English**. To translate or adapt the texts, `php spark kpcrudy:publish lang <locale>` copies a language into `app/Language` (see [kpcrudy:publish](commands_EN.md#kpcrudypublish)).
 
 ---
 
@@ -1632,4 +2014,50 @@ Generates escaped HTML attributes. `true` adds the attribute without a value, an
 ```php
 <input<?= $this->attrs(['type' => 'text', 'name' => 'q', 'required' => true, 'disabled' => false]) ?>>
 <!-- <input type="text" name="q" required> -->
+```
+
+### `Renderer::nonce(string $type = 'script'): string`
+
+The `nonce` attribute of CodeIgniter's Content-Security-Policy for a `<script>` (`'script'`) or `<style>` (`'style'`) block, with a leading space. Empty if the CSP is not enabled.
+
+```php
+<script<?= $this->nonce() ?>>
+    // ...
+</script>
+<style<?= $this->nonce('style') ?>>
+    .kpcrudy .my-class { color: #c00; }
+</style>
+```
+
+### Content-Security-Policy
+
+The bundled themes work with a **strict CSP** (`Config\App::$CSPEnabled = true`, without `'unsafe-inline'`): the `<script>` and `<style>` blocks carry the nonce, and the templates use **no** inline handlers (`onclick=""`, `onchange=""`...) or `style=""` attributes. The behaviour goes in `data-kp-*` attributes, handled by the JavaScript in `partials/assets`. A theme of your own should follow the same rules:
+
+| Attribute | Behaviour |
+|---|---|
+| `data-kp-confirm="message"` | Asks for confirmation before following the link or submitting the button's form |
+| `data-kp-autosubmit` | A `<select>` (or another field) that submits its form when it changes (e.g. "Per page") |
+| `data-kp-alert` · `data-kp-dismiss` | A closable alert (`data-kp-alert`) and its close button (`data-kp-dismiss`), without the framework's JavaScript |
+| `data-kp-color="#rrggbb"` | Background colour of a colour swatch, set with JavaScript instead of `style=""` |
+| `data-kp-check-all` | Checkbox that selects or clears all the `ids[]` of its form |
+| `data-kp-bulk="message"` | Form of the bulk actions; the message is shown if no record is selected |
+
+### Event `kpcrudy:confirm`
+
+Before asking for a confirmation with `window.confirm()` (`data-kp-confirm`, or the `confirm` of a bulk action), the CRUD dispatches the **cancelable** event `kpcrudy:confirm` on `document`. Its `detail` holds:
+
+- `message`: the confirmation text;
+- `element`: the link, button or form that asks for it;
+- `proceed()`: a function that continues the action.
+
+If a listener cancels it (`preventDefault()`), the CRUD does not show `window.confirm()`: the listener shows its own dialog and calls `detail.proceed()` if the user accepts. For example, with [SweetAlert2](https://sweetalert2.github.io/), in the project's layout:
+
+```html
+<script<?= csp_script_nonce() ?>>
+document.addEventListener('kpcrudy:confirm', function (e) {
+    e.preventDefault();
+    Swal.fire({ text: e.detail.message, icon: 'warning', showCancelButton: true })
+        .then(function (result) { if (result.isConfirmed) { e.detail.proceed(); } });
+});
+</script>
 ```

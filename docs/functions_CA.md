@@ -24,19 +24,21 @@ Per a receptes completes de casos habituals, vegeu [howto_CA.md](howto_CA.md).
 - [Columnes i camps](#columnes-i-camps): `columns`, `fields`, `addFields`, `editFields`, `showFields`, `searchFields`, `filters`, `exportColumns`, `unsortable`, `displayAs`
 - [Tipus de camp i validació](#tipus-de-camp-i-validació): `fieldType`, `setRules`, `requiredFields`, `readonlyFields`, `setDefault`, `setHelp`
 - [Relacions](#relacions): `setRelation`, `setRelationNN`
+- [Traduccions](#traduccions): `setTranslations`, `postedTranslations`
 - [Callbacks de presentació](#callbacks-de-presentació): `callbackColumn`, `callbackField`, `callbackExport`
-- [Hooks](#hooks): `beforeInsert`, `afterInsert`, `beforeUpdate`, `afterUpdate`, `beforeDelete`, `afterDelete`, `afterRestore`
+- [Hooks](#hooks): `beforeInsert`, `afterInsert`, `beforeUpdate`, `afterUpdate`, `beforeDelete`, `afterDelete`, `afterRestore`, `afterWrite`
 - [Accions](#accions): `addAction`, `addHeaderAction`, `addBulkAction`
+- [Operacions pròpies](#operacions-pròpies): `addOperation`, `backToList`, `page`
 - [Importació CSV](#importació-csv): `enableImport`, `callbackImport`
-- [Permisos](#permisos): `setPermission`, `unsetAdd`, `unsetEdit`, `unsetDelete`, `unsetShow`, `unsetExport`, `unsetTrash`, `unsetPurge`, `unsetSearch`, `unsetFilters`, `unsetBulk`, `readOnly`
-- [Presentació i navegació](#presentació-i-navegació): `setPerPage`, `defaultOrder`, `setBaseUrl`, `setBackUrl`, `setTheme`, `setLayout`
+- [Permisos](#permisos): `setPermission`, `unsetAdd`, `unsetEdit`, `unsetDelete`, `unsetShow`, `unsetExport`, `unsetTrash`, `unsetPurge`, `unsetSearch`, `unsetFilters`, `unsetBulk`, `readOnly`, `setResource`, `getResource`, `setPermissionResolver`, `isAllowed`, `PermissionResolver`
+- [Presentació i navegació](#presentació-i-navegació): `setPerPage`, `defaultOrder`, `setBaseUrl`, `setBackUrl`, `setTheme`, `setLayout`, `setLayoutData`, `showTitle`, `getTitle`
 - [Accés des dels callbacks](#accés-des-dels-callbacks): `getModel`, `getTable`, `getPrimaryKey`, `getBaseUrl`, `url`
 - [Identificadors emmascarats](#identificadors-emmascarats): `maskIds`, `encodeId`, `decodeId`, `maskId`, `unmaskId`, `idFromUrl`, `idForUrl`, `IdMasker`, `checkRoutes`
 - [URL signades](#url-signades): `requireSignature`, `signedUrl`, `signUrl`, `checkSignature`, `hasValidSignature`
 - [Constants](#constants): `ID_OPERATIONS`, `OPERATIONS`
 - [Comandes de spark](#comandes-de-spark): `kpcrudy:make`, `kpcrudy:demo`, `kpcrudy:maskid`, `kpcrudy:unmaskid`, `kpcrudy:signurl`, `kpcrudy:checkurl`
-- [Configuració global](#configuració-global): propietats de `Config\Kpcrudy`
-- [Plantilles](#plantilles): `Renderer::render`, `Renderer::renderParent`, `Renderer::locate`, `Renderer::hidden`, `Renderer::attrs`
+- [Configuració global](#configuració-global): propietats de `Config\Kpcrudy`, idiomes
+- [Plantilles](#plantilles): `Renderer::render`, `Renderer::renderParent`, `Renderer::locate`, `Renderer::hidden`, `Renderer::attrs`, `Renderer::nonce`, Content-Security-Policy, esdeveniment `kpcrudy:confirm`
 
 ---
 
@@ -89,7 +91,12 @@ $routes->group('', ['filter' => 'auth'], static function ($routes) {
 
 // La ruta pot tenir paràmetres: el controlador els rep primer
 Crud::routes($routes, 'clients/(:segment)/notes', 'Clients::notes/$1');   // notes(string $code): l'id real amb Crud::idFromUrl($code, 'clients')
+
+// Amb un nom de ruta
+Crud::routes($routes, 'admin/clients', 'Admin::clients', ['as' => 'admin-clients']);
 ```
+
+El nom (`as`) el porta **només la ruta base** (`admin/clients`); la ruta `admin/clients/(:any)` no en té. CodeIgniter no registra una segona ruta amb un nom que ja existeix, de manera que, si el portessin totes dues, les URL de les operacions (`add`, `edit/5`...) quedarien sense ruta. `route_to('admin-clients')` i `url_to('admin-clients')` donen la URL base del CRUD; per a una operació, afegeix-la al final (`url_to('admin-clients') . '/add'`) o fes servir [`url()`](#getbaseurl-string--urlstring-operation-string-id--null-string) del CRUD.
 
 Les rutes que registra porten l'opció `'kpcrudy' => true`, que permet a [`Crud::checkRoutes()`](#crudcheckroutes-void-estàtica) trobar-les. En desenvolupament, `render()` comprova que cap altra ruta no xoqui amb les del CRUD: una ruta amb el mateix prefix definida **després** de `Crud::routes()` no s'executaria mai (`prefix/(:any)` la captura abans), i una de definida **abans** que capturi URL del CRUD (`prefix/add`, `prefix/edit/1`...) les deixaria sense funcionar. Les pàgines pròpies (p. ex. un enllaç públic amb l'[id emmascarat](#identificadors-emmascarats)) han d'anar amb un altre prefix.
 
@@ -314,6 +321,7 @@ Força el tipus d'un camp. Si no es força, es dedueix de la base de dades (ente
 | `boolean` | interruptor | Sí / No |
 | `enum` | desplegable | etiqueta |
 | `select` | desplegable | etiqueta |
+| `multiselect` | diverses caselles | etiquetes separades per comes |
 | `hidden` | camp ocult | valor |
 | `readonly` | només lectura | valor |
 | `upload` | fitxer | enllaç |
@@ -323,7 +331,8 @@ Opcions:
 
 | Opció | Tipus | Descripció |
 |---|---|---|
-| `options` | `enum`, `select` | `[valor => etiqueta]`. Als `ENUM` de MySQL, si no s'indica, s'agafen els valors de la columna |
+| `options` | `enum`, `select`, `multiselect` | `[valor => etiqueta]`. Als `ENUM` de MySQL, si no s'indica, s'agafen els valors de la columna |
+| `storage` | `multiselect` | Com es desen els valors a la columna: `'json'` (per defecte, `["kids","adults"]`) o `'csv'` (`kids,adults`) |
 | `value` | `hidden` | Valor que es desa sempre, a l'alta i a l'edició. El camp no surt al formulari, però ha de ser a la llista de camps (`fields()` o la per defecte) |
 | `hash` | `password` | `true` (per defecte): es desa amb `password_hash()`. `false`: es desa tal qual |
 | `path` | `upload`, `image` | Directori on es desen els fitxers. Per defecte, `uploadPath/{taula}` |
@@ -342,6 +351,22 @@ $crud->fieldType('notes', 'textarea', ['attrs' => ['rows' => 8]])
      ->fieldType('contract', 'upload', ['allowed' => ['pdf'], 'subdir' => '{client_id}'])
      ->fieldType('price', 'decimal', ['attrs' => ['min' => 0, 'step' => '0.01']])
      ->fieldType('code', 'readonly');
+```
+
+**`multiselect`**: diversos valors d'una llista fixa en **una sola columna** (una columna `VARCHAR`, `TEXT` o `JSON`), sense taula intermèdia. Si els valors són registres d'una altra taula, fes servir [`setRelationNN()`](#relacions).
+
+- Només es desen els valors que són a `options`: els altres (un formulari manipulat, una opció que ja no existeix) es descarten. Sense cap valor triat, la columna es desa com a `NULL` (o `''` si no admet `NULL`).
+- Al llistat i a la fitxa es mostren les etiquetes separades per comes.
+- Com a [filtre](#filtersarray-fields-static), mostra les opcions i troba els registres que **contenen** el valor triat. Per defecte no entra a la cerca.
+- A la [importació CSV](#importació-csv), la columna porta valors o etiquetes separats per `,` o `|` (`Infants, Adults`); un valor desconegut és un error d'aquella fila.
+
+```php
+$crud->fieldType('audience', 'multiselect', [
+    'options' => ['kids' => 'Infants', 'adults' => 'Adults', 'seniors' => 'Gent gran'],
+])->filters(['audience']);
+
+// Es desa com a "mon,wed,fri" en lloc de JSON
+$crud->fieldType('days', 'multiselect', ['options' => ['mon' => 'Dilluns', 'wed' => 'Dimecres', 'fri' => 'Divendres'], 'storage' => 'csv']);
 ```
 
 ### `setRules(array|string $field, array|string|null $rules = null): static`
@@ -442,6 +467,59 @@ $crud->columns(['name', 'tags'])->filters(['tags']);
 ```
 
 > En esborrar definitivament un registre, se n'esborren les files de la taula intermèdia. Si la intermèdia té més dades que les dues claus (estat, data...), no la posis als `fields()`: en desar el formulari es perdrien. Fes-ne un CRUD propi (vegeu la recepta [Taula intermèdia amb dades pròpies](howto_CA.md#taula-intermèdia-amb-dades-pròpies)).
+
+---
+
+## Traduccions
+
+### `setTranslations(string $table, string $foreignKey, string $localeField, array $fields, array $locales, array $options = []): static`
+
+Camps traduïbles desats en una taula filla, **una fila per idioma**. Per exemple, `news` (`id`, `published_at`...) i `news_translations` (`news_id`, `locale`, `title`, `body`).
+
+- `$table`: la taula de traduccions.
+- `$foreignKey`: el camp de la taula de traduccions que apunta a aquesta (`news_id`).
+- `$localeField`: el camp amb el codi d'idioma (`locale`).
+- `$fields`: els camps traduïbles (columnes de la taula de traduccions).
+- `$locales`: els idiomes, `['ca', 'en']` o amb nom, `['ca' => 'Català', 'en' => 'English']`.
+
+| Opció | Per defecte | Descripció |
+|---|---|---|
+| `required` | el primer idioma | Idiomes que s'han d'omplir (llista). Els altres són opcionals |
+| `rules` | deduïdes de la taula de traduccions | `[camp => regles]`, com a `setRules()` |
+| `types` | deduïts (`TEXT` => `textarea`; si no, `text`) | `[camp => 'text' \| 'textarea']` |
+| `listLocale` | l'idioma de la petició si és un dels de `$locales`; si no, el primer | Idioma del llistat, la cerca, l'ordenació, els filtres i l'exportació |
+
+Els camps traduïts es fan servir com qualsevol altre camp a `columns()`, `fields()`, `showFields()`, `searchFields()`, `filters()`, `displayAs()`...:
+
+- **Llistat, cerca, ordenació, filtres i exportació**: treballen amb la traducció de `listLocale` (un `LEFT JOIN` amb la taula de traduccions). Un registre sense traducció en aquest idioma mostra el camp buit.
+- **Formulari**: tots els camps traduïts van junts en un bloc amb **una pestanya per idioma** (plantilla `partials/translations`). Els idiomes obligatoris es marquen.
+- **Fitxa**: cada camp mostra totes les traduccions omplertes, precedides d'una etiqueta amb el codi d'idioma.
+- **Validació**: les regles s'apliquen per idioma; les claus dels errors són `kp_tr.{locale}.{camp}` (p. ex. `kp_tr.en.title`). La regla `required` només s'aplica als **idiomes obligatoris**: un idioma opcional que es deixa del tot buit no es valida, i si s'ha omplert només es valida el que s'hi ha escrit.
+- **Desar**: s'escriu (o s'actualitza) una fila per cada idioma omplert, a la mateixa transacció que el registre. Un idioma opcional que es deixa buit **s'esborra** de la taula de traduccions. Un esborrat definitiu (o una taula sense paperera) també n'esborra les traduccions; enviar-lo a la paperera les conserva.
+- Funcionen amb `setTable()` i amb `setModel()`: els camps traduïts no són columnes de la taula principal, així que **no** van als `allowedFields` del model.
+- No entren a la [importació CSV](#importació-csv).
+
+```php
+$crud->setTable('news')
+     ->setTranslations('news_translations', 'news_id', 'locale', ['title', 'body'],
+         ['ca' => 'Català', 'en' => 'English', 'es' => 'Español'],
+         ['required' => ['ca', 'en'], 'rules' => ['title' => 'required|max_length[200]']])
+     ->columns(['title', 'published_at'])
+     ->fields(['published_at', 'title', 'body'])
+     ->searchFields(['title']);
+```
+
+### `postedTranslations(): array`
+
+Les traduccions enviades amb el formulari que s'està desant, com a `[locale => [camp => valor]]` (valors sense espais als extrems; també hi són els idiomes buits). Serveix en un hook `beforeInsert` o `beforeUpdate`, que només reben les dades de la taula principal.
+
+```php
+$crud->beforeInsert(function (array $data) use ($crud) {
+    $data['slug'] = url_title($crud->postedTranslations()['ca']['title'] ?? '', '-', true);
+
+    return $data;
+});
+```
 
 ---
 
@@ -582,6 +660,31 @@ $crud->afterDelete(function (string $id, array $row, bool $purge) {
 $crud->afterRestore(fn (string $id) => log_message('info', "Client {$id} restaurat"));
 ```
 
+### `afterWrite(Closure $callback): static`
+
+`fn (string $operation, string $id, array $data, ?array $old): void`. S'executa després de **qualsevol** escriptura que fa el CRUD, per tenir en un sol lloc un registre d'auditoria, buidar una memòria cau, etc.
+
+- `$operation`: `'insert'`, `'update'`, `'delete'` (a la paperera o definitiu) o `'restore'`.
+- `$data`: els valors desats (buit a `delete` i `restore`).
+- `$old`: el registre abans del canvi (`null` a `insert`).
+
+S'executa **després** del hook `after*` específic de l'operació (`afterInsert`, `afterUpdate`...), i també en les escriptures que fan les accions massives (esborrar, restaurar, esborrar definitivament, buidar la paperera) i la [importació CSV](#importació-csv).
+
+```php
+$crud->afterWrite(function (string $operation, string $id, array $data, ?array $old) {
+    db_connect()->table('audit_log')->insert([
+        'user_id'    => session('user_id'),
+        'table_name' => 'clients',
+        'record_id'  => $id,
+        'operation'  => $operation,
+        'changes'    => json_encode($data),
+        'created_at' => date('Y-m-d H:i:s'),
+    ]);
+
+    cache()->delete('clients_count');
+});
+```
+
 ---
 
 ## Accions
@@ -614,6 +717,9 @@ La URL pot ser:
 | `confirm` | cap | Missatge de confirmació abans d'executar l'acció |
 | `visible` | sempre | `fn (array $row): bool` per mostrar-la només en alguns registres |
 | `method` | `'get'` | `'post'` per a accions que modifiquen dades. S'envia un formulari amb el token CSRF |
+| `permission` | cap | Operació o permís que l'usuari ha de tenir sobre el registre (p. ex. `'edit'` o `'invoice'`) perquè surti el botó. Es comprova com les operacions del CRUD: amb [`setPermission()`](#setpermissionstring-operation-boolclosure-allowed-static) i el [resolutor de permisos](#permisos-centralitzats) |
+
+El botó només és un enllaç: si la URL porta a una ruta pròpia, aquella ruta ha de comprovar els permisos pel seu compte. Amb [`addOperation()`](#operacions-pròpies), la comprovació la fa el CRUD.
 
 ```php
 // {kp_id}: l'id tal com surt a les URL del CRUD (un codi si està emmascarat).
@@ -625,9 +731,10 @@ $crud->addAction('Mapa', 'https://www.openstreetmap.org/search?query={address}',
 ]);
 
 $crud->addAction('Envia recordatori', 'clients/remind/{kp_id}', [
-    'method'  => 'post',
-    'confirm' => 'Vols enviar el recordatori?',
-    'visible' => fn (array $row) => $row['balance'] > 0,
+    'method'     => 'post',
+    'confirm'    => 'Vols enviar el recordatori?',
+    'visible'    => fn (array $row) => $row['balance'] > 0,
+    'permission' => 'edit',   // només als registres que l'usuari pot editar
 ]);
 ```
 
@@ -650,6 +757,7 @@ Acció sobre els registres **seleccionats** amb les caselles: `fn (array $ids, C
 |---|---|---|
 | `confirm` | cap | Missatge de confirmació |
 | `trash` | `false` | `true` per oferir l'acció a la paperera en lloc del llistat |
+| `permission` | cap | Operació o permís necessari (p. ex. `'edit'`). L'acció només s'ofereix si l'usuari el té en general (`$row = null`), i el callback **només rep els ids dels registres sobre els quals el té**: es comprova registre a registre. Si no en queda cap, l'acció no s'executa |
 
 ```php
 $crud->addBulkAction('activate', 'Activa', function (array $ids) {
@@ -666,7 +774,111 @@ $crud->addBulkAction('labels', 'Etiquetes en PDF', function (array $ids) {
 });
 ```
 
-Les accions massives pròpies no comproven els permisos registre a registre: si cal, fes-ho dins el callback.
+Sense `permission`, una acció massiva pròpia està disponible per a qualsevol usuari que pugui fer accions massives (`bulk`), i no comprova els permisos registre a registre: si cal, fes-ho dins el callback.
+
+```php
+// Al callback només hi arriben els registres que l'usuari pot editar
+$crud->addBulkAction('archive', 'Arxiva', fn (array $ids, Crud $crud) => ..., ['permission' => 'edit']);
+```
+
+---
+
+## Operacions pròpies
+
+### `addOperation(string $key, Closure $callback, array $options = []): static`
+
+Una operació pròpia **servida per la mateixa ruta del CRUD**: `base/{clau}/{id}` (sobre un registre) o `base/{clau}` (general). Per exemple, `admin/invoices/duplicate/5` o `admin/invoices/recalculate`. A diferència d'un `addAction()` que porta a una ruta pròpia, el CRUD hi aplica el mateix que a les seves operacions:
+
+- el token CSRF (amb `method` `post`);
+- els [identificadors emmascarats](#identificadors-emmascarats): l'`{id}` de la URL és el codi, i el callback rep l'id real;
+- l'abast del CRUD (`where()`): un registre de fora "no existeix";
+- els permisos (`permission`, `visible`, el [resolutor de permisos](#permisos-centralitzats));
+- les [URL signades](#url-signades), si el CRUD les exigeix;
+- la tornada al llistat amb el missatge, mantenint la pàgina, la cerca i els filtres.
+
+`$callback`: `fn (?string $id, ?array $row, Crud $crud): ResponseInterface|string|false|null`
+
+- `$id` i `$row`: l'id real i el registre (`null` a les operacions generals).
+- Retorna:
+
+| Retorn | Efecte |
+|---|---|
+| una resposta | Es retorna tal qual: una redirecció, una descàrrega, una pàgina feta amb `$crud->page()` |
+| `string` | Torna al llistat amb aquest text com a missatge d'èxit |
+| `null` | Torna al llistat amb el missatge genèric "Operació feta" |
+| `false` | Torna al llistat amb el missatge "S'ha cancel·lat l'operació" |
+
+Per tornar al llistat amb un error: `return $crud->backToList('danger', 'Missatge');`
+
+| Opció | Per defecte | Descripció |
+|---|---|---|
+| `row` | `true` | `true`: treballa sobre un registre (`base/{clau}/{id}`) i el botó va a cada fila i a la fitxa. `false`: operació general (`base/{clau}`), amb el botó a la capçalera del llistat |
+| `method` | `'post'` | `'post'` (un formulari amb el token CSRF; una petició GET es rebutja) o `'get'` (per a pàgines i descàrregues que no canvien res) |
+| `permission` | la clau | Operació o permís que es comprova, amb el registre. Es pot decidir amb `setPermission('clau', ...)` o amb el [resolutor de permisos](#permisos-centralitzats). Si ningú no ho decideix, es permet (llevat de `denyByDefault`) |
+| `visible` | sempre | `fn (?array $row): bool`. Si retorna `false`, el botó no surt **i** l'operació es denega |
+| `trash` | `false` | `true`: treballa sobre registres de la paperera (només amb `row`); el botó surt a la paperera. També cal el permís `trash` |
+| `button` | `true` | `false` per no afegir-hi botó (p. ex. si s'hi arriba des d'un enllaç propi: fes servir `$crud->url('clau', $id)`) |
+| `label` | la clau, amb majúscula inicial | Text del botó |
+| `icon`, `class`, `confirm`, `target` | | Com a [`addAction()`](#accions) |
+
+La clau ha de començar amb una lletra minúscula i només pot tenir minúscules, números, `-` i `_`. No pot ser `list` ni una operació del CRUD ([`ID_OPERATIONS` i `OPERATIONS`](#crudid_operations--crudoperations)): una clau no vàlida llança una excepció.
+
+```php
+// Sobre un registre: admin/invoices/duplicate/5 (POST)
+$crud->addOperation('duplicate', function (string $id, array $row, Crud $crud) {
+    unset($row['id']);
+    $row['number'] = null;
+    $row['status'] = 'draft';
+    $crud->getModel()->insert($row);
+
+    return redirect()->to($crud->url('edit', (string) $crud->getModel()->getInsertID()));
+}, [
+    'label'      => 'Duplica',
+    'icon'       => 'bi bi-copy',
+    'confirm'    => 'Vols duplicar aquesta factura?',
+    'permission' => 'add',
+]);
+
+// Amb una condició i un missatge d'error
+$crud->addOperation('send', function (string $id, array $row, Crud $crud) {
+    if (! service('email')->setTo($row['email'])->setSubject('La teva factura')->send()) {
+        return $crud->backToList('danger', "No s'ha pogut enviar el correu.");
+    }
+
+    return 'Factura enviada.';
+}, ['icon' => 'bi bi-envelope', 'visible' => fn (?array $row) => $row === null || $row['status'] === 'issued']);
+
+// General, com a pàgina: admin/invoices/summary (GET)
+$crud->addOperation('summary', function (?string $id, ?array $row, Crud $crud) {
+    $html = view('invoices/summary', ['totals' => model('InvoiceModel')->totals()]);
+
+    return service('response')->setBody($crud->page($html, 'Resum'));
+}, ['row' => false, 'method' => 'get', 'icon' => 'bi bi-bar-chart']);
+```
+
+Per decidir qui la pot fer, fes servir la clau com a permís:
+
+```php
+$crud->setPermission('send', auth()->user()->inGroup('admin', 'billing'));
+```
+
+[`requireSignature()`](#requiresignaturearraystring-operations---int-ttl--null-arraystring-signfrom---static) també accepta les claus de les operacions pròpies. Amb `'*'` (per defecte) s'hi inclouen sempre; en una llista explícita, afegeix l'operació **abans** de cridar `requireSignature()`.
+
+### `backToList(string $type, string $text): ResponseInterface`
+
+Redirecció al llistat (o a `setBackUrl()`) amb un missatge, mantenint la pàgina, la cerca i els filtres. `$type`: `success`, `danger`, `warning` o `info`. Per a les operacions pròpies que acaben amb un error, o per tornar un missatge d'un tipus diferent de `success`.
+
+```php
+return $crud->backToList('warning', 'La factura no té línies.');
+```
+
+### `page(string $html, string $title): string`
+
+Embolcalla un HTML propi amb el mateix layout que les pàgines del CRUD (el del tema, o el del projecte amb `setLayout()`) i en fixa el títol (`getTitle()`). Per a les operacions pròpies que mostren una pàgina en lloc de redirigir.
+
+```php
+return service('response')->setBody($crud->page($html, 'Vista prèvia de la factura'));
+```
 
 ---
 
@@ -764,7 +976,9 @@ El callback només s'executa si la columna és al fitxer.
 
 ### `setPermission(string $operation, bool|Closure $allowed): static`
 
-Permet o denega una operació. Totes les operacions estan permeses per defecte, excepte `trash`, `restore` i `purge`, que només existeixen si la taula té paperera.
+Permet o denega una operació. Totes les operacions estan permeses per defecte (llevat que s'activi [`denyByDefault`](#permisos-centralitzats)), excepte `trash`, `restore` i `purge`, que només existeixen si la taula té paperera.
+
+`$operation` també pot ser el permís d'una acció (opció `permission` d'[`addAction()`](#accions)) o la clau d'una [operació pròpia](#operacions-pròpies).
 
 Els permisos es comproven al **servidor**, no només a la interfície: si una acció no està permesa, no surt el botó i, si algú hi accedeix per URL, rep un error.
 
@@ -895,6 +1109,100 @@ Només consulta: equival a `unsetAdd()->unsetEdit()->unsetDelete()->unsetPurge()
 $crud->setTable('logs')->readOnly()->unsetTrash();
 ```
 
+### Permisos centralitzats
+
+`setPermission()` decideix els permisos d'un CRUD. Per decidir els de **tots els CRUD del projecte des d'un sol lloc** (per exemple, a partir dels rols o els permisos de l'usuari), fes servir un **resolutor de permisos**: una classe que rep el nom del CRUD (el *recurs*), l'operació i el registre, i respon.
+
+**Com es decideix** cada operació (i cada registre):
+
+1. Si la taula no té paperera, `trash`, `restore` i `purge` es deneguen.
+2. El **resolutor** respon `true` (permet), `false` (denega) o `null` (no opina). Si denega, l'operació queda denegada: **el resolutor té l'última paraula per denegar**, i `setPermission()` no la pot tornar a permetre.
+3. Si el CRUD té una regla de `setPermission()` per a aquella operació, decideix la regla (encara pot restringir el que el resolutor ha permès).
+4. Si no, compta la resposta del resolutor; i si no ha opinat (o no n'hi ha), decideix `Config\Kpcrudy::$denyByDefault`: `false` (per defecte) permet, `true` denega.
+
+Amb `denyByDefault = true`, cada operació, també `list`, `search`, `filters`, `bulk` i les operacions pròpies, l'ha de permetre explícitament el resolutor o `setPermission()`.
+
+### Interfície `Kpcrudy\PermissionResolver`
+
+```php
+interface PermissionResolver
+{
+    public function allows(string $resource, string $operation, ?array $row, Crud $crud): ?bool;
+}
+```
+
+- `$resource`: el nom del CRUD (`setResource()`; per defecte, el nom de la taula).
+- `$operation`: `list`, `show`, `add`, `edit`, `delete`, `export`, `import`, `trash`, `restore`, `purge`, `search`, `filters`, `bulk`, o el `permission` d'una acció o operació pròpia.
+- `$row`: el registre, o `null` si la comprovació és general (p. ex. si es mostra el botó "Afegeix"). Vegeu la taula de [`setPermission()`](#setpermissionstring-operation-boolclosure-allowed-static).
+- Retorna `true`, `false` o `null` (no opina).
+
+Es configura per a tots els CRUD a `app/Config/Kpcrudy.php`:
+
+```php
+public ?string $permissionResolver = \App\Libraries\CrudPermissions::class;
+public bool $denyByDefault         = true;   // opcional: denega el que ningú no permet
+```
+
+La llibreria no depèn de cap sistema d'autenticació. Com a exemple, un resolutor basat en [CodeIgniter Shield](https://shield.codeigniter.com/), amb permisos amb el nom `recurs.operació` (`clients.edit`, `blog.posts.delete`...):
+
+```php
+<?php
+
+namespace App\Libraries;
+
+use Kpcrudy\Crud;
+use Kpcrudy\PermissionResolver;
+
+class CrudPermissions implements PermissionResolver
+{
+    public function allows(string $resource, string $operation, ?array $row, Crud $crud): ?bool
+    {
+        $user = auth()->user();
+
+        if ($user === null) {
+            return false;
+        }
+
+        // Cercar, filtrar i seleccionar: ho decideix cada CRUD (o denyByDefault)
+        if (in_array($operation, ['search', 'filters', 'bulk'], true)) {
+            return null;
+        }
+
+        return $user->can("{$resource}.{$operation}");
+    }
+}
+```
+
+De la mateixa manera podria llegir els permisos de la sessió, d'una taula pròpia o d'una altra llibreria. Les regles per registre (només el propietari pot editar...) continuen anant a cada CRUD amb `setPermission()`, que pot restringir el que el resolutor permet.
+
+### `setResource(string $resource): static` · `getResource(): string`
+
+Nom del CRUD per al resolutor de permisos (p. ex. `'events'` o `'blog.posts'`). Per defecte, el nom de la taula. Serveix quan dos CRUD fan servir la mateixa taula amb permisos diferents, o per agrupar-los.
+
+```php
+$crud->setTable('posts')->setResource('blog.posts');
+```
+
+### `setPermissionResolver(PermissionResolver|Closure|null $resolver): static`
+
+Resolutor només per a aquest CRUD, en lloc del de la configuració. Accepta una instància de `PermissionResolver` o una closure amb la mateixa signatura, `fn (string $resource, string $operation, ?array $row, Crud $crud): ?bool`. `null` treu el configurat per a aquest CRUD.
+
+```php
+$crud->setPermissionResolver(function (string $resource, string $operation, ?array $row) {
+    return in_array($operation, ['list', 'show', 'search', 'filters', 'export'], true) ? true : null;
+});
+```
+
+### `isAllowed(string $operation, ?array $row = null): bool`
+
+Si l'usuari pot fer una operació (o té el `permission` d'una acció), en general o sobre un registre concret. Combina el resolutor, `setPermission()` i `denyByDefault` exactament com ho fa el CRUD. Útil als callbacks i a les vistes pròpies.
+
+```php
+$crud->callbackColumn('total', function ($value, array $row) use ($crud) {
+    return $crud->isAllowed('edit', $row) ? esc($value) : '***';
+});
+```
+
 ---
 
 ## Presentació i navegació
@@ -946,7 +1254,7 @@ $crud->setTheme('w3css');
 $crud->setTheme('compact');   // tema propi
 ```
 
-### `setLayout(string|false $layout): static`
+### `setLayout(string|false $layout, ?string $section = null): static`
 
 Com s'embolcalla l'HTML del CRUD:
 
@@ -954,10 +1262,50 @@ Com s'embolcalla l'HTML del CRUD:
 |---|---|
 | `'default'` | Pàgina HTML completa del tema (`layout.php`) amb Bootstrap des de CDN |
 | `false` | Només el fragment HTML del CRUD |
-| nom d'una vista | Vista de CodeIgniter que rep `$kpcrudy` (HTML del CRUD) i `$title` |
+| nom d'una vista | Vista de CodeIgniter que rep `$kpcrudy` (HTML del CRUD), `$title` i les variables de `setLayoutData()` |
+| nom d'una vista + `$section` | Layout **amb seccions**: el CRUD va a la secció `$section` de la vista, que s'estén com amb `$this->extend()` |
+
+`$section` és per als layouts que fan servir `$this->renderSection('content')`, la manera habitual a CodeIgniter 4. Sense (o amb `null`), la vista rep `$kpcrudy` i l'ha d'escriure. Si no es passa, es manté el `layoutSection` de la configuració.
 
 ```php
+// La vista escriu <?= $kpcrudy ?>
 $crud->setLayout('layouts/admin');
+
+// La vista té <?= $this->renderSection('content') ?>
+$crud->setLayout('layouts/admin', 'content');
+```
+
+Amb seccions, el layout també rep `$title` i les variables de `setLayoutData()` (p. ex. per a `<title><?= esc($title) ?></title>`).
+
+### `setLayoutData(array $data): static`
+
+Variables que rep el layout del projecte a més de `$kpcrudy` i `$title` (menú, usuari, molles de pa...). Es pot cridar diverses vegades; els valors s'ajunten.
+
+```php
+$crud->setLayout('layouts/admin', 'content')
+     ->setLayoutData(['menu' => 'clients', 'breadcrumbs' => ['Admin', 'Clients']]);
+```
+
+### `showTitle(bool $show = true): static`
+
+Mostra o amaga el títol (`<h1>`) del CRUD, p. ex. si el layout ja mostra el títol de la pàgina. Per defecte, `Config\Kpcrudy::$showTitle`.
+
+```php
+$crud->showTitle(false);
+```
+
+### `getTitle(): ?string`
+
+Títol de la pàgina generada per `render()` (p. ex. "Nou: client" o "Clients"), per fer-lo servir al layout o a una vista pròpia. `null` abans de `render()`.
+
+```php
+$output = $crud->render();
+
+if ($output instanceof ResponseInterface) {
+    return $output;
+}
+
+return view('admin/page', ['content' => $output, 'title' => $crud->getTitle()]);
 ```
 
 ---
@@ -1294,7 +1642,7 @@ Crud::signUrl('shared/agenda', 7 dies) ───►  shared/agenda?kp_exp=…&kp
 
 Les operacions indicades només s'obren amb una URL signada vàlida. Sense signatura, amb una signatura que no correspon o amb una de caducada, el CRUD respon amb un 404 i el missatge "Aquest enllaç no és vàlid." o "Aquest enllaç ha caducat." (claus d'idioma `linkInvalid` i `linkExpired`).
 
-- `$operations`: `'*'` (per defecte, i el més segur): totes les operacions. O bé una llista (`['list', 'show']`): les que no hi són queden **obertes a qualsevol** que arribi a la ruta; protegeix-les amb un filtre d'autenticació o treu-les amb `unset*()`. Un nom que no existeix (`'lsit'`) llança una excepció, perquè deixaria l'operació oberta sense avisar. Les operacions són `list` i les de [`ID_OPERATIONS` i `OPERATIONS`](#crudid_operations--crudoperations).
+- `$operations`: `'*'` (per defecte, i el més segur): totes les operacions. O bé una llista (`['list', 'show']`): les que no hi són queden **obertes a qualsevol** que arribi a la ruta; protegeix-les amb un filtre d'autenticació o treu-les amb `unset*()`. Un nom que no existeix (`'lsit'`) llança una excepció, perquè deixaria l'operació oberta sense avisar. Les operacions són `list`, les de [`ID_OPERATIONS` i `OPERATIONS`](#crudid_operations--crudoperations) i les claus de les [operacions pròpies](#operacions-pròpies) afegides abans (amb `'*'`, també les afegides després).
 - `$signFrom`: operacions que s'obren **sense** signatura i que reparteixen enllaços signats. P. ex. `['list']` per a un llistat intern, protegit amb login, que dona enllaços signats a les fitxes. Una operació no pot ser alhora a `$operations` i a `$signFrom`.
 - `$ttl`: durada, en segons, dels enllaços que reparteixen les operacions de `$signFrom` (`null` = no caduquen). Els enllaços que se signen navegant amb una URL signada no el fan servir: hereten la caducitat de l'enllaç d'entrada.
 
@@ -1440,17 +1788,27 @@ Genera el mètode de controlador d'un CRUD i la seva ruta a partir de l'estructu
 
 | Opció | Per defecte | Descripció |
 |---|---|---|
-| `--controller` | la taula en *StudlyCase* | Classe relativa a `App\Controllers` (`Admin/Clients`). Es crea si no existeix; si existeix, s'hi afegeix el mètode |
+| `--namespace` | `App` | Namespace base de l'aplicació o d'un mòdul/paquet. Els controladors van a `<ns>\Controllers` i els models a `<ns>\Models` |
+| `--path` | el directori del namespace a l'autoloader (`app/` per a `App`) | Directori del namespace base, si l'autoloader no el coneix |
+| `--routes` | `<path>/Config/Routes.php` | Fitxer de rutes on s'afegeix la ruta. Es crea si no existeix |
+| `--extends` | `<ns>\Controllers\BaseController`, `App\Controllers\BaseController` o `CodeIgniter\Controller` (el primer que existeixi) | Classe pare d'un controlador nou |
+| `--controller` | la taula en *StudlyCase* | Classe relativa a `<ns>\Controllers` (`Admin/Clients`). Es crea si no existeix; si existeix, s'hi afegeix el mètode |
 | `--method` | `index` | Nom del mètode |
 | `--route` | a partir del controlador | Ruta que es registra amb `Crud::routes()` |
 | `--filter` | cap | Filtre de la ruta |
-| `--model` | no | Genera també un model a `app/Models` i fa servir `setModel()` |
+| `--as` | cap | Nom de la ruta, per a `route_to()` i `url_to()` (vegeu [`Crud::routes()`](#creació-i-execució)) |
+| `--model` | no | Genera també un model a `<ns>\Models` i fa servir `setModel()` |
 | `--dry-run` | no | Mostra el codi sense escriure res |
 | `--force` | no | Reemplaça el mètode i el model si ja existeixen |
 
 ```bash
 php spark kpcrudy:make products --controller Admin/Shop --method products --route admin/products --filter auth:admin
+
+# Dins d'un mòdul: Modules\Blog\Controllers\Posts, modules/Blog/Config/Routes.php
+php spark kpcrudy:make posts --namespace "Modules\Blog" --route admin/posts --as blog-posts --model
 ```
+
+**Mòduls i paquets.** Amb `--namespace` (diferent d'`App`), el codi es genera dins el mòdul: el namespace ha d'estar registrat a `Config\Autoload::$psr4` (o cal indicar-ne el directori amb `--path`). La ruta fa servir el **nom complet de la classe** del controlador (`'\Modules\Blog\Controllers\Posts::index'`), perquè el namespace per defecte de les rutes és `App\Controllers`. Si el fitxer de rutes del mòdul no existeix, es crea; CodeIgniter només el carrega si el descobriment de rutes està activat (`Config\Modules`: `$enabled`, `$discoverInComposer` i `'routes'` a `$aliases`) o si `app/Config/Routes.php` l'inclou. La comanda t'ho recorda.
 
 Abans d'escriure cap fitxer ho comprova tot, i s'atura sense tocar res si alguna cosa no quadra: taules o columnes amb noms que no siguin només lletres, números i `_` (no es poden posar sense risc al codi generat), un mètode que comenci amb `_` o que ja tingui el controlador base (`initController`...), una ruta que ja apunti a un altre controlador o un model amb el mateix nom que sigui d'una altra taula. Amb `--dry-run` també fa aquestes comprovacions.
 
@@ -1537,7 +1895,10 @@ class Kpcrudy extends \Kpcrudy\Config\Kpcrudy
 |---|---|---|
 | `string $theme` | `'bootstrap5'` | Tema per defecte |
 | `array $themes` | `[]` | Temes addicionals: `['nom' => directori]` o `['nom' => ['path' => directori, 'parent' => 'w3css']]` per ampliar un altre tema |
-| `string\|false $layout` | `'default'` | Layout per defecte (vegeu `setLayout`) |
+| `string\|false $layout` | `'default'` | Layout per defecte (vegeu [`setLayout`](#setlayoutstringfalse-layout-string-section--null-static)) |
+| `?string $layoutSection` | `null` | Amb un layout del projecte que fa servir seccions, la secció on va el CRUD (p. ex. `'content'`). Aleshores `$layout` és la vista que s'estén. `null` = el layout rep `$kpcrudy` |
+| `bool $showTitle` | `true` | Si el CRUD mostra el seu títol (`<h1>`). Posa-ho a `false` si el layout ja mostra el títol de la pàgina (el rep a `$title`, o amb `getTitle()`) |
+| `array $flashKeys` | `[]` | Missatges del CRUD (desat, esborrat, error...) a les claus de sessió del projecte en lloc del bloc d'avisos propi: `[tipus => clau de flashdata]`. Tipus: `success`, `danger`, `warning`, `info`. P. ex. `['success' => 'message', 'danger' => 'error']`. Els tipus que no hi siguin es continuen mostrant dins el CRUD |
 | `int $perPage` | `25` | Registres per pàgina |
 | `array $perPageOptions` | `[10, 25, 50, 100]` | Opcions del selector "Per pàgina" |
 | `string $dateFormat` | `'d/m/Y'` | Format de les dates al llistat, la fitxa i el CSV |
@@ -1549,6 +1910,8 @@ class Kpcrudy extends \Kpcrudy\Config\Kpcrudy
 | `int $exportMaxRows` | `100000` | Files màximes d'una exportació CSV (`0` = sense límit). Si el llistat filtrat en té més, es demana a l'usuari que el filtri |
 | `bool $checkRoutes` | `true` | En desenvolupament, comprovar que cap ruta del projecte xoqui amb les de `Crud::routes()` (vegeu [`Crud::checkRoutes()`](#crudcheckroutes-void-estàtica)). Desactiva-ho només si tens una ruta que substitueix una operació del CRUD a propòsit |
 | `bool $csrfProtection` | `true` | Verificar el token CSRF de les peticions POST del CRUD quan el filtre `csrf` de CodeIgniter (o una subclasse de `CodeIgniter\Filters\CSRF`) no està actiu per a la petició. Desactiva-ho només si el projecte protegeix les peticions d'una altra manera |
+| `?string $permissionResolver` | `null` | Classe que decideix els permisos de tots els CRUD; ha d'implementar [`Kpcrudy\PermissionResolver`](#permisos-centralitzats). `null` = cap resolutor: només compten les regles de `setPermission()` de cada CRUD |
+| `bool $denyByDefault` | `false` | Què passa amb una operació sobre la qual ni el resolutor ni `setPermission()` diuen res: `false` la permet; `true` la denega (tot s'ha de permetre explícitament) |
 | `bool $maskIds` | `false` | [Emmascarar els identificadors](#identificadors-emmascarats) de les URL de tots els CRUD (`edit/Xk3f9...` en lloc d'`edit/5`). Cada CRUD ho pot canviar amb `maskIds()` |
 | `string $maskKey` | `''` | Clau de la llibreria: emmascara els identificadors i signa les [URL signades](#url-signades). Ha de tenir com a mínim 32 caràcters (p. ex. `bin2hex(random_bytes(32))`); si és més curta, es llança una excepció. Si és buida, la d'encriptació de CodeIgniter (`encryption.key`) i, si tampoc n'hi ha, una clau aleatòria desada a `writable/kpcrudy/mask.key`. Si canvia, canvien tots els codis i deixen de funcionar els enllaços antics, també els signats |
 | `string $idMasker` | `Kpcrudy\DefaultIdMasker` | Classe que emmascara els identificadors; ha d'implementar [`Kpcrudy\IdMasker`](#interfície-kpcrudyidmasker) |
@@ -1578,6 +1941,25 @@ Amb `$inferRules` activat, es dedueixen aquestes regles (només als camps sense 
 | color | `regex_match` de `#rrggbb` |
 | nom amb `email` | `valid_email` |
 | nom `url`, `web`, `website` | `valid_url_strict[http,https]` |
+
+Amb `$flashKeys`, el layout mostra els missatges com els de la resta de l'aplicació:
+
+```php
+// app/Config/Kpcrudy.php
+public array $flashKeys = ['success' => 'message', 'danger' => 'error', 'warning' => 'warning'];
+```
+
+```php
+<!-- app/Views/layouts/admin.php -->
+<?php if (session('message')): ?><div class="alert alert-success"><?= esc(session('message')) ?></div><?php endif ?>
+<?php if (session('error')): ?><div class="alert alert-danger"><?= esc(session('error')) ?></div><?php endif ?>
+```
+
+### Idiomes
+
+Els textos de la interfície i els missatges són a `Language/{locale}/Kpcrudy.php`, en sis idiomes: català (`ca`), anglès (`en`), castellà (`es`), francès (`fr`), alemany (`de`) i portuguès (`pt`). L'idioma és el de la petició (`$request->getLocale()`). Els **missatges de les excepcions** (errors de configuració: una operació desconeguda, una `maskKey` massa curta, un resolutor no vàlid...) també estan traduïts, a les claus `Kpcrudy.exceptions.*`.
+
+Per a un idioma sense traducció de kpcrudy (o una clau que falti en una traducció pròpia), CodeIgniter recorre a l'idioma sense regió (`pt-BR` → `pt`) i, després, a l'**anglès**. Per traduir o adaptar els textos, `php spark kpcrudy:publish lang <locale>` copia un idioma a `app/Language` (vegeu [kpcrudy:publish](commands_CA.md#kpcrudypublish)).
 
 ---
 
@@ -1632,4 +2014,50 @@ Genera atributs HTML escapats. `true` posa l'atribut sense valor, i `false` o `n
 ```php
 <input<?= $this->attrs(['type' => 'text', 'name' => 'q', 'required' => true, 'disabled' => false]) ?>>
 <!-- <input type="text" name="q" required> -->
+```
+
+### `Renderer::nonce(string $type = 'script'): string`
+
+Atribut `nonce` de la Content-Security-Policy de CodeIgniter per a un bloc `<script>` (`'script'`) o `<style>` (`'style'`), amb un espai al davant. Buit si la CSP no està activa.
+
+```php
+<script<?= $this->nonce() ?>>
+    // ...
+</script>
+<style<?= $this->nonce('style') ?>>
+    .kpcrudy .my-class { color: #c00; }
+</style>
+```
+
+### Content-Security-Policy
+
+Els temes inclosos funcionen amb una **CSP estricta** (`Config\App::$CSPEnabled = true`, sense `'unsafe-inline'`): els blocs `<script>` i `<style>` porten el nonce, i les plantilles **no** fan servir gestors en línia (`onclick=""`, `onchange=""`...) ni atributs `style=""`. El comportament va en atributs `data-kp-*`, que gestiona el JavaScript de `partials/assets`. Un tema propi hauria de seguir les mateixes regles:
+
+| Atribut | Comportament |
+|---|---|
+| `data-kp-confirm="missatge"` | Demana confirmació abans de seguir l'enllaç o d'enviar el formulari del botó |
+| `data-kp-autosubmit` | Un `<select>` (o un altre camp) que envia el formulari en canviar (p. ex. "Per pàgina") |
+| `data-kp-alert` · `data-kp-dismiss` | Un avís que es pot tancar (`data-kp-alert`) i el seu botó de tancar (`data-kp-dismiss`), sense el JavaScript del framework |
+| `data-kp-color="#rrggbb"` | Color de fons d'una mostra de color, posat amb JavaScript en lloc de `style=""` |
+| `data-kp-check-all` | Casella que marca o desmarca tots els `ids[]` del formulari |
+| `data-kp-bulk="missatge"` | Formulari de les accions massives; el missatge surt si no hi ha cap registre seleccionat |
+
+### Esdeveniment `kpcrudy:confirm`
+
+Abans de demanar una confirmació amb `window.confirm()` (`data-kp-confirm`, o el `confirm` d'una acció massiva), el CRUD envia l'esdeveniment **cancel·lable** `kpcrudy:confirm` a `document`. El seu `detail` porta:
+
+- `message`: el text de la confirmació;
+- `element`: l'enllaç, el botó o el formulari que la demana;
+- `proceed()`: una funció que continua l'acció.
+
+Si un listener el cancel·la (`preventDefault()`), el CRUD no mostra `window.confirm()`: el listener mostra el seu propi diàleg i crida `detail.proceed()` si l'usuari accepta. Per exemple, amb [SweetAlert2](https://sweetalert2.github.io/), al layout del projecte:
+
+```html
+<script<?= csp_script_nonce() ?>>
+document.addEventListener('kpcrudy:confirm', function (e) {
+    e.preventDefault();
+    Swal.fire({ text: e.detail.message, icon: 'warning', showCancelButton: true })
+        .then(function (result) { if (result.isConfirmed) { e.detail.proceed(); } });
+});
+</script>
 ```
