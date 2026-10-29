@@ -35,6 +35,7 @@ This document explains how a theme is built and how you would make a new one, us
 - [The templates](#the-templates)
 - [What the theme cannot change](#what-the-theme-cannot-change)
 - [HTML that does not come from the templates](#html-that-does-not-come-from-the-templates)
+- [Content-Security-Policy](#content-security-policy)
 - [Example: a theme with W3.CSS](#example-a-theme-with-w3css)
 - [Example: a theme with Tailwind CSS](#example-a-theme-with-tailwind-css)
 - [Extending an existing theme](#extending-an-existing-theme)
@@ -82,6 +83,7 @@ Inside a template, `$this` is a `Kpcrudy\Renderer`, which provides:
 | `$this->renderParent('partials/assets')` | Include **the same template from the parent theme**, to extend it without copying it |
 | `$this->hidden($array)` | Hidden fields from an array (to keep the filters in a GET form) |
 | `$this->attrs(['name' => 'q', 'required' => true])` | Escaped HTML attributes (`true` = attribute without a value, `false`/`null` = omitted) |
+| `$this->nonce()` · `$this->nonce('style')` | The CSP nonce attribute for a `<script>` or a `<style>` (empty if CodeIgniter's CSP is off); see [Content-Security-Policy](#content-security-policy) |
 
 CodeIgniter functions (`esc()`, `lang()`, `csrf_field()`, `site_url()`...) can also be used.
 
@@ -90,18 +92,50 @@ CodeIgniter functions (`esc()`, `lang()`, `csrf_field()`, `site_url()`...) can a
 | Template | What it renders | Main variables |
 |---|---|---|
 | `layout.php` | The complete HTML page (only with the `default` layout): `<head>`, CSS, JS | `$title`, `$content`, `$config` |
-| `list.php` | List and trash: header, search, filters, table, bulk actions, pagination | `$columns`, `$rows`, `$headerActions`, `$bulkActions`, `$filters`, `$pagination`, `$state`... |
-| `form.php` | Add and edit form | `$fields`, `$action`, `$mode`, `$multipart`, `$formError` |
-| `show.php` | Detail page | `$items`, `$actions` |
-| `import.php` | CSV import in three steps (`$step`: `upload`, `preview`, `report`) | `$columns`, `$rows`, `$counts`, `$result`... |
+| `list.php` | List and trash: header, search, filters, table, bulk actions, pagination | `$title`, `$showTitle`, `$columns`, `$rows`, `$headerActions`, `$bulkActions`, `$filters`, `$pagination`, `$state`... |
+| `form.php` | Add and edit form | `$title`, `$showTitle`, `$fields`, `$action`, `$mode`, `$multipart`, `$formError` |
+| `show.php` | Detail page | `$title`, `$showTitle`, `$items`, `$actions` |
+| `import.php` | CSV import in three steps (`$step`: `upload`, `preview`, `report`) | `$title`, `$showTitle`, `$columns`, `$rows`, `$counts`, `$result`... |
 | `partials/assets.php` | The CRUD's own CSS and JavaScript | — |
 | `partials/button.php` | An action button (link or POST) | `$action`, `$compact` |
 | `partials/field.php` | A form field, according to its type | `$field` |
+| `partials/translations.php` | The translated fields of `setTranslations()`, one block or tab per language | `$field` (with `tabs`) |
 | `partials/filters.php` | Filter panel | `$filters`, `$filterHidden`, `$filtersReset`... |
 | `partials/flash.php` | Message (saved, deleted, error...) | `$flash` |
 | `partials/pagination.php` | Pagination and "Records X to Y of Z" | `$pagination` |
 
 **All the variables** each template receives are documented in the header of the [bootstrap5](../src/Views/bootstrap5) version. The templates of the other themes receive exactly the same ones.
+
+**The title.** `list.php`, `form.php`, `show.php` and `import.php` show the title only if `$showTitle` is true (`false` with `showTitle(false)`, when the project's layout already shows it). Use `$showTitle ?? true`, so the template also works with older versions:
+
+```php
+<?php if ($showTitle ?? true): ?><h2><?= esc($title) ?></h2><?php endif ?>
+```
+
+**Field types in `partials/field.php`.** Besides the simple types (`text`, `textarea`, `number`, `date`, `select`, `boolean`, `upload`...), the template must handle:
+
+- `multiselect` (`fieldType(..., 'multiselect')`): a multiple selection exactly like `relation_nn`: `<select name="<?= $name ?>[]" multiple>` with `$field['options']`; `$field['value']` is the list of selected values.
+- `translations` (`setTranslations()`): one single "field" with all the translated inputs. Hand it over to its own template:
+
+```php
+if ($field['type'] === 'translations') {
+    echo $this->render('partials/translations', ['field' => $field]);
+
+    return;
+}
+```
+
+`partials/translations.php` receives `$field['tabs']`, one per language, each with:
+
+| Key | Content |
+|---|---|
+| `locale` | Language code (`en`) |
+| `label` | Language name (`English`) |
+| `required` | Whether the language is required |
+| `hasError` | Whether any of its inputs has an error (to open or highlight that tab) |
+| `inputs` | The inputs: `name`, `id`, `label`, `type` (`text` or `textarea`), `value`, `required`, `error`, `help`, `maxlength`, `attrs` |
+
+Keep each input's `name` as it comes (`kp_tr[en][title]`: the server reads these names). `bootstrap5` shows the languages as tabs (Bootstrap's JavaScript); `w3css` and `tailwind` show one `<fieldset>` per language, with no JavaScript.
 
 ## What the theme cannot change
 
@@ -124,8 +158,11 @@ The CRUD and its JavaScript expect specific names in the forms. The design can b
 
 | Element | What it does |
 |---|---|
-| `data-kp-confirm="message"` | Asks for confirmation before a click |
+| `data-kp-confirm="message"` | Asks for confirmation before a click (with `window.confirm()` or the project's dialog, via the `kpcrudy:confirm` event) |
 | `data-kp-check-all` | The checkbox that checks or unchecks all the `ids[]` in the form |
+| `data-kp-autosubmit` | A `<select>` that submits its form when it changes ("records per page") |
+| `data-kp-alert` + `data-kp-dismiss` | The message box and the element inside it that closes it |
+| `data-kp-color="#hex"` | Paints the element's background with that color (the `kp-swatch` of color fields) |
 | `<form data-kp-bulk="message">` | The bulk actions form; warns if nothing is selected |
 | `<option data-confirm="..." data-url="...">` | Confirmation of the bulk action and, with `data-url`, makes it run via GET (export) |
 | `<form id="kp-post-form" method="post">` | Hidden form submitted by the POST action buttons |
@@ -163,7 +200,8 @@ $variant = implode(' ', array_map(
 | boolean | `<span class="kp-badge kp-yes badge text-bg-success">Yes</span>` (and `kp-no`) |
 | image | `<img class="img-thumbnail kp-thumb">` |
 | file | link with `<i class="bi bi-paperclip">` |
-| color | `<span class="kp-swatch">` |
+| color | `<span class="kp-swatch" data-kp-color="#ff8800">` (the JavaScript paints it) |
+| multiselect | the labels, separated by commas |
 
 The `kp-*` classes belong to kpcrudy and are neutral: style them in your `partials/assets.php`. In addition, the project's `callbackColumn()` functions often use Bootstrap classes (`badge text-bg-success`). The included themes add a minimal equivalent:
 
@@ -172,6 +210,52 @@ The `kp-*` classes belong to kpcrudy and are neutral: style them in your `partia
 .kpcrudy .text-bg-success, .kpcrudy .kp-yes { background: #4CAF50; color: #fff; }
 .kpcrudy .text-bg-secondary, .kpcrudy .kp-no { background: #9e9e9e; color: #fff; }
 ```
+
+## Content-Security-Policy
+
+The included themes work with a strict Content-Security-Policy (CodeIgniter's `$CSPEnabled`, without `'unsafe-inline'`). A new theme must follow the same rules, or the browser will block its styles and scripts:
+
+**1. Nonce on every `<style>` and `<script>` block**, and on the `<link>` and `<script src>` of `layout.php`. `$this->nonce()` returns the attribute (with a leading space) or an empty string if the CSP is off:
+
+```php
+<style<?= $this->nonce('style') ?>>
+    .kpcrudy .kp-thumb { max-height: 48px; }
+</style>
+<script<?= $this->nonce() ?>>
+    // ...
+</script>
+<link rel="stylesheet"<?= $this->nonce('style') ?> href="<?= esc($config->iconsCss, 'attr') ?>">
+```
+
+**2. No `on*=""` attributes** (`onclick`, `onchange`, `onsubmit`...). The behaviour goes through the `data-kp-*` attributes, which the shared JavaScript of `bootstrap5/partials/assets.php` handles with delegated listeners (see the [table above](#what-the-theme-cannot-change)):
+
+| Instead of | Use |
+|---|---|
+| `onclick="return confirm('...')"` | `data-kp-confirm="..."` |
+| `onchange="this.form.submit()"` | `data-kp-autosubmit` |
+| `onclick="this.parentElement.remove()"` | `data-kp-dismiss` inside a `data-kp-alert` |
+| `onchange` that checks every box | `data-kp-check-all` |
+| `onsubmit` of the bulk form | `<form data-kp-bulk="...">` |
+
+If the theme needs JavaScript of its own, put it in `partials/assets.php`, in a `<script>` with the nonce, and use listeners (`addEventListener`).
+
+**3. No `style=""` attributes.** Use classes, defined in the `<style>` of `partials/assets.php`. The `w3css` theme adds some small utility classes for this, which you can reuse or copy:
+
+| Class | CSS |
+|---|---|
+| `kp-m0` | `margin: 0` |
+| `kp-row-flush` | `margin: 0 -16px` |
+| `kp-tag-gap` | `margin: 4px 4px 0 0` |
+| `kp-search` | `display: flex; gap: 4px` |
+| `kp-grow` | `flex: 1` |
+| `kp-wauto` | `width: auto` |
+| `kp-nodeco` | `text-decoration: none` |
+| `kp-w25` | `width: 25%` |
+| `kp-pr4` · `kp-pl4` | `padding-right: 4px` · `padding-left: 4px` |
+
+Values that depend on the data, such as the color of a color field, cannot be a class: they go in a `data-*` attribute that the JavaScript applies (`data-kp-color`).
+
+To test it, enable `$CSPEnabled` in `app/Config/App.php` and look at the browser console: every blocked style or script is reported there. The configuration of `Config\ContentSecurityPolicy` (CDNs, fonts, `data:` images) is in [Content-Security-Policy](howto_EN.md#content-security-policy) of the recipes.
 
 ---
 
@@ -204,8 +288,8 @@ $crud->setTheme('w3mini');
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title><?= esc($title) ?></title>
-    <link rel="stylesheet" href="https://www.w3schools.com/w3css/4/w3.css">
-    <link rel="stylesheet" href="<?= esc($config->iconsCss, 'attr') ?>">
+    <link rel="stylesheet"<?= $this->nonce('style') ?> href="https://www.w3schools.com/w3css/4/w3.css">
+    <link rel="stylesheet"<?= $this->nonce('style') ?> href="<?= esc($config->iconsCss, 'attr') ?>">
 </head>
 <body class="w3-light-grey">
     <main class="w3-container w3-padding-24"><?= $content ?></main>
@@ -220,10 +304,11 @@ If the CRUD is shown inside the project's layout (`setLayout('layouts/admin')`),
 `partials/assets.php`. There is no need to copy the JavaScript from `bootstrap5`: `renderParent()` includes it.
 
 ```php
-<style>
+<style<?= $this->nonce('style') ?>>
     .kpcrudy .kp-badge { display: inline-block; padding: 1px 8px; border-radius: 4px; font-size: 12px; }
     .kpcrudy .kp-yes { background: #4CAF50; color: #fff; }
     .kpcrudy .kp-no  { background: #9e9e9e; color: #fff; }
+    .kpcrudy .kp-pl0 { padding-left: 0; }
 </style>
 <?= $this->renderParent('partials/assets') ?>
 ```
@@ -256,7 +341,7 @@ $inner   = ! empty($action['icon']) ? '<i class="' . esc($action['icon'], 'attr'
     <?= $this->render('partials/assets') ?>
 
     <div class="w3-bar w3-margin-bottom">
-        <h2 class="w3-bar-item" style="padding-left: 0"><?= esc($title) ?></h2>
+        <?php if ($showTitle ?? true): ?><h2 class="w3-bar-item kp-pl0"><?= esc($title) ?></h2><?php endif ?>
         <div class="w3-bar-item w3-right">
             <?php foreach ($headerActions as $action): ?>
                 <?= $this->render('partials/button', ['action' => $action]) ?>
@@ -267,7 +352,7 @@ $inner   = ! empty($action['icon']) ? '<i class="' . esc($action['icon'], 'attr'
     <?= $this->render('partials/flash', ['flash' => $flash]) ?>
 
     <?php if ($canSearch): ?>
-        <form method="get" action="<?= esc($listUrl, 'attr') ?>" class="w3-margin-bottom" style="max-width: 28rem">
+        <form method="get" action="<?= esc($listUrl, 'attr') ?>" class="w3-margin-bottom kp-search">
             <?= $this->hidden($searchHidden) ?>
             <input type="search" name="q" class="w3-input w3-border w3-round" value="<?= esc($state['q'], 'attr') ?>" placeholder="<?= esc(lang('Kpcrudy.searchPlaceholder'), 'attr') ?>">
         </form>
@@ -306,6 +391,7 @@ Things to keep in mind:
 
 - The cells (`$row['cells']`) are already escaped HTML: they are printed with `<?= ?>`, without `esc()`.
 - The `kp-post-form` form is essential if there are POST actions (delete, restore...).
+- No `style=""`: the template uses classes (`kp-pl0` from the assets above, `kp-search` from the parent's), so it works with a [Content-Security-Policy](#content-security-policy).
 - `partials/pagination` still comes from `bootstrap5`: the next step is to make the W3 version.
 
 ### 6. The remaining templates
@@ -324,9 +410,9 @@ Things to keep in mind:
 | `badge text-bg-primary` | `w3-tag w3-round w3-blue` |
 | `is-invalid` + `invalid-feedback` | `w3-border-red` + `w3-small w3-text-red` |
 | `collapse` (filters) | `<details>` / `<summary>` (no JavaScript) |
-| `btn-close` | `<span onclick="this.parentElement.remove()">&times;</span>` |
+| `btn-close` | `<span data-kp-dismiss>&times;</span>` inside the `data-kp-alert` box |
 
-W3.CSS has no JavaScript: the included themes use `<details>` for the filter panel and one line of JavaScript to close the messages.
+W3.CSS has no JavaScript: the included themes use `<details>` for the filter panel and the `data-kp-dismiss` attribute (handled by the shared JavaScript) to close the messages.
 
 ---
 
@@ -341,15 +427,15 @@ The "Play CDN" generates the CSS in the browser from the classes on the page. It
 ```php
 <head>
     <!-- ... -->
-    <script src="https://cdn.tailwindcss.com/3.4.16"></script>
-    <link rel="stylesheet" href="<?= esc($config->iconsCss, 'attr') ?>">
+    <script<?= $this->nonce() ?> src="https://cdn.tailwindcss.com/3.4.16"></script>
+    <link rel="stylesheet"<?= $this->nonce('style') ?> href="<?= esc($config->iconsCss, 'attr') ?>">
 </head>
 <body class="bg-slate-100 text-slate-800">
     <main class="mx-auto max-w-7xl px-4 py-8"><?= $content ?></main>
 </body>
 ```
 
-The Play CDN **is not for production**: it is slow and loads the whole compiler in the browser.
+The Play CDN **is not for production**: it is slow and loads the whole compiler in the browser. It does not work with a strict [Content-Security-Policy](#content-security-policy) either, because it injects `<style>` blocks without a nonce; the compiled CSS does.
 
 ### 2. For production: compiling the CSS
 
@@ -380,7 +466,7 @@ npx tailwindcss -i resources/tailwind.css -o public/css/app.css --minify
 And in `layout.php` (or the project's layout), the compiled CSS instead of the Play CDN:
 
 ```php
-<link rel="stylesheet" href="<?= base_url('css/app.css') ?>">
+<link rel="stylesheet"<?= $this->nonce('style') ?> href="<?= base_url('css/app.css') ?>">
 ```
 
 Since the button classes are in the lookup table in `partials/button.php` (inside a file Tailwind reads), they are also included in the CSS. On the other hand, **do not build class names from pieces** (`'bg-' . $color . '-600'`): Tailwind would not find them. Always write the full class.
@@ -471,7 +557,7 @@ Templates are looked up in `w3teal`, then in `w3css` and, finally, in `bootstrap
 **Changing the main color**: `app/Views/kpcrudy/w3teal/partials/assets.php`
 
 ```php
-<style>
+<style<?= $this->nonce('style') ?>>
     .kpcrudy .w3-blue { background-color: #009688 !important; }
     .kpcrudy .w3-text-blue { color: #009688 !important; }
     .kpcrudy .w3-border-blue { border-color: #009688 !important; }
@@ -496,10 +582,12 @@ Before considering a theme finished, test:
 - [ ] Bulk actions: "Select all", apply an action, the warning when nothing is selected.
 - [ ] Per-row actions: the GET ones (view, edit) and the POST ones (delete) with the confirmation.
 - [ ] Trash: restore and delete permanently.
-- [ ] Form: all field types (text, drop-down, N-N, date, boolean, image), validation errors, and the three save buttons.
+- [ ] Form: all field types (text, drop-down, N-N, multiselect, date, boolean, image), validation errors, and the three save buttons.
+- [ ] Translated fields (`setTranslations()`): one block per language, the errors of an optional language and of a required one.
 - [ ] Detail page and custom actions (`addAction`).
 - [ ] Messages (saved, deleted, error) and the close button.
 - [ ] CSV import: upload, preview and the result (if the CRUD has `enableImport()`).
 - [ ] With the `csrf` filter enabled.
-- [ ] With the project's layout (`setLayout('layouts/admin')`), not only with the `default` one.
+- [ ] With the project's layout (`setLayout('layouts/admin')`), not only with the `default` one, and with `showTitle(false)`.
+- [ ] With `$CSPEnabled = true`: nothing blocked in the browser console.
 - [ ] On a narrow screen (mobile).

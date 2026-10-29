@@ -35,6 +35,7 @@ Aquest document explica com està fet un tema i com en faries un de nou, amb els
 - [Les plantilles](#les-plantilles)
 - [El que el tema no pot canviar](#el-que-el-tema-no-pot-canviar)
 - [HTML que no surt de les plantilles](#html-que-no-surt-de-les-plantilles)
+- [Content-Security-Policy](#content-security-policy)
 - [Exemple: un tema amb W3.CSS](#exemple-un-tema-amb-w3css)
 - [Exemple: un tema amb Tailwind CSS](#exemple-un-tema-amb-tailwind-css)
 - [Ampliar un tema existent](#ampliar-un-tema-existent)
@@ -82,6 +83,7 @@ Dins d'una plantilla, `$this` és un `Kpcrudy\Renderer`, que té:
 | `$this->renderParent('partials/assets')` | Incloure **la mateixa plantilla del tema pare**, per ampliar-la sense copiar-la |
 | `$this->hidden($array)` | Camps ocults a partir d'un array (per conservar els filtres en un formulari GET) |
 | `$this->attrs(['name' => 'q', 'required' => true])` | Atributs HTML escapats (`true` = atribut sense valor, `false`/`null` = no el posa) |
+| `$this->nonce()` · `$this->nonce('style')` | L'atribut nonce de la CSP per a un `<script>` o un `<style>` (buit si la CSP de CodeIgniter no està activa); vegeu [Content-Security-Policy](#content-security-policy) |
 
 Les funcions de CodeIgniter (`esc()`, `lang()`, `csrf_field()`, `site_url()`...) també es poden fer servir.
 
@@ -90,18 +92,50 @@ Les funcions de CodeIgniter (`esc()`, `lang()`, `csrf_field()`, `site_url()`...)
 | Plantilla | Què pinta | Variables principals |
 |---|---|---|
 | `layout.php` | La pàgina HTML completa (només amb el layout `default`): `<head>`, CSS, JS | `$title`, `$content`, `$config` |
-| `list.php` | Llistat i paperera: capçalera, cerca, filtres, taula, accions massives, paginació | `$columns`, `$rows`, `$headerActions`, `$bulkActions`, `$filters`, `$pagination`, `$state`... |
-| `form.php` | Formulari d'alta i d'edició | `$fields`, `$action`, `$mode`, `$multipart`, `$formError` |
-| `show.php` | Fitxa de detall | `$items`, `$actions` |
-| `import.php` | Importació CSV en tres passos (`$step`: `upload`, `preview`, `report`) | `$columns`, `$rows`, `$counts`, `$result`... |
+| `list.php` | Llistat i paperera: capçalera, cerca, filtres, taula, accions massives, paginació | `$title`, `$showTitle`, `$columns`, `$rows`, `$headerActions`, `$bulkActions`, `$filters`, `$pagination`, `$state`... |
+| `form.php` | Formulari d'alta i d'edició | `$title`, `$showTitle`, `$fields`, `$action`, `$mode`, `$multipart`, `$formError` |
+| `show.php` | Fitxa de detall | `$title`, `$showTitle`, `$items`, `$actions` |
+| `import.php` | Importació CSV en tres passos (`$step`: `upload`, `preview`, `report`) | `$title`, `$showTitle`, `$columns`, `$rows`, `$counts`, `$result`... |
 | `partials/assets.php` | CSS i JavaScript propis del CRUD | — |
 | `partials/button.php` | Un botó d'acció (enllaç o POST) | `$action`, `$compact` |
 | `partials/field.php` | Un camp del formulari, segons el tipus | `$field` |
+| `partials/translations.php` | Els camps traduïts de `setTranslations()`, un bloc o pestanya per idioma | `$field` (amb `tabs`) |
 | `partials/filters.php` | Panell de filtres | `$filters`, `$filterHidden`, `$filtersReset`... |
 | `partials/flash.php` | Missatge (desat, esborrat, error...) | `$flash` |
 | `partials/pagination.php` | Paginació i "Registres X a Y de Z" | `$pagination` |
 
 **Totes les variables** que rep cada plantilla estan documentades a la capçalera de la versió de [bootstrap5](../src/Views/bootstrap5). Les plantilles dels altres temes reben exactament les mateixes.
+
+**El títol.** `list.php`, `form.php`, `show.php` i `import.php` només mostren el títol si `$showTitle` és cert (és `false` amb `showTitle(false)`, quan el layout del projecte ja el mostra). Fes servir `$showTitle ?? true`, perquè la plantilla funcioni també amb versions anteriors:
+
+```php
+<?php if ($showTitle ?? true): ?><h2><?= esc($title) ?></h2><?php endif ?>
+```
+
+**Tipus de camp a `partials/field.php`.** A més dels tipus simples (`text`, `textarea`, `number`, `date`, `select`, `boolean`, `upload`...), la plantilla ha de tractar:
+
+- `multiselect` (`fieldType(..., 'multiselect')`): una selecció múltiple igual que `relation_nn`: `<select name="<?= $name ?>[]" multiple>` amb `$field['options']`; `$field['value']` és la llista de valors seleccionats.
+- `translations` (`setTranslations()`): un sol "camp" amb tots els inputs traduïts. Passa'l a la seva plantilla:
+
+```php
+if ($field['type'] === 'translations') {
+    echo $this->render('partials/translations', ['field' => $field]);
+
+    return;
+}
+```
+
+`partials/translations.php` rep `$field['tabs']`, una per idioma, cadascuna amb:
+
+| Clau | Contingut |
+|---|---|
+| `locale` | Codi de l'idioma (`ca`) |
+| `label` | Nom de l'idioma (`Català`) |
+| `required` | Si l'idioma és obligatori |
+| `hasError` | Si algun dels seus inputs té un error (per obrir o destacar aquella pestanya) |
+| `inputs` | Els inputs: `name`, `id`, `label`, `type` (`text` o `textarea`), `value`, `required`, `error`, `help`, `maxlength`, `attrs` |
+
+Mantén el `name` de cada input tal com arriba (`kp_tr[ca][title]`: el servidor llegeix aquests noms). `bootstrap5` mostra els idiomes en pestanyes (amb el JavaScript de Bootstrap); `w3css` i `tailwind` mostren un `<fieldset>` per idioma, sense JavaScript.
 
 ## El que el tema no pot canviar
 
@@ -124,8 +158,11 @@ El CRUD i el seu JavaScript esperen uns noms concrets als formularis. El disseny
 
 | Element | Què fa |
 |---|---|
-| `data-kp-confirm="missatge"` | Demana confirmació abans d'un clic |
+| `data-kp-confirm="missatge"` | Demana confirmació abans d'un clic (amb `window.confirm()` o amb el diàleg del projecte, a través de l'esdeveniment `kpcrudy:confirm`) |
 | `data-kp-check-all` | La casella que marca o desmarca totes les `ids[]` del formulari |
+| `data-kp-autosubmit` | Un `<select>` que envia el seu formulari quan canvia ("registres per pàgina") |
+| `data-kp-alert` + `data-kp-dismiss` | La caixa del missatge i l'element de dins que la tanca |
+| `data-kp-color="#hex"` | Pinta el fons de l'element amb aquest color (el `kp-swatch` dels camps de color) |
 | `<form data-kp-bulk="missatge">` | El formulari d'accions massives; avisa si no hi ha res seleccionat |
 | `<option data-confirm="..." data-url="...">` | Confirmació de l'acció massiva i, amb `data-url`, que es faci per GET (exportar) |
 | `<form id="kp-post-form" method="post">` | Formulari ocult que envien els botons d'acció POST |
@@ -163,7 +200,8 @@ $variant = implode(' ', array_map(
 | booleà | `<span class="kp-badge kp-yes badge text-bg-success">Sí</span>` (i `kp-no`) |
 | imatge | `<img class="img-thumbnail kp-thumb">` |
 | fitxer | enllaç amb `<i class="bi bi-paperclip">` |
-| color | `<span class="kp-swatch">` |
+| color | `<span class="kp-swatch" data-kp-color="#ff8800">` (el pinta el JavaScript) |
+| multiselect | les etiquetes, separades per comes |
 
 Les classes `kp-*` són pròpies de kpcrudy i neutres: estilitza-les al teu `partials/assets.php`. A més, els `callbackColumn()` del projecte sovint fan servir classes de Bootstrap (`badge text-bg-success`). Els temes inclosos hi afegeixen una equivalència mínima:
 
@@ -172,6 +210,52 @@ Les classes `kp-*` són pròpies de kpcrudy i neutres: estilitza-les al teu `par
 .kpcrudy .text-bg-success, .kpcrudy .kp-yes { background: #4CAF50; color: #fff; }
 .kpcrudy .text-bg-secondary, .kpcrudy .kp-no { background: #9e9e9e; color: #fff; }
 ```
+
+## Content-Security-Policy
+
+Els temes inclosos funcionen amb una Content-Security-Policy estricta (`$CSPEnabled` de CodeIgniter, sense `'unsafe-inline'`). Un tema nou ha de seguir les mateixes regles, o el navegador en bloquejarà els estils i els scripts:
+
+**1. Nonce a cada bloc `<style>` i `<script>`**, i als `<link>` i `<script src>` del `layout.php`. `$this->nonce()` retorna l'atribut (amb un espai al davant) o un text buit si la CSP no està activa:
+
+```php
+<style<?= $this->nonce('style') ?>>
+    .kpcrudy .kp-thumb { max-height: 48px; }
+</style>
+<script<?= $this->nonce() ?>>
+    // ...
+</script>
+<link rel="stylesheet"<?= $this->nonce('style') ?> href="<?= esc($config->iconsCss, 'attr') ?>">
+```
+
+**2. Sense atributs `on*=""`** (`onclick`, `onchange`, `onsubmit`...). El comportament va amb els atributs `data-kp-*`, que el JavaScript compartit de `bootstrap5/partials/assets.php` tracta amb listeners delegats (vegeu la [taula de dalt](#el-que-el-tema-no-pot-canviar)):
+
+| En lloc de | Fes servir |
+|---|---|
+| `onclick="return confirm('...')"` | `data-kp-confirm="..."` |
+| `onchange="this.form.submit()"` | `data-kp-autosubmit` |
+| `onclick="this.parentElement.remove()"` | `data-kp-dismiss` dins d'un `data-kp-alert` |
+| `onchange` que marca totes les caselles | `data-kp-check-all` |
+| `onsubmit` del formulari massiu | `<form data-kp-bulk="...">` |
+
+Si el tema necessita JavaScript propi, posa'l a `partials/assets.php`, en un `<script>` amb el nonce, i fes servir listeners (`addEventListener`).
+
+**3. Sense atributs `style=""`.** Fes servir classes, definides al `<style>` de `partials/assets.php`. El tema `w3css` hi afegeix unes petites classes d'utilitat que pots reaprofitar o copiar:
+
+| Classe | CSS |
+|---|---|
+| `kp-m0` | `margin: 0` |
+| `kp-row-flush` | `margin: 0 -16px` |
+| `kp-tag-gap` | `margin: 4px 4px 0 0` |
+| `kp-search` | `display: flex; gap: 4px` |
+| `kp-grow` | `flex: 1` |
+| `kp-wauto` | `width: auto` |
+| `kp-nodeco` | `text-decoration: none` |
+| `kp-w25` | `width: 25%` |
+| `kp-pr4` · `kp-pl4` | `padding-right: 4px` · `padding-left: 4px` |
+
+Els valors que depenen de les dades, com el color d'un camp de color, no poden ser una classe: van en un atribut `data-*` que aplica el JavaScript (`data-kp-color`).
+
+Per provar-ho, activa `$CSPEnabled` a `app/Config/App.php` i mira la consola del navegador: hi surt cada estil o script bloquejat. La configuració de `Config\ContentSecurityPolicy` (CDN, fonts, imatges `data:`) és a [Content-Security-Policy](howto_CA.md#content-security-policy) de les receptes.
 
 ---
 
@@ -204,8 +288,8 @@ $crud->setTheme('w3mini');
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title><?= esc($title) ?></title>
-    <link rel="stylesheet" href="https://www.w3schools.com/w3css/4/w3.css">
-    <link rel="stylesheet" href="<?= esc($config->iconsCss, 'attr') ?>">
+    <link rel="stylesheet"<?= $this->nonce('style') ?> href="https://www.w3schools.com/w3css/4/w3.css">
+    <link rel="stylesheet"<?= $this->nonce('style') ?> href="<?= esc($config->iconsCss, 'attr') ?>">
 </head>
 <body class="w3-light-grey">
     <main class="w3-container w3-padding-24"><?= $content ?></main>
@@ -220,10 +304,11 @@ Si el CRUD es mostra dins del layout del projecte (`setLayout('layouts/admin')`)
 `partials/assets.php`. No cal copiar el JavaScript de `bootstrap5`: `renderParent()` l'inclou.
 
 ```php
-<style>
+<style<?= $this->nonce('style') ?>>
     .kpcrudy .kp-badge { display: inline-block; padding: 1px 8px; border-radius: 4px; font-size: 12px; }
     .kpcrudy .kp-yes { background: #4CAF50; color: #fff; }
     .kpcrudy .kp-no  { background: #9e9e9e; color: #fff; }
+    .kpcrudy .kp-pl0 { padding-left: 0; }
 </style>
 <?= $this->renderParent('partials/assets') ?>
 ```
@@ -256,7 +341,7 @@ $inner   = ! empty($action['icon']) ? '<i class="' . esc($action['icon'], 'attr'
     <?= $this->render('partials/assets') ?>
 
     <div class="w3-bar w3-margin-bottom">
-        <h2 class="w3-bar-item" style="padding-left: 0"><?= esc($title) ?></h2>
+        <?php if ($showTitle ?? true): ?><h2 class="w3-bar-item kp-pl0"><?= esc($title) ?></h2><?php endif ?>
         <div class="w3-bar-item w3-right">
             <?php foreach ($headerActions as $action): ?>
                 <?= $this->render('partials/button', ['action' => $action]) ?>
@@ -267,7 +352,7 @@ $inner   = ! empty($action['icon']) ? '<i class="' . esc($action['icon'], 'attr'
     <?= $this->render('partials/flash', ['flash' => $flash]) ?>
 
     <?php if ($canSearch): ?>
-        <form method="get" action="<?= esc($listUrl, 'attr') ?>" class="w3-margin-bottom" style="max-width: 28rem">
+        <form method="get" action="<?= esc($listUrl, 'attr') ?>" class="w3-margin-bottom kp-search">
             <?= $this->hidden($searchHidden) ?>
             <input type="search" name="q" class="w3-input w3-border w3-round" value="<?= esc($state['q'], 'attr') ?>" placeholder="<?= esc(lang('Kpcrudy.searchPlaceholder'), 'attr') ?>">
         </form>
@@ -306,6 +391,7 @@ Coses a tenir en compte:
 
 - Les cel·les (`$row['cells']`) ja són HTML escapat: s'imprimeixen amb `<?= ?>`, sense `esc()`.
 - El formulari `kp-post-form` és imprescindible si hi ha accions POST (esborrar, restaurar...).
+- Sense `style=""`: la plantilla fa servir classes (`kp-pl0`, dels recursos de dalt, i `kp-search`, de les del pare), i així funciona amb una [Content-Security-Policy](#content-security-policy).
 - `partials/pagination` encara ve de `bootstrap5`: el pas següent és fer-ne la versió W3.
 
 ### 6. La resta de plantilles
@@ -324,9 +410,9 @@ Amb el mateix procediment es fan `form.php`, `partials/field.php`, `show.php`, `
 | `badge text-bg-primary` | `w3-tag w3-round w3-blue` |
 | `is-invalid` + `invalid-feedback` | `w3-border-red` + `w3-small w3-text-red` |
 | `collapse` (filtres) | `<details>` / `<summary>` (sense JavaScript) |
-| `btn-close` | `<span onclick="this.parentElement.remove()">&times;</span>` |
+| `btn-close` | `<span data-kp-dismiss>&times;</span>` dins la caixa `data-kp-alert` |
 
-W3.CSS no té JavaScript: els temes inclosos fan servir `<details>` per al panell de filtres i una línia de JavaScript per tancar els missatges.
+W3.CSS no té JavaScript: els temes inclosos fan servir `<details>` per al panell de filtres i l'atribut `data-kp-dismiss` (que tracta el JavaScript compartit) per tancar els missatges.
 
 ---
 
@@ -341,15 +427,15 @@ El "Play CDN" genera el CSS al navegador a partir de les classes de la pàgina. 
 ```php
 <head>
     <!-- ... -->
-    <script src="https://cdn.tailwindcss.com/3.4.16"></script>
-    <link rel="stylesheet" href="<?= esc($config->iconsCss, 'attr') ?>">
+    <script<?= $this->nonce() ?> src="https://cdn.tailwindcss.com/3.4.16"></script>
+    <link rel="stylesheet"<?= $this->nonce('style') ?> href="<?= esc($config->iconsCss, 'attr') ?>">
 </head>
 <body class="bg-slate-100 text-slate-800">
     <main class="mx-auto max-w-7xl px-4 py-8"><?= $content ?></main>
 </body>
 ```
 
-El Play CDN **no és per a producció**: és lent i carrega tot el compilador al navegador.
+El Play CDN **no és per a producció**: és lent i carrega tot el compilador al navegador. Tampoc no funciona amb una [Content-Security-Policy](#content-security-policy) estricta, perquè injecta blocs `<style>` sense nonce; el CSS compilat sí.
 
 ### 2. Per a producció: compilar el CSS
 
@@ -380,7 +466,7 @@ npx tailwindcss -i resources/tailwind.css -o public/css/app.css --minify
 I al `layout.php` (o al layout del projecte), el CSS compilat en lloc del Play CDN:
 
 ```php
-<link rel="stylesheet" href="<?= base_url('css/app.css') ?>">
+<link rel="stylesheet"<?= $this->nonce('style') ?> href="<?= base_url('css/app.css') ?>">
 ```
 
 Com que les classes dels botons són a la taula de `partials/button.php` (dins d'un fitxer que Tailwind llegeix), també s'inclouen al CSS. En canvi, **no construeixis noms de classe a trossos** (`'bg-' . $color . '-600'`): Tailwind no els trobaria. Escriu sempre la classe sencera.
@@ -471,7 +557,7 @@ Les plantilles es busquen a `w3teal`, després a `w3css` i, al final, a `bootstr
 **Canviar el color principal**: `app/Views/kpcrudy/w3teal/partials/assets.php`
 
 ```php
-<style>
+<style<?= $this->nonce('style') ?>>
     .kpcrudy .w3-blue { background-color: #009688 !important; }
     .kpcrudy .w3-text-blue { color: #009688 !important; }
     .kpcrudy .w3-border-blue { border-color: #009688 !important; }
@@ -496,10 +582,12 @@ Abans de donar un tema per acabat, prova:
 - [ ] Accions massives: "selecciona-ho tot", aplicar una acció, l'avís quan no hi ha res seleccionat.
 - [ ] Accions per fila: les GET (veure, editar) i les POST (esborrar) amb la confirmació.
 - [ ] Paperera: restaurar i esborrar definitivament.
-- [ ] Formulari: tots els tipus de camp (text, desplegable, N-N, data, booleà, imatge), errors de validació, i els tres botons de desar.
+- [ ] Formulari: tots els tipus de camp (text, desplegable, N-N, multiselect, data, booleà, imatge), errors de validació, i els tres botons de desar.
+- [ ] Camps traduïts (`setTranslations()`): un bloc per idioma, els errors d'un idioma opcional i d'un d'obligatori.
 - [ ] Fitxa de detall i accions pròpies (`addAction`).
 - [ ] Missatges (desat, esborrat, error) i el botó de tancar.
 - [ ] Importació CSV: pujar, previsualitzar i el resultat (si el CRUD té `enableImport()`).
 - [ ] Amb el filtre `csrf` actiu.
-- [ ] Amb el layout del projecte (`setLayout('layouts/admin')`), no només amb el `default`.
+- [ ] Amb el layout del projecte (`setLayout('layouts/admin')`), no només amb el `default`, i amb `showTitle(false)`.
+- [ ] Amb `$CSPEnabled = true`: res bloquejat a la consola del navegador.
 - [ ] En una pantalla estreta (mòbil).

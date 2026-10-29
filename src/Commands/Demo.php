@@ -230,7 +230,7 @@ class Demo extends BaseCommand
 
         foreach (DemoModule::TABLES as $table) {
             $exists = in_array($table, $existing, true);
-            CLI::write('    ' . str_pad($table, 24) . ($exists ? $db->table($table)->countAllResults() . ' rows' : CLI::color('missing', 'light_gray')));
+            CLI::write('    ' . str_pad($table, max(24, strlen($table) + 1)) . ($exists ? $db->table($table)->countAllResults() . ' rows' : CLI::color('missing', 'light_gray')));
         }
 
         CLI::write('  Files:     ' . (is_dir(DemoModule::uploadPath()) ? $this->countFiles(DemoModule::uploadPath()) . ' in ' . $this->relative(DemoModule::uploadPath()) : 'none'));

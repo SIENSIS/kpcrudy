@@ -13,6 +13,8 @@ Als exemples, `$crud` és una instància de `Kpcrudy\Crud` dins d'un mètode de 
 - [Generar el CRUD d'una taula amb una comanda](#generar-el-crud-duna-taula-amb-una-comanda)
 - [Fer servir un model existent](#fer-servir-un-model-existent)
 - [Ruta que acaba en una paraula reservada](#ruta-que-acaba-en-una-paraula-reservada)
+- [Rutes amb nom](#rutes-amb-nom)
+- [CRUD dins d'un mòdul](#crud-dins-dun-mòdul)
 
 **Contrasenyes**
 - [Gestionar un camp de contrasenya](#gestionar-un-camp-de-contrasenya)
@@ -27,6 +29,7 @@ Als exemples, `$crud` és una instància de `Kpcrudy\Crud` dins d'un mètode de 
 - [Enllaçar amb l'id emmascarat](#enllaçar-amb-lid-emmascarat)
 - [Saber a quin registre correspon un codi](#saber-a-quin-registre-correspon-un-codi)
 - [Accions que modifiquen dades](#accions-que-modifiquen-dades)
+- [Operacions pròpies a la ruta del CRUD](#operacions-pròpies-a-la-ruta-del-crud)
 - [Mostrar una acció només en alguns registres](#mostrar-una-acció-només-en-alguns-registres)
 - [Obrir el llistat ja filtrat o ordenat](#obrir-el-llistat-ja-filtrat-o-ordenat)
 - [Accions massives pròpies](#accions-massives-pròpies)
@@ -51,8 +54,10 @@ Als exemples, `$crud` és una instància de `Kpcrudy\Crud` dins d'un mètode de 
 - [Limitar el CRUD a l'usuari connectat](#limitar-el-crud-a-lusuari-connectat)
 - [Desar qui ha creat el registre](#desar-qui-ha-creat-el-registre)
 - [Permisos per rol i per registre](#permisos-per-rol-i-per-registre)
+- [Permisos centralitzats per a tots els CRUD](#permisos-centralitzats-per-a-tots-els-crud)
 - [Validacions entre camps](#validacions-entre-camps)
 - [Impedir esborrar si té registres relacionats](#impedir-esborrar-si-té-registres-relacionats)
+- [Executar codi després de cada canvi](#executar-codi-després-de-cada-canvi)
 - [Diversos CRUD sobre la mateixa taula](#diversos-crud-sobre-la-mateixa-taula)
 - [Un perfil d'usuari: CRUD d'un sol registre](#un-perfil-dusuari-crud-dun-sol-registre)
 
@@ -61,15 +66,19 @@ Als exemples, `$crud` és una instància de `Kpcrudy\Crud` dins d'un mètode de 
 - [Relació N-N](#relació-n-n)
 - [Taula intermèdia amb dades pròpies](#taula-intermèdia-amb-dades-pròpies)
 - [CRUD dels fills d'un registre](#crud-dels-fills-dun-registre)
+- [Camps traduïts](#camps-traduïts)
 
 **Presentació**
 - [Desplegables amb etiquetes](#desplegables-amb-etiquetes)
+- [Diversos valors en una columna](#diversos-valors-en-una-columna)
 - [Formats: moneda, insígnies i textos](#formats-moneda-insígnies-i-textos)
 - [Columnes calculades sense una consulta per fila](#columnes-calculades-sense-una-consulta-per-fila)
 - [Pujar fitxers i imatges](#pujar-fitxers-i-imatges)
 
 **Integració**
 - [Integrar el CRUD al layout del projecte](#integrar-el-crud-al-layout-del-projecte)
+- [Content-Security-Policy](#content-security-policy)
+- [Diàlegs de confirmació propis](#diàlegs-de-confirmació-propis)
 - [CRUD dins d'una vista pròpia](#crud-dins-duna-vista-pròpia)
 - [Canviar una plantilla](#canviar-una-plantilla)
 - [Configuració diferent per a un CRUD](#configuració-diferent-per-a-un-crud)
@@ -125,6 +134,7 @@ Controller (relative to App\Controllers)  [Clients]: Admin/Clients
 Method  [index]:
 Route  [admin/clients]:
 Route filter (empty for none) : auth
+Route name (empty for none) :
 Generate a model too? [n, y]: n
 ```
 
@@ -150,6 +160,8 @@ php spark kpcrudy:make tags   --controller Admin/Catalog --method tags   --route
 Si el mètode ja existeix, la comanda s'atura; amb `--force` el reemplaça (útil després de canviar la taula, però es perden els canvis que hi haguessis fet). Si alguna comprovació falla (per exemple, una columna amb un nom que no és només lletres, números i `_`), no s'escriu cap fitxer.
 
 **Amb un model.** `--model` crea `app/Models/{Taula}Model.php` amb els `allowedFields`, els timestamps, els soft deletes i les regles de validació (`required`, `max_length`, `valid_email` i `is_unique` amb `{id}`), i el CRUD el fa servir amb `setModel()`. Si el model ja existeix, es reaprofita només si és de la mateixa taula (amb `--force` es reemplaça).
+
+**En un mòdul o amb un nom de ruta**, vegeu [CRUD dins d'un mòdul](#crud-dins-dun-mòdul) i [Rutes amb nom](#rutes-amb-nom).
 
 El codi generat és un punt de partida. Revisa sobretot les etiquetes (es generen a partir dels noms dels camps), les columnes del llistat i el camp que es mostra a cada relació.
 
@@ -181,6 +193,58 @@ El CRUD fa servir els últims segments de la URL per saber l'operació (`add`, `
 // Controlador
 $crud->setTable('waste_items')->setBaseUrl(site_url('warehouse/trash'));
 ```
+
+### Rutes amb nom
+
+`Crud::routes()` accepta les mateixes opcions que una ruta de CodeIgniter, també `as`:
+
+```php
+// app/Config/Routes.php
+use Kpcrudy\Crud;
+
+Crud::routes($routes, 'admin/clients', 'Admin\Clients::index', ['filter' => 'auth', 'as' => 'admin-clients']);
+```
+
+```php
+// En una vista o un controlador
+<a href="<?= url_to('admin-clients') ?>">Clients</a>
+<a href="<?= url_to('admin-clients') . '/add' ?>">Nou client</a>
+<a href="<?= url_to('admin-clients') . '/edit/' . Crud::idForUrl($id, 'clients') ?>">Edita</a>
+```
+
+Només la ruta base porta el nom: CodeIgniter no registra una segona ruta amb un nom que ja existeix, i per això les URL de les operacions (`add`, `edit/5`...) es fan afegint-les a la base. Amb [ids emmascarats](#enllaçar-amb-lid-emmascarat), `Crud::idForUrl()` dona el codi que va a la URL. `kpcrudy:make --as admin-clients` escriu la ruta amb el nom.
+
+### CRUD dins d'un mòdul
+
+kpcrudy funciona igual dins d'un mòdul (un namespace propi, com `Blog` a `modules/Blog`). Registra el namespace i fes que `kpcrudy:make` hi generi el codi:
+
+```php
+// app/Config/Autoload.php
+public $psr4 = [
+    APP_NAMESPACE => APPPATH,
+    'Blog'        => ROOTPATH . 'modules/Blog',
+];
+```
+
+```bash
+php spark kpcrudy:make posts --namespace Blog --route admin/posts --as blog-posts --model
+```
+
+Això crea `Blog\Controllers\Posts` (a `modules/Blog/Controllers/Posts.php`), `Blog\Models\PostModel` i la ruta a `modules/Blog/Config/Routes.php`, amb el nom complet de la classe perquè el namespace per defecte de les rutes és `App\Controllers`:
+
+```php
+// modules/Blog/Config/Routes.php
+\Kpcrudy\Crud::routes($routes, 'admin/posts', '\Blog\Controllers\Posts::index', ['as' => 'blog-posts']);
+```
+
+Si el fitxer no existia, la comanda el crea. CodeIgniter el llegeix amb el descobriment de rutes, que està activat per defecte (`Config\Modules`: `$enabled = true` i `'routes'` a `$aliases`) i busca a tots els namespaces de `Config\Autoload`. Si el projecte el té desactivat, inclou el fitxer des d'`app/Config/Routes.php`:
+
+```php
+// app/Config/Routes.php
+require ROOTPATH . 'modules/Blog/Config/Routes.php';
+```
+
+La resta d'opcions (`--path` per a un namespace no registrat, `--routes`, `--extends`) són a [kpcrudy:make](commands_CA.md#kpcrudymake).
 
 ---
 
@@ -473,7 +537,62 @@ public function duplicate(string $code)
 
 `Crud::idFromUrl()` i `Crud::idForUrl()` desfan i fan el codi només si els ids estan emmascarats, de manera que l'exemple funciona en els dos casos (si el CRUD l'activa només amb `maskIds()`, passa'ls `true` com a tercer paràmetre).
 
-La ruta no pot ser `admin/events/duplicate/<id>`, perquè `admin/events/(:any)` ja és del CRUD. Fes servir un altre prefix, com `admin/events-duplicate/<id>`.
+La ruta no pot ser `admin/events/duplicate/<id>`, perquè `admin/events/(:any)` ja és del CRUD. Fes servir un altre prefix, com `admin/events-duplicate/<id>`. O, més senzill, fes que la serveixi el CRUD amb `addOperation()` (recepta següent): sense ruta, sense descodificar l'id i sense comprovar els permisos a mà.
+
+### Operacions pròpies a la ruta del CRUD
+
+`addOperation()` afegeix una operació pròpia que serveix la ruta del CRUD (`admin/events/duplicate/<id>`). Abans de cridar-la, el CRUD fa el mateix que a les seves operacions: token CSRF, id emmascarat, àmbit de `where()`, permisos i signatura; després, torna al llistat amb el missatge. No cal afegir cap ruta.
+
+```php
+$crud->addOperation('duplicate', function (string $id, array $event, Crud $crud) {
+    unset($event['id']);
+    $event['title']  .= ' (còpia)';
+    $event['status']  = 'draft';
+
+    $db = db_connect();
+    $db->table('events')->insert($event);
+
+    // $crud->url() emmascara (i signa) l'id si cal
+    return redirect()->to($crud->url('edit', (string) $db->insertID()))->with('message', 'Còpia creada.');
+}, [
+    'icon'    => 'bi bi-copy',
+    'confirm' => 'Vols crear una còpia d\'aquest esdeveniment?',
+]);
+```
+
+El callback rep l'id real i el registre, i retorna:
+
+| Retorn | Resultat |
+|---|---|
+| un string | torna al llistat amb aquest missatge d'èxit |
+| `null` | torna al llistat amb un missatge genèric |
+| `false` | torna al llistat amb "cancel·lat" |
+| `$crud->backToList('danger', 'Missatge')` | torna al llistat amb un error (també `warning`, `info`) |
+| una resposta | aquesta resposta (redirecció, descàrrega, pàgina...) |
+
+```php
+$crud->addOperation('join', function (string $id, array $event, Crud $crud) use ($userId) {
+    if ($event['places'] <= 0) {
+        return $crud->backToList('danger', 'No queden places.');
+    }
+
+    db_connect()->table('attendances')->insert(['event_id' => $id, 'user_id' => $userId]);
+
+    return 'T\'has inscrit.';
+}, ['icon' => 'bi bi-person-plus', 'visible' => fn (array $row) => $row['places'] > 0]);
+```
+
+**Una operació general** (no sobre un registre) amb `'row' => false` té un botó a la capçalera del llistat. Amb `'method' => 'get'` pot mostrar una pàgina; `$crud->page()` posa el teu HTML dins el mateix layout que el CRUD:
+
+```php
+$crud->addOperation('report', function (?string $id, ?array $row, Crud $crud) {
+    $totals = db_connect()->table('events')->select('status, COUNT(*) AS total')->groupBy('status')->get()->getResultArray();
+
+    return service('response')->setBody($crud->page(view('events/report', ['totals' => $totals]), 'Informe d\'esdeveniments'));
+}, ['row' => false, 'method' => 'get', 'icon' => 'bi bi-bar-chart', 'label' => 'Informe']);
+```
+
+Altres opcions: `'permission'` (per defecte la clau: es decideix amb `setPermission('duplicate', ...)` o amb el [resolutor de permisos](#permisos-centralitzats-per-a-tots-els-crud)), `'trash' => true` (sobre registres de la paperera), `'button' => false` (sense botó, si hi enllaces tu). La clau no pot ser cap de les operacions del CRUD (`add`, `edit`, `trash`...).
 
 ### Mostrar una acció només en alguns registres
 
@@ -1014,6 +1133,73 @@ Recorda: la closure rep `null` quan la decisió no és sobre un registre concret
 
 La closure d'`edit` es torna a avaluar en desar, amb el registre tal com quedaria: un editor no pot canviar l'`author_id` d'un article seu per un altre (el desament es rebutja).
 
+### Permisos centralitzats per a tots els CRUD
+
+En lloc de repetir `setPermission()` a cada controlador, una classe que implementa `Kpcrudy\PermissionResolver` decideix per a tots els CRUD. kpcrudy li pregunta abans de cada operació, botó, acció i acció massiva, amb el nom del CRUD (`setResource()`; per defecte, la taula), l'operació i el registre (`null` quan la comprovació és general, com el botó "Afegeix"):
+
+```php
+// app/Libraries/CrudPermissions.php
+namespace App\Libraries;
+
+use Kpcrudy\Crud;
+use Kpcrudy\PermissionResolver;
+
+class CrudPermissions implements PermissionResolver
+{
+    public function allows(string $resource, string $operation, ?array $row, Crud $crud): ?bool
+    {
+        $user = session('user');   // com sigui que el projecte guardi l'usuari connectat
+
+        if ($user === null) {
+            return false;
+        }
+
+        if ($user['role'] === 'admin') {
+            return null;            // no opina: el setPermission() de cada CRUD continua comptant
+        }
+
+        // Editors: ho consulten tot, només canvien els seus registres
+        if (in_array($operation, ['list', 'show', 'search', 'filters', 'export'], true)) {
+            return true;
+        }
+
+        return $user['role'] === 'editor'
+            && in_array($operation, ['add', 'edit', 'duplicate'], true)
+            && ($row === null || (int) $row['created_by'] === (int) $user['id']);
+    }
+}
+```
+
+```php
+// app/Config/Kpcrudy.php
+public ?string $permissionResolver = \App\Libraries\CrudPermissions::class;
+
+// A cada controlador: el nom que rep el resolutor
+$crud->setTable('blog_posts')->setResource('posts');
+```
+
+La resposta és `true` (permet), `false` (denega) o `null` (no opina). El resolutor té l'última paraula: si denega, `setPermission()` no pot tornar a permetre; si permet o retorna `null`, les regles de `setPermission()` del CRUD encara poden restringir. Amb `public bool $denyByDefault = true;` es denega tot el que ningú no permet. Un CRUD pot fer servir un altre resolutor amb `setPermissionResolver()` (una instància o una closure amb la mateixa signatura).
+
+**Amb CodeIgniter Shield** (opcional: kpcrudy no el necessita), el resolutor pot fer correspondre cada operació a un permís de Shield, com `posts.edit`:
+
+```php
+public function allows(string $resource, string $operation, ?array $row, Crud $crud): ?bool
+{
+    $user = auth()->user();
+
+    return $user !== null && $user->can("{$resource}.{$operation}");
+}
+```
+
+**Accions amb permís.** Les accions, les accions massives i les operacions pròpies es comproven amb la seva opció `'permission'` (a les operacions, per defecte, la clau). El botó només surt si l'usuari el té, sobre aquell registre:
+
+```php
+$crud->addAction('Assistents', 'admin/attendances?f[event_id]={id}', ['permission' => 'attendees'])
+     ->addBulkAction('publish', 'Publica', $publish, ['permission' => 'publish']);
+```
+
+Una acció que enllaça a una ruta pròpia només amaga el botó: aquella ruta també ha de comprovar el permís (`$crud->isAllowed('attendees', $row)` dona la mateixa resposta). Amb [`addOperation()`](#operacions-pròpies-a-la-ruta-del-crud) ho comprova el CRUD.
+
 ### Validacions entre camps
 
 Les regles de CodeIgniter validen camp a camp. Per comparar camps entre si, fes servir un hook que retorni el missatge d'error:
@@ -1052,6 +1238,28 @@ $crud->beforeDelete(fn (string $id, array $row, bool $purge) =>
     $purge && $row['invoiced'] ? 'Un client facturat no es pot esborrar definitivament.' : null
 );
 ```
+
+### Executar codi després de cada canvi
+
+`afterWrite()` s'executa després de qualsevol escriptura que fa el CRUD: alta, edició, esborrat (a la paperera o definitiu) i restauració, també des de les accions massives i la importació CSV. És el lloc per buidar una memòria cau o desar un registre d'auditoria, sense repetir-ho a cada hook `after*`:
+
+```php
+$crud->afterWrite(function (string $operation, string $id, array $data, ?array $old) {
+    cache()->delete('menu_categories');
+
+    db_connect()->table('audit_log')->insert([
+        'table'     => 'categories',
+        'record_id' => $id,
+        'operation' => $operation,                  // insert, update, delete o restore
+        'before'    => $old === null ? null : json_encode($old),
+        'after'     => $data === [] ? null : json_encode($data),
+        'user_id'   => session('user_id'),
+        'at'        => date('Y-m-d H:i:s'),
+    ]);
+});
+```
+
+`$data` té els valors desats (buit a `delete` i `restore`) i `$old`, el registre abans del canvi (`null` a `insert`). S'executa després dels hooks específics (`afterInsert`, `afterUpdate`...).
 
 ### Diversos CRUD sobre la mateixa taula
 
@@ -1204,6 +1412,39 @@ Si els ids s'emmascaren només amb `maskIds()` al CRUD de clients (no a la confi
 
 > **Ordre de les rutes.** Si el CRUD de clients també penja de `clients` (`Crud::routes($routes, 'clients', ...)`), defineix primer la ruta dels fills: `clients/(:any)` capturaria `clients/<codi>/notes`. En desenvolupament, `Crud::checkRoutes()` ho detecta i ho explica amb una excepció.
 
+### Camps traduïts
+
+Els textos en diversos idiomes van en una taula filla, una fila per idioma:
+
+```sql
+CREATE TABLE news_translations (
+    id      INT AUTO_INCREMENT PRIMARY KEY,
+    news_id INT NOT NULL,
+    locale  VARCHAR(5) NOT NULL,
+    title   VARCHAR(150) NOT NULL,
+    body    TEXT NULL,
+    UNIQUE KEY (news_id, locale),
+    FOREIGN KEY (news_id) REFERENCES news (id) ON DELETE CASCADE
+);
+```
+
+```php
+$crud->setTable('news')
+     ->setTranslations('news_translations', 'news_id', 'locale', ['title', 'body'], [
+         'ca' => 'Català',
+         'en' => 'English',
+     ], [
+         'required' => ['ca'],                              // per defecte, el primer idioma
+         'types'    => ['body' => 'textarea'],
+         'rules'    => ['title' => 'required|max_length[150]'],
+     ])
+     ->columns(['title', 'published_at'])
+     ->fields(['title', 'body', 'published_at'])
+     ->searchFields(['title', 'body']);
+```
+
+Els camps traduïts es fan servir com qualsevol altre a `columns()`, `fields()`, `showFields()`, `searchFields()` o `displayAs()`. El formulari els mostra en una pestanya per idioma; la regla `required` només s'aplica als idiomes obligatoris, i un idioma opcional que es deixa buit no desa cap fila. El llistat, la cerca i l'exportació fan servir l'idioma de la petició si és un dels definits (si no, el primer; `'listLocale'` en força un). Quan un registre s'esborra definitivament, també se n'esborren les traduccions. En un hook `beforeInsert` o `beforeUpdate`, `$crud->postedTranslations()` dona el que s'ha enviat (`[locale => [camp => valor]]`).
+
 ---
 
 ## Presentació
@@ -1220,6 +1461,19 @@ $crud->fieldType('status', 'select', ['options' => [
 ```
 
 Als `ENUM` de MySQL, si no indiques `options`, el desplegable surt sol amb els valors de la columna. L'etiqueta es fa servir al formulari, al llistat, als filtres i a l'exportació, i els valors que arriben es validen contra la llista.
+
+### Diversos valors en una columna
+
+Quan un registre pot tenir diversos valors d'una llista curta i fixa i no cal una taula intermèdia (per a això, vegeu [Relació N-N](#relació-n-n)), un camp `multiselect` els desa en una sola columna:
+
+```php
+$crud->fieldType('audience', 'multiselect', [
+    'options' => ['kids' => 'Infants', 'adults' => 'Adults', 'seniors' => 'Gent gran'],
+    'storage' => 'json',     // ["kids","adults"] (per defecte); 'csv' desa kids,adults
+]);
+```
+
+La columna ha de ser de text (`VARCHAR`, `TEXT` o `JSON`). El formulari mostra una selecció múltiple, el llistat i la fitxa mostren les etiquetes, i els valors que arriben es validen contra `options`. Com a filtre (`filters(['audience'])`), troba els registres que contenen el valor triat.
 
 ### Formats: moneda, insígnies i textos
 
@@ -1323,6 +1577,73 @@ $crud->setLayout('layouts/admin');
 
 El tema per defecte necessita Bootstrap 5 (CSS i JS) i Bootstrap Icons.
 
+**Layout amb seccions.** Si el layout del projecte fa servir `$this->renderSection()` (les pàgines fan `$this->extend('layouts/admin')`), indica a quina secció va el CRUD. No cal canviar el layout:
+
+```php
+// app/Config/Kpcrudy.php
+public string|false $layout     = 'layouts/admin';
+public ?string $layoutSection   = 'content';
+
+// O només per a un
+$crud->setLayout('layouts/admin', 'content');
+```
+
+**Les variables pròpies del layout** (menú, usuari, molles de pa...) es passen amb `setLayoutData()`; el layout també rep `$title`:
+
+```php
+$crud->setLayoutData([
+    'menu'        => 'clients',
+    'breadcrumbs' => ['Admin' => site_url('admin'), 'Clients' => null],
+]);
+```
+
+**Títol que mostra el layout.** Si el layout ja mostra el títol de la pàgina, amaga l'`<h1>` del CRUD amb `showTitle(false)` (o `public bool $showTitle = false;` a la configuració). El layout rep el títol a `$title` ("Nou: client", "Clients"...); després de `render()`, també el dona `$crud->getTitle()`.
+
+**Els avisos del projecte.** Si el layout ja mostra els missatges de sessió (`session('message')`, `session('error')`...), `flashKeys` hi envia els missatges del CRUD en lloc del seu bloc d'avisos. Els tipus que no hi són es continuen mostrant dins el CRUD:
+
+```php
+// app/Config/Kpcrudy.php
+public array $flashKeys = ['success' => 'message', 'danger' => 'error', 'warning' => 'warning'];
+```
+
+### Content-Security-Policy
+
+Les plantilles de kpcrudy funcionen amb una Content-Security-Policy estricta: els blocs `<style>` i `<script>` porten el nonce de CodeIgniter (`csp_style_nonce()` i `csp_script_nonce()`), i no hi ha gestors `onclick=""` ni atributs `style=""` (el comportament va amb atributs `data-kp-*`). Només cal activar la CSP i permetre el CDN des d'on el tema carrega Bootstrap:
+
+```php
+// app/Config/App.php
+public bool $CSPEnabled = true;
+```
+
+```php
+// app/Config/ContentSecurityPolicy.php (només les directives que canvien)
+public $scriptSrc                 = ['self', 'https://cdn.jsdelivr.net'];
+public array|string $scriptSrcElem = ['self', 'https://cdn.jsdelivr.net'];
+public $styleSrc                  = ['self', 'https://cdn.jsdelivr.net'];
+public array|string $styleSrcElem  = ['self', 'https://cdn.jsdelivr.net'];
+public $fontSrc                   = ['self', 'https://cdn.jsdelivr.net'];   // font de Bootstrap Icons
+public $imageSrc                  = ['self', 'data:'];                     // icones SVG dins el CSS de Bootstrap
+```
+
+Amb un layout propi, els blocs `<script>` i `<style>` del layout també necessiten el nonce: `<script <?= csp_script_nonce() ?>>`. L'HTML que afegeixes tu (`callbackColumn()`, `callbackField()`, `page()`...) ha de seguir les mateixes regles. La demo en té un exemple complet a `demo/app/Config/ContentSecurityPolicy.php`.
+
+### Diàlegs de confirmació propis
+
+Abans de preguntar amb `window.confirm()`, kpcrudy envia al document l'esdeveniment cancel·lable `kpcrudy:confirm`. Si un listener el cancel·la, pot mostrar el seu propi diàleg i cridar `e.detail.proceed()` si l'usuari accepta. Amb SweetAlert2:
+
+```html
+<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11.14.5/dist/sweetalert2.all.min.js"></script>
+<script <?= csp_script_nonce() ?>>
+document.addEventListener('kpcrudy:confirm', function (e) {
+    e.preventDefault();
+    Swal.fire({ text: e.detail.message, icon: 'warning', showCancelButton: true })
+        .then(function (result) { if (result.isConfirmed) { e.detail.proceed(); } });
+});
+</script>
+```
+
+`e.detail` té `message` (el text de l'opció `confirm`), `element` (el botó o el formulari) i `proceed()`. Val per a totes les confirmacions: esborrar, accions i operacions amb `confirm`, i accions massives.
+
 ### CRUD dins d'una vista pròpia
 
 Amb `setLayout(false)`, `render()` retorna només l'HTML del CRUD. Però també pot retornar una **resposta** (una redirecció després de desar, una descàrrega CSV), que s'ha de retornar tal qual:
@@ -1418,6 +1739,6 @@ return [
 ];
 ```
 
-Per afegir un idioma, copia [src/Language/en/Kpcrudy.php](../src/Language/en/Kpcrudy.php) a `app/Language/{codi}/Kpcrudy.php` i tradueix-ne els valors, mantenint els paràmetres `{0}`, `{1}`... L'idioma és el de la petició (`app.defaultLocale` o el negociat per CodeIgniter).
+Per afegir un idioma, copia [src/Language/en/Kpcrudy.php](../src/Language/en/Kpcrudy.php) a `app/Language/{codi}/Kpcrudy.php` i tradueix-ne els valors, mantenint els paràmetres `{0}`, `{1}`... L'idioma és el de la petició (`app.defaultLocale` o el negociat per CodeIgniter). kpcrudy inclou anglès, català, castellà, francès, portuguès i alemany; per a qualsevol altre idioma (o una clau que falti), CodeIgniter prova primer l'idioma sense la regió (`pt-BR` → `pt`) i després l'anglès, de manera que el CRUD mai no mostra les claus.
 
 Els missatges de validació són de CodeIgniter. Per tenir-los traduïts, instal·la `composer require codeigniter4/translations` (inclou castellà, francès, portuguès, alemany i molts altres, però **no el català**). Per al català, crea `app/Language/ca/Validation.php` amb les traduccions; pots partir del fitxer castellà del paquet.

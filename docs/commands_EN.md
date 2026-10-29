@@ -46,7 +46,7 @@ The equivalent functions (`maskIds()`, `Crud::maskId()`, `requireSignature()`, `
 | `--config <class>` | `maskid`, `unmaskid`, `signurl`, `checkurl` | Config class of the CRUD, if it is not `app/Config/Kpcrudy.php` |
 | `--ttl <seconds>` | `signurl` | How long the link lasts (default `86400` = 1 day; `0` = never expires) |
 | `--free-query` | `signurl` | Signs only the path: the parameters (`?q=`, `?page=`...) can change |
-| `--controller`, `--method`, `--route`, `--filter`, `--model`, `--dry-run`, `--force` | `make` | See [kpcrudy:make](#kpcrudymake) |
+| `--namespace`, `--path`, `--routes`, `--extends`, `--controller`, `--method`, `--route`, `--filter`, `--as`, `--model`, `--dry-run`, `--force` | `make` | See [kpcrudy:make](#kpcrudymake) |
 | `--force`, `--yes`, `--allow-production` | `demo` | See [kpcrudy:demo](#kpcrudydemo) |
 | `--as`, `--only`, `--path`, `--force`, `--dry-run` | `publish` | See [kpcrudy:publish](#kpcrudypublish) |
 
@@ -100,12 +100,14 @@ php spark help kpcrudy:signurl   # syntax, arguments and options of a command
 
 ## kpcrudy:make
 
-Reads the structure of a table (fields, primary and foreign keys, unique indexes, junction tables) and writes the code of a CRUD that works on it: the controller method (creating the controller if it does not exist), the line in `app/Config/Routes.php` and, on request, a model. The code includes the 1-N and N-N relations, the labels, the list columns, the field types that can be guessed from the name (image, file, color, password) and the `is_unique` rules. It is a starting point to adapt, not a finished CRUD. Every check runs before anything is written, so an error never leaves half-written files.
+Reads the structure of a table (fields, primary and foreign keys, unique indexes, junction tables) and writes the code of a CRUD that works on it: the controller method (creating the controller if it does not exist), the line in `app/Config/Routes.php` (or in a module's routes file, with `--namespace`) and, on request, a model. The code includes the 1-N and N-N relations, the labels, the list columns, the field types that can be guessed from the name (image, file, color, password) and the `is_unique` rules. It is a starting point to adapt, not a finished CRUD. Every check runs before anything is written, so an error never leaves half-written files.
 
 ### Syntax
 
 ```bash
-php spark kpcrudy:make [table] [--controller Class] [--method method] [--route route] [--filter filter] [--model] [--dry-run] [--force]
+php spark kpcrudy:make [table] [--namespace Ns] [--path dir] [--routes file] [--extends Class]
+                       [--controller Class] [--method method] [--route route] [--filter filter] [--as name]
+                       [--model] [--dry-run] [--force]
 ```
 
 Without the table, it asks for every value one by one.
@@ -115,11 +117,16 @@ Without the table, it asks for every value one by one.
 | Argument / option | Description | Default |
 |---|---|---|
 | `table` | Database table (`default` connection). Only letters, numbers and `_` | Asked |
-| `--controller` | Class, relative to `App\Controllers` (`Admin/Clients`). Created if it does not exist; if it does, the method is added to it | The table name in *StudlyCase* (`kpdemo_categories` → `KpdemoCategories`) |
+| `--namespace` | Base namespace of the application or the module (`Blog`, `Acme\Shop`). Controllers go to `<ns>\Controllers`, models to `<ns>\Models` | `App` |
+| `--path` | Directory of the base namespace, absolute or relative to the project root (`modules/Blog`). Only needed if the namespace is not registered in the autoloader | Taken from the autoloader (`app/` for `App`; for `Acme\Shop`, the directory of `Acme` + `/Shop` if only `Acme` is registered) |
+| `--routes` | Routes file, absolute or relative to the project root. Created if it does not exist | `<path>/Config/Routes.php` |
+| `--extends` | Parent class of a **new** controller (an existing one keeps its own) | `<ns>\Controllers\BaseController` if it exists; otherwise `App\Controllers\BaseController`; otherwise `CodeIgniter\Controller` |
+| `--controller` | Class, relative to `<ns>\Controllers` (`Admin/Clients`). Created if it does not exist; if it does, the method is added to it | The table name in *StudlyCase* (`kpdemo_categories` → `KpdemoCategories`) |
 | `--method` | Controller method. It must start with a lowercase letter and cannot be a method of the base controller | `index` |
 | `--route` | CRUD route. Lowercase letters, numbers, `-`, `_` and `/`; it cannot end with an operation (`add`, `edit`, `trash`...) | From the controller and method (`Admin/Clients` → `admin/clients`; with `--method list_all` → `admin/clients/list-all`) |
 | `--filter` | Route filter (`auth`, `session`, `auth:admin`...) | None |
-| `--model` | Also generates `app/Models/{Table}Model.php` (with `allowedFields`, timestamps, soft deletes and rules) and uses `setModel()` | No |
+| `--as` | Route name, for `route_to()` and `url_to()` (`admin-clients`). Letters, numbers, `-`, `_` and `.` | None |
+| `--model` | Also generates `<path>/Models/{Table}Model.php` (with `allowedFields`, timestamps, soft deletes and rules) and uses `setModel()` | No |
 | `--dry-run` | Shows the code and runs the checks without writing any file | No |
 | `--force` | Replaces the method (and the model) if they already exist | No |
 
@@ -140,14 +147,50 @@ php spark kpcrudy:make clients --controller Admin/Clients --force
 
 # Interactive mode
 php spark kpcrudy:make
+
+# With a route name (route_to('admin-clients'))
+php spark kpcrudy:make clients --controller Admin/Clients --route admin/clients --as admin-clients
+
+# In the Blog module (namespace registered in Config\Autoload)
+php spark kpcrudy:make posts --namespace Blog --route admin/posts --as blog-posts
+
+# In a namespace the autoloader does not know (yet)
+php spark kpcrudy:make posts --namespace Blog --path modules/Blog --route admin/posts
+
+# Controllers that extend the project's admin controller
+php spark kpcrudy:make clients --controller Admin/Clients --extends "App\Controllers\AdminController"
 ```
+
+### In a module
+
+By default everything goes to the application (`App`): `app/Controllers`, `app/Models` and `app/Config/Routes.php`. With `--namespace`, it goes to a module or package instead:
+
+| | `App` (default) | `--namespace Blog` (in `modules/Blog`) |
+|---|---|---|
+| Controller | `app/Controllers/Posts.php` (`App\Controllers\Posts`) | `modules/Blog/Controllers/Posts.php` (`Blog\Controllers\Posts`) |
+| Model (`--model`) | `app/Models/PostModel.php` | `modules/Blog/Models/PostModel.php` |
+| Routes | `app/Config/Routes.php` | `modules/Blog/Config/Routes.php` (or `--routes`) |
+| Handler of the route | `Posts::index` | `\Blog\Controllers\Posts::index` |
+| Parent of a new controller | `App\Controllers\BaseController` | `Blog\Controllers\BaseController` if it exists, otherwise the application's |
+
+Outside `App`, the handler is written with the full class name, because the default namespace of the routes (`$routes->setDefaultNamespace()`) is `App\Controllers`. The directory comes from the autoloader (`Config\Autoload::$psr4` or Composer); if the namespace is not registered yet, give it with `--path` (and remember to register it, or the controller will not be found).
+
+If the module's routes file does not exist, it is created, and the command reminds you how CodeIgniter loads it:
+
+```
+Controller: modules/Blog/Controllers/Posts.php (created index())
+Route:      \Kpcrudy\Crud::routes($routes, 'admin/posts', '\Blog\Controllers\Posts::index', ['as' => 'blog-posts']);
+Created modules/Blog/Config/Routes.php: CodeIgniter loads it if route discovery is enabled (Config\Modules) or if app/Config/Routes.php includes it.
+```
+
+Route discovery is on by default (`Config\Modules`: `$enabled = true` and `'routes'` in `$aliases`). If the project has it turned off, add `require ROOTPATH . 'modules/Blog/Config/Routes.php';` to `app/Config/Routes.php`. Before writing, the command checks every loaded route (also those of other modules), so it does not add a path that already exists.
 
 ### Output
 
 `php spark kpcrudy:make kpdemo_categories --dry-run`:
 
 ```
-Table kpdemo_categories: 6 fields, primary key id
+Table kpdemo_categories: 5 fields, primary key id
   N-N  users -> kpdemo_users through kpdemo_user_interests
   unique  name
 
@@ -161,15 +204,14 @@ Table kpdemo_categories: 6 fields, primary key id
         $crud->setTable('kpdemo_categories')
             ->setSubject('Category', 'Categories')
             ->columns(['id', 'name', 'color', 'created_at', 'updated_at', 'users'])
-            ->fields(['name', 'color', 'description', 'users'])
+            ->fields(['name', 'color', 'users'])
             ->displayAs([
-                'id'          => 'Id',
-                'name'        => 'Name',
-                'color'       => 'Color',
-                'description' => 'Description',
-                'created_at'  => 'Created at',
-                'updated_at'  => 'Updated at',
-                'users'       => 'Users',
+                'id'         => 'Id',
+                'name'       => 'Name',
+                'color'      => 'Color',
+                'created_at' => 'Created at',
+                'updated_at' => 'Updated at',
+                'users'      => 'Users',
             ])
             ->setRelationNN('users', 'kpdemo_user_interests', 'kpdemo_users', 'category_id', 'user_id', '{first_name} {last_name}')
             ->fieldType('color', 'color')
@@ -187,7 +229,7 @@ Dry run: no files have been written.
 `php spark kpcrudy:make kpdemo_events --controller Admin/Events --route admin/events --filter auth --model --dry-run` (summary, 1-N relations, model and route with a filter; the controller code has been trimmed):
 
 ```
-Table kpdemo_events: 16 fields, primary key id
+Table kpdemo_events: 17 fields, primary key id
   1-N  category_id -> kpdemo_categories (name)
   1-N  created_by -> kpdemo_users ({first_name} {last_name})
 
@@ -217,7 +259,7 @@ class KpdemoEventModel extends Model
     protected $primaryKey     = 'id';
     protected $returnType     = 'array';
     protected $useSoftDeletes = true;
-    protected $allowedFields  = ['category_id', 'title', 'summary', 'description', 'starts_at', 'ends_at', 'location', 'capacity', 'price', 'poster', 'status', 'created_by'];
+    protected $allowedFields  = ['category_id', 'title', 'summary', 'description', 'starts_at', 'ends_at', 'location', 'capacity', 'price', 'audience', 'poster', 'status', 'created_by'];
 
     protected $useTimestamps = true;
     protected $createdField  = 'created_at';
@@ -229,6 +271,7 @@ class KpdemoEventModel extends Model
         'summary'     => ['label' => 'Summary', 'rules' => 'required|max_length[255]'],
         'starts_at'   => ['label' => 'Starts at', 'rules' => 'required'],
         'location'    => ['label' => 'Location', 'rules' => 'permit_empty|max_length[150]'],
+        'audience'    => ['label' => 'Audience', 'rules' => 'permit_empty|max_length[100]'],
     ];
 }
 
@@ -244,16 +287,18 @@ In interactive mode (`php spark kpcrudy:make --dry-run`), the value in brackets 
 Tables:
   [1] kpdemo_attendances
   [2] kpdemo_categories
-  [3] kpdemo_events
-  [4] kpdemo_user_interests
-  [5] kpdemo_users
+  [3] kpdemo_category_translations
+  [4] kpdemo_events
+  [5] kpdemo_user_interests
+  [6] kpdemo_users
 Table (number or name) : 2
 Controller (relative to App\Controllers)  [KpdemoCategories]: Admin/Categories
 Method  [index]:
 Route  [admin/categories]:
 Route filter (empty for none) : auth
+Route name (empty for none) :
 Generate a model too? [n, y]: n
-Table kpdemo_categories: 6 fields, primary key id
+Table kpdemo_categories: 5 fields, primary key id
 ...
 --- app/Config/Routes.php ---
 \Kpcrudy\Crud::routes($routes, 'admin/categories', 'Admin\Categories::index', ['filter' => 'auth']);
@@ -293,6 +338,11 @@ Open http://localhost:8080/admin/clients and adapt the generated code to your ne
 | `The route "kpcrudy-demo/admin/categories" already exists and points to \Kpcrudy\Demo\Controllers\Admin\Categories::index. Use --route to choose another path.` | Another route already uses that path. Choose another one with `--route` |
 | `Invalid method name "_remap": it must start with a lowercase letter and contain only letters, numbers and _.` | Change `--method`. Names of base controller methods (`initController`...) cannot be used either |
 | `Invalid controller name "..."` | Each segment of `--controller` must start with an uppercase letter (the command already capitalises the first letter) and contain only letters, numbers and `_` |
+| `The controller cannot be BaseController.` | Choose another `--controller` |
+| `Invalid namespace "..."` | Each segment of `--namespace` must start with an uppercase letter and contain only letters, numbers and `_` (`Blog`, `Acme\Shop`) |
+| `Cannot find the directory of the namespace Blog. Register it in Config\Autoload::$psr4 or use --path.` | The namespace is not in the autoloader. Register it, or give its directory with `--path` |
+| `Invalid parent class "..."` | `--extends` must be a class name (`App\Controllers\AdminController`) |
+| `Invalid route name "...": use letters, numbers, -, _ and .` | Change `--as` |
 | `The method index() already exists in Clients. Use --force to replace it.` | The method already exists. Use another `--method`, or `--force` to replace it |
 | `The model ClientModel already exists and is not for the table "clients" (it uses "...")...` | There is a model with that name for another table. Use `--force` or generate the CRUD without `--model` |
 | `The table "..." has columns whose names cannot be used in generated code: ...` | Some column has characters that cannot go into code. Write the CRUD by hand |
@@ -323,6 +373,8 @@ php spark kpcrudy:demo <install|status|reset|uninstall> [--force] [--yes] [--all
 
 Without an action (or with an unknown one), it shows the help.
 
+> **After upgrading kpcrudy**, a demo installed with an earlier version must be reset: `php spark kpcrudy:demo reset`. The tables have changed (the `editor` role in `kpdemo_users`, the `audience` column of `kpdemo_events` and the new `kpdemo_category_translations` table), and `reset` drops them and creates them again with the initial data.
+
 ### Examples
 
 ```bash
@@ -344,11 +396,12 @@ kpcrudy demo
   URL:       http://localhost:8080/kpcrudy-demo
   Routes:    active
   Tables:
-    kpdemo_categories       7 rows
-    kpdemo_users            25 rows
+    kpdemo_categories       6 rows
+    kpdemo_users            26 rows
     kpdemo_user_interests   46 rows
     kpdemo_events           36 rows
     kpdemo_attendances      353 rows
+    kpdemo_category_translations 16 rows
   Files:     52 in public/uploads/kpcrudy-demo
 ```
 
@@ -358,7 +411,7 @@ kpcrudy demo
 Installing the kpcrudy demo...
 Done!
 
-  Tables:   kpdemo_categories, kpdemo_users, kpdemo_user_interests, kpdemo_events, kpdemo_attendances
+  Tables:   kpdemo_categories, kpdemo_users, kpdemo_user_interests, kpdemo_events, kpdemo_attendances, kpdemo_category_translations
   Images:   public/uploads/kpcrudy-demo
   URL:      http://localhost:8080/kpcrudy-demo
 
@@ -369,7 +422,7 @@ To remove it: php spark kpcrudy:demo uninstall
 
 ```
 The demo will be removed:
-  - Tables: kpdemo_categories, kpdemo_users, kpdemo_user_interests, kpdemo_events, kpdemo_attendances
+  - Tables: kpdemo_categories, kpdemo_users, kpdemo_user_interests, kpdemo_events, kpdemo_attendances, kpdemo_category_translations
   - Files:  public/uploads/kpcrudy-demo
   - Routes: /kpcrudy-demo
 Continue? [n, y]: y
