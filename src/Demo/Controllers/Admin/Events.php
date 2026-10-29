@@ -7,6 +7,7 @@ use Kpcrudy\Demo\Config\CrudConfig;
 use Kpcrudy\Demo\Controllers\BaseController;
 use Kpcrudy\Demo\Controllers\Shared;
 use Kpcrudy\Demo\Demo;
+use Kpcrudy\Demo\Libraries\Auth;
 
 class Events extends BaseController
 {
@@ -161,6 +162,12 @@ class Events extends BaseController
 
                 return count($ids) . ' events cancelled.';
             }, ['confirm' => 'Cancel the selected events?', 'permission' => 'cancel']);
+
+        // Personal data only for administrators: one call hides the fields from the list, the
+        // details page, the forms, search, filters, the CSV export and the import
+        if (! Auth::isAdmin()) {
+            $crud->hideFields(['attendees', 'created_by']);
+        }
 
         return $crud->render();
     }

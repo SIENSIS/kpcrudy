@@ -468,6 +468,7 @@ Els camps secrets són els que tenen un nom de `$sensitiveFields` (`password`, `
 | `setRules(string\|array $field, string\|array $rules)` | Regles de validació de CodeIgniter. `{id}` és l'identificador (real) en edició. |
 | `requiredFields(array)` | Camps obligatoris. |
 | `readonlyFields(array)` | Camps que es veuen però no es poden modificar en edició. |
+| `hideFields(array)` | Amaga camps de tot arreu (llistat, fitxa, formularis, cerca, filtres, exportació, importació); no es desen encara que arribin per POST. P. ex. `if (! $user->can('staff.salary')) $crud->hideFields(['salary'])`. |
 | `setDefault(string $field, $value)` | Valor inicial a l'alta. |
 | `setHelp(string $field, string $text)` | Text d'ajuda sota el camp. |
 | `fieldType(string $field, string $type, array $options = [])` | Força el tipus d'un camp (vegeu la taula següent). |
@@ -672,6 +673,10 @@ class ShieldPermissions implements \Kpcrudy\PermissionResolver
 ```
 
 Shield només és un exemple: el resolutor pot fer servir qualsevol autenticació. Amb `$denyByDefault = true`, una operació que ningú permet queda denegada. Vegeu "Permisos" a la [referència](docs/functions_CA.md) i `Libraries/DemoPermissions.php` de la demo.
+
+- **Noms per a Shield**: anomena cada CRUD `<mòdul>-<recurs>` (`setResource('news-posts')`), de manera que els seus permisos són `news-posts.edit`... i `news-posts.*` concedeix tot el CRUD (Shield només expandeix la primera part).
+- **Catàleg**: `$crud->permissionCatalogue()` llista totes les operacions per les quals el CRUD pot preguntar (les del CRUD, les operacions pròpies i els permisos de les accions), per declarar o comprovar els permisos; `Crud::impliedPermissions(['edit'])` hi afegeix les que pressuposa (`list`, `show`).
+- **Registres propis**: no hi ha cap permís especial. Si l'usuari només ha de *veure* els seus registres, fes servir `where()`; si ho veu tot però només *modifica* els seus, una closure de `setPermission()` (o el resolutor), que rep el registre.
 
 ### Presentació
 

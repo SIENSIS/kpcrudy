@@ -22,7 +22,7 @@ Per a receptes completes de casos habituals, vegeu [howto_CA.md](howto_CA.md).
 - [Creació i execució](#creació-i-execució): `__construct`, `render`, `routes`
 - [Origen de dades](#origen-de-dades): `setTable`, `setModel`, `setDatabase`, `setPrimaryKey`, `setSubject`, `softDeletes`, `where`
 - [Columnes i camps](#columnes-i-camps): `columns`, `fields`, `addFields`, `editFields`, `showFields`, `searchFields`, `filters`, `exportColumns`, `unsortable`, `displayAs`
-- [Tipus de camp i validació](#tipus-de-camp-i-validació): `fieldType`, `setRules`, `requiredFields`, `readonlyFields`, `setDefault`, `setHelp`
+- [Tipus de camp i validació](#tipus-de-camp-i-validació): `fieldType`, `setRules`, `requiredFields`, `readonlyFields`, `hideFields`, `setDefault`, `setHelp`
 - [Relacions](#relacions): `setRelation`, `setRelationNN`
 - [Traduccions](#traduccions): `setTranslations`, `postedTranslations`
 - [Callbacks de presentació](#callbacks-de-presentació): `callbackColumn`, `callbackField`, `callbackExport`
@@ -30,12 +30,12 @@ Per a receptes completes de casos habituals, vegeu [howto_CA.md](howto_CA.md).
 - [Accions](#accions): `addAction`, `addHeaderAction`, `addBulkAction`
 - [Operacions pròpies](#operacions-pròpies): `addOperation`, `backToList`, `page`
 - [Importació CSV](#importació-csv): `enableImport`, `callbackImport`
-- [Permisos](#permisos): `setPermission`, `unsetAdd`, `unsetEdit`, `unsetDelete`, `unsetShow`, `unsetExport`, `unsetTrash`, `unsetPurge`, `unsetSearch`, `unsetFilters`, `unsetBulk`, `readOnly`, `setResource`, `getResource`, `setPermissionResolver`, `isAllowed`, `PermissionResolver`
+- [Permisos](#permisos): `setPermission`, `unsetAdd`, `unsetEdit`, `unsetDelete`, `unsetShow`, `unsetExport`, `unsetTrash`, `unsetPurge`, `unsetSearch`, `unsetFilters`, `unsetBulk`, `readOnly`, `setResource`, `getResource`, `setPermissionResolver`, `isAllowed`, `permissionCatalogue`, `impliedPermissions`, `PermissionResolver`, només els registres propis
 - [Presentació i navegació](#presentació-i-navegació): `setPerPage`, `defaultOrder`, `setBaseUrl`, `setBackUrl`, `setTheme`, `setLayout`, `setLayoutData`, `showTitle`, `getTitle`
 - [Accés des dels callbacks](#accés-des-dels-callbacks): `getModel`, `getTable`, `getPrimaryKey`, `getBaseUrl`, `url`
 - [Identificadors emmascarats](#identificadors-emmascarats): `maskIds`, `encodeId`, `decodeId`, `maskId`, `unmaskId`, `idFromUrl`, `idForUrl`, `IdMasker`, `checkRoutes`
 - [URL signades](#url-signades): `requireSignature`, `signedUrl`, `signUrl`, `checkSignature`, `hasValidSignature`
-- [Constants](#constants): `ID_OPERATIONS`, `OPERATIONS`
+- [Constants](#constants): `ID_OPERATIONS`, `OPERATIONS`, `IMPLIED_PERMISSIONS`
 - [Comandes de spark](#comandes-de-spark): `kpcrudy:make`, `kpcrudy:demo`, `kpcrudy:maskid`, `kpcrudy:unmaskid`, `kpcrudy:signurl`, `kpcrudy:checkurl`
 - [Configuració global](#configuració-global): propietats de `Config\Kpcrudy`, idiomes
 - [Plantilles](#plantilles): `Renderer::render`, `Renderer::renderParent`, `Renderer::locate`, `Renderer::hidden`, `Renderer::attrs`, `Renderer::nonce`, Content-Security-Policy, esdeveniment `kpcrudy:confirm`
@@ -401,6 +401,22 @@ Camps que es mostren al formulari d'**edició** però no es poden modificar. A l
 ```php
 $crud->readonlyFields(['username', 'created_by']);
 ```
+
+### `hideFields(array $fields): static`
+
+Amaga camps **de tot arreu** amb una sola crida: llistat, fitxa, formularis d'alta i edició, cerca, filtres, ordenació, exportació CSV i importació CSV. Si un camp ocult arriba en un POST o en un fitxer CSV, no es desa. Té prioritat sobre `columns()`, `fields()`, `showFields()`, `exportColumns()`, `searchFields()`, `filters()` i `enableImport(['fields' => ...])`, de manera que es pot cridar al final, segons un permís, sense haver de treure el camp de cada llista (i sense oblidar-se, per exemple, de l'exportació).
+
+```php
+$crud->setTable('staff')
+     ->columns(['name', 'department', 'salary'])
+     ->exportColumns(['name', 'department', 'salary', 'bank_account']);
+
+if (! auth()->user()->can('staff.salary')) {
+    $crud->hideFields(['salary', 'bank_account']);   // llistat, fitxa, formularis, cerca, CSV...
+}
+```
+
+Funciona amb camps de la taula, columnes virtuals, relacions N-N i camps traduïts. La llibreria aquí no decideix res sobre permisos: és el teu codi qui decideix quan amagar. Els registres continuen tenint el valor (per exemple, un resolutor de permisos o una closure `visible` el poden fer servir), però mai no es mostra ni s'escriu.
 
 ### `setDefault(string $field, mixed $value): static`
 
@@ -1143,7 +1159,7 @@ public ?string $permissionResolver = \App\Libraries\CrudPermissions::class;
 public bool $denyByDefault         = true;   // opcional: denega el que ningú no permet
 ```
 
-La llibreria no depèn de cap sistema d'autenticació. Com a exemple, un resolutor basat en [CodeIgniter Shield](https://shield.codeigniter.com/), amb permisos amb el nom `recurs.operació` (`clients.edit`, `blog.posts.delete`...):
+La llibreria no depèn de cap sistema d'autenticació. Com a exemple, un resolutor basat en [CodeIgniter Shield](https://shield.codeigniter.com/), amb permisos amb el nom `recurs.operació` (`clients.edit`, `blog-posts.delete`...):
 
 ```php
 <?php
@@ -1175,12 +1191,56 @@ class CrudPermissions implements PermissionResolver
 
 De la mateixa manera podria llegir els permisos de la sessió, d'una taula pròpia o d'una altra llibreria. Les regles per registre (només el propietari pot editar...) continuen anant a cada CRUD amb `setPermission()`, que pot restringir el que el resolutor permet.
 
-### `setResource(string $resource): static` · `getResource(): string`
+**Noms de permisos amb Shield.** Shield només expandeix el comodí a la primera part del nom (`clients.*`). Amb noms com `<mòdul>-<recurs>.<operació>` (`blog-posts.edit`, `blog-categories.delete`), `blog-posts.*` concedeix tot un CRUD d'una vegada. Fes servir `setResource('blog-posts')` i el resolutor d'abans tal com és.
 
-Nom del CRUD per al resolutor de permisos (p. ex. `'events'` o `'blog.posts'`). Per defecte, el nom de la taula. Serveix quan dos CRUD fan servir la mateixa taula amb permisos diferents, o per agrupar-los.
+Les respostes del resolutor **sense registre** (`$row === null`: botons, menús, el llistat) es desen a cada instància del CRUD, perquè una pàgina fa moltes vegades la mateixa pregunta. Les respostes sobre un registre concret es pregunten sempre. `setResource()` i `setPermissionResolver()` buiden la memòria cau.
+
+### Només els registres propis
+
+No hi ha cap permís especial per als registres "propis"; hi ha dos patrons, segons què ha de veure l'usuari:
+
+- **L'usuari només veu i modifica els seus registres**: fes servir `where()`. S'aplica al llistat, la fitxa, l'edició, l'esborrat, les accions massives i l'exportació, i un registre de fora de l'abast és "inexistent" encara que se'n tingui la URL. No hi intervé cap permís.
+
+  ```php
+  $crud->setTable('expenses')->where('user_id', auth()->id());
+  ```
+
+- **L'usuari veu tots els registres però només modifica els seus**: és una decisió per registre, que `where()` no pot expressar. Fes servir `setPermission()` amb una closure, o el resolutor, que reben el registre:
+
+  ```php
+  $crud->setPermission('edit', fn (?array $row) => $row === null || (int) $row['author_id'] === auth()->id());
+  ```
+
+  Amb `$row === null` (la pregunta general: si es mostra la columna "Edita"...) retorna `true` si l'usuari pot editar algun registre.
+
+### `permissionCatalogue(): array`
+
+Totes les operacions per les quals aquest CRUD pot preguntar als permisos: les pròpies del CRUD que té actives (sense `trash`, `restore` ni `purge` si la taula no té paperera, sense `import` si no s'ha cridat `enableImport()`, sense les desactivades amb `setPermission(..., false)` o `unset*()`), més les claus de les [operacions pròpies](#operacions-pròpies) i el `permission` de les accions, accions de capçalera i accions massives.
+
+Serveix per generar o comprovar un catàleg de permisos, per exemple en un resolutor que falla en desenvolupament quan un CRUD pregunta per una operació que no s'ha declarat (la demo ho fa a `Libraries/DemoPermissions.php`):
 
 ```php
-$crud->setTable('posts')->setResource('blog.posts');
+$missing = array_diff($crud->permissionCatalogue(), $declared[$resource]);
+
+if ($missing !== [] && ENVIRONMENT !== 'production') {
+    throw new RuntimeException('Permisos no declarats: ' . implode(', ', $missing));
+}
+```
+
+### `Crud::impliedPermissions(array $operations): array` (estàtic)
+
+Completa una llista d'operacions amb les que pressuposen ([`IMPLIED_PERMISSIONS`](#crudimplied_permissions)), per exemple quan una pantalla de permisos les concedeix: `['edit']` → `['edit', 'list', 'show']`. Les operacions que no coneix (les pròpies) es mantenen tal com són.
+
+```php
+Crud::impliedPermissions(['purge', 'export']);   // ['purge', 'export', 'trash', 'list']
+```
+
+### `setResource(string $resource): static` · `getResource(): string`
+
+Nom del CRUD per al resolutor de permisos (p. ex. `'events'` o `'blog-posts'`). Per defecte, el nom de la taula. Serveix quan dos CRUD fan servir la mateixa taula amb permisos diferents, o per agrupar-los.
+
+```php
+$crud->setTable('posts')->setResource('blog-posts');
 ```
 
 ### `setPermissionResolver(PermissionResolver|Closure|null $resolver): static`
@@ -1870,6 +1930,10 @@ Paraules de la URL que el CRUD interpreta com a operació: `ID_OPERATIONS` porte
 $segments = explode('/', uri_string());
 $isList   = ! array_intersect($segments, [...Crud::ID_OPERATIONS, ...Crud::OPERATIONS]);
 ```
+
+### `Crud::IMPLIED_PERMISSIONS`
+
+Operacions que en pressuposen d'altres perquè tinguin sentit a la interfície: `add` → `list`; `edit` → `list`, `show`; `delete`, `export`, `trash`, `search`, `filters`, `bulk` → `list`; `import` → `list`, `add`; `restore` i `purge` → `trash`. El CRUD no les aplica (cada operació es comprova per separat); són per al projecte, amb [`impliedPermissions()`](#crudimpliedpermissionsarray-operations-array-estàtic).
 
 ---
 

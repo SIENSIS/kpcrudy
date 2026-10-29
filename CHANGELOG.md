@@ -27,6 +27,13 @@ Documentation is in English and Catalan: [README_EN.md](README_EN.md) · [README
   `kpcrudy:confirm` JavaScript event to replace `window.confirm()` with a custom dialog.
 - `kpcrudy:make` can generate into modules and packages: `--namespace`, `--path`, `--routes`, `--extends`
   and `--as` (route name).
+- `hideFields()`: hides fields from the list, details, forms, search, filters, sorting, export and
+  import in one call (they are not saved even if posted).
+- `permissionCatalogue()` (every operation a CRUD can ask the permissions about) and
+  `Crud::IMPLIED_PERMISSIONS` / `Crud::impliedPermissions()`, to build or check permission catalogues.
+- The permission resolver's answers without a record are cached per CRUD instance.
+- Documentation of the "own records" patterns (`where()` vs a per-record `setPermission()`) and of
+  permission names for Shield (`<module>-<resource>.<operation>`).
 - Exception messages are translated (`Kpcrudy.exceptions.*` in the six languages).
 - Demo: editor role with a central permission resolver, custom operations instead of custom routes,
   multiselect (event audience), translated category texts, `afterWrite()`, `flashKeys`, named routes and

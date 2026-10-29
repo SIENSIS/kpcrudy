@@ -930,7 +930,7 @@ trait ImportsCsv
      */
     protected function importFieldList(): array
     {
-        $fields = $this->import['fields'] ?? $this->addFieldList();
+        $fields = $this->withoutHidden($this->import['fields'] ?? $this->addFieldList());
 
         return array_values(array_filter($fields, function (string $name): bool {
             $type    = $this->typeOf($name);

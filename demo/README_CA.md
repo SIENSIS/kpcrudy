@@ -195,6 +195,8 @@ La demo també funciona amb una **Content-Security-Policy** estricta (activada a
 - Camp **multiselecció** (`audience`): diversos valors desats com a JSON en una columna, amb filtre per llista.
 - **Permisos centralitzats** (`setResource('events')` i [DemoPermissions](../src/Demo/Libraries/DemoPermissions.php)): l'editor veu menys botons (sense *Attendees*, *Delete*, *Import* ni *Cancel*) i només pot editar i publicar els esdeveniments que ha creat (duplica'n un per provar-ho).
 - **Opció `permission`** a les accions i accions massives: *Publish* només rep els id que l'usuari pot publicar.
+- **`hideFields()`**: els editors no veuen els assistents ni el creador dels esdeveniments enlloc (llistat, fitxa, exportació CSV, cerca).
+- **Catàleg de permisos**: en desenvolupament, `DemoPermissions` compara `permissionCatalogue()` amb les operacions declarades i falla si el CRUD pregunta per una que no s'ha declarat.
 - **Hook `afterWrite()`**: el darrer canvi (formulari, acció massiva o importació) es mostra a la pàgina d'inici.
 - Barra d'ocupació amb un element `<progress>`, sense atributs `style` (CSP).
 - **Accions massives** pròpies: publicar i cancel·lar.

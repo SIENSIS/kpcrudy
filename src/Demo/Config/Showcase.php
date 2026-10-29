@@ -58,6 +58,8 @@ class Showcase extends BaseConfig
             'Multiselect field (audience): several values stored as JSON in one column, with a list filter',
             'Central permission resolver (setResource(\'events\') + Libraries\\DemoPermissions): log in as the editor to see fewer buttons, and edit only your own events',
             'Action and bulk action permissions (\'permission\' option): editors do not see Attendees or Cancel, and Publish only applies to their own events',
+            'hideFields(): editors do not see the attendees or the creator anywhere (list, details, CSV export, search)',
+            'Permission catalogue (Crud::permissionCatalogue()): DemoPermissions checks in development that every operation of the CRUD is declared',
             'afterWrite() hook: the last change (from the form, bulk actions or the import) is shown on the home page',
             'Success and error messages in the demo layout alerts (flashKeys in the demo config)',
             'Occupancy bar without style="" attributes: the demo works with a strict Content-Security-Policy',

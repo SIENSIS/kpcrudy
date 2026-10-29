@@ -468,6 +468,7 @@ Sensitive fields are those whose name is in `$sensitiveFields` (`password`, `tok
 | `setRules(string\|array $field, string\|array $rules)` | CodeIgniter validation rules. `{id}` is the (real) identifier when editing. |
 | `requiredFields(array)` | Required fields. |
 | `readonlyFields(array)` | Fields that are shown but cannot be modified when editing. |
+| `hideFields(array)` | Hides fields from everywhere (list, details, forms, search, filters, export, import); they are not saved even if posted. E.g. `if (! $user->can('staff.salary')) $crud->hideFields(['salary'])`. |
 | `setDefault(string $field, $value)` | Initial value when adding. |
 | `setHelp(string $field, string $text)` | Help text under the field. |
 | `fieldType(string $field, string $type, array $options = [])` | Forces the type of a field (see the next table). |
@@ -672,6 +673,10 @@ class ShieldPermissions implements \Kpcrudy\PermissionResolver
 ```
 
 Shield is only an example: the resolver can use any authentication. With `$denyByDefault = true`, an operation nobody allows is denied. See [Permissions](docs/functions_EN.md) in the reference and the demo's `Libraries/DemoPermissions.php`.
+
+- **Names for Shield**: name each CRUD `<module>-<resource>` (`setResource('news-posts')`), so its permissions are `news-posts.edit`... and `news-posts.*` grants the whole CRUD (Shield only expands the first part).
+- **Catalogue**: `$crud->permissionCatalogue()` lists every operation the CRUD can ask about (built-in, custom operations, action permissions), to declare or check permissions; `Crud::impliedPermissions(['edit'])` adds the ones it presupposes (`list`, `show`).
+- **Own records**: there is no special permission. If users must only *see* their own records, use `where()`; if they see everything but only *change* their own, use a `setPermission()` closure (or the resolver), which receives the record.
 
 ### Presentation
 

@@ -53,6 +53,25 @@ class Crud
     public const OPERATIONS = ['add', 'trash', 'export', 'import', 'bulk', 'emptytrash'];
 
     /**
+     * Permisos que en pressuposen d'altres perquè tinguin sentit a la interfície
+     * (p. ex. editar sense veure el llistat). El CRUD no els aplica: són per al
+     * projecte, p. ex. per completar els permisos en concedir-los (vegeu impliedPermissions()).
+     */
+    public const IMPLIED_PERMISSIONS = [
+        'add'     => ['list'],
+        'edit'    => ['list', 'show'],
+        'delete'  => ['list'],
+        'export'  => ['list'],
+        'import'  => ['list', 'add'],
+        'trash'   => ['list'],
+        'restore' => ['trash'],
+        'purge'   => ['trash'],
+        'search'  => ['list'],
+        'filters' => ['list'],
+        'bulk'    => ['list'],
+    ];
+
+    /**
      * Tipus de camp que es mostren com a desplegable.
      */
     protected const SELECT_TYPES = ['relation', 'relation_nn', 'enum', 'select', 'boolean', 'multiselect'];
@@ -104,6 +123,20 @@ class Crud
 
     /** @var list<string> */
     protected array $readonly = [];
+
+    /**
+     * Camps ocults a tot arreu (hideFields()).
+     *
+     * @var list<string>
+     */
+    protected array $hidden = [];
+
+    /**
+     * Decisions del resolutor sense registre, per operació (es repeteixen molt en una pàgina).
+     *
+     * @var array<string, bool|null>
+     */
+    protected array $resolverCache = [];
 
     /** @var array<string, mixed> */
     protected array $defaults = [];
@@ -554,6 +587,38 @@ class Crud
     }
 
     /**
+     * Amaga camps de tot arreu: llistat, fitxa, formularis, cerca, filtres,
+     * ordenació, exportació i importació. Encara que arribin per POST o en un
+     * CSV, no es desen. Té prioritat sobre columns(), fields(), showFields()...,
+     * de manera que es pot decidir després de configurar el CRUD, p. ex. segons
+     * un permís:
+     *
+     *     if (! auth()->user()->can('staff.salary')) {
+     *         $crud->hideFields(['salary', 'bank_account']);
+     *     }
+     *
+     * Serveix per a camps de la taula, columnes virtuals, relacions N-N i camps traduïts.
+     *
+     * @param list<string> $fields
+     */
+    public function hideFields(array $fields): static
+    {
+        $this->hidden = array_values(array_unique(array_merge($this->hidden, $fields)));
+
+        return $this;
+    }
+
+    /**
+     * @param list<string> $fields
+     *
+     * @return list<string>
+     */
+    protected function withoutHidden(array $fields): array
+    {
+        return $this->hidden === [] ? $fields : array_values(array_diff($fields, $this->hidden));
+    }
+
+    /**
      * Camps que es mostren però no es poden modificar en edició.
      *
      * @param list<string> $fields
@@ -1001,7 +1066,8 @@ class Crud
      */
     public function setResource(string $resource): static
     {
-        $this->resource = $resource;
+        $this->resource      = $resource;
+        $this->resolverCache = [];
 
         return $this;
     }
@@ -1021,6 +1087,7 @@ class Crud
     {
         $this->resolver         = $resolver;
         $this->resolverResolved = true;
+        $this->resolverCache    = [];
 
         return $this;
     }
@@ -1035,6 +1102,71 @@ class Crud
     public function isAllowed(string $operation, ?array $row = null): bool
     {
         return $this->can($operation, $row);
+    }
+
+    /**
+     * Operacions per les quals aquest CRUD pot preguntar als permisos: les
+     * pròpies del CRUD que té actives (sense paperera si la taula no en té,
+     * sense importació si no s'ha activat, sense les desactivades amb
+     * setPermission(..., false) o unset*()), les operacions pròpies
+     * (addOperation()) i el 'permission' de les accions i accions massives.
+     *
+     * Serveix per generar o comprovar un catàleg de permisos, p. ex. que cada
+     * operació tingui un permís declarat (vegeu "Permisos centralitzats" a la documentació).
+     *
+     * @return list<string>
+     */
+    public function permissionCatalogue(): array
+    {
+        $this->boot();
+
+        $builtin = ['list', 'show', 'add', 'edit', 'delete', 'export', 'search', 'filters', 'bulk'];
+
+        if ($this->softDeletes) {
+            array_push($builtin, 'trash', 'restore', 'purge');
+        }
+
+        if ($this->import !== null) {
+            $builtin[] = 'import';
+        }
+
+        $builtin = array_filter($builtin, fn (string $operation): bool => ($this->permissions[$operation] ?? null) !== false);
+        $custom  = array_column($this->operations, 'permission');
+
+        foreach ([...$this->actions, ...$this->headerActions, ...array_values($this->bulkActions)] as $action) {
+            if (is_string($action['permission'] ?? null) && $action['permission'] !== '') {
+                $custom[] = $action['permission'];
+            }
+        }
+
+        return array_values(array_unique([...$builtin, ...$custom]));
+    }
+
+    /**
+     * Completa una llista de permisos amb els que pressuposen (IMPLIED_PERMISSIONS),
+     * p. ex. ['edit'] => ['edit', 'list', 'show']. Per a les pantalles on es concedeixen permisos.
+     *
+     * @param list<string> $operations
+     *
+     * @return list<string>
+     */
+    public static function impliedPermissions(array $operations): array
+    {
+        $result  = [];
+        $pending = array_values($operations);
+
+        while ($pending !== []) {
+            $operation = array_shift($pending);
+
+            if (in_array($operation, $result, true)) {
+                continue;
+            }
+
+            $result[] = $operation;
+            $pending  = [...$pending, ...(self::IMPLIED_PERMISSIONS[$operation] ?? [])];
+        }
+
+        return $result;
     }
 
     public function unsetAdd(): static
@@ -3846,11 +3978,11 @@ class Crud
      */
     protected function columnList(): array
     {
-        return $this->columns ?? array_values(array_merge(array_filter(
+        return $this->withoutHidden($this->columns ?? array_values(array_merge(array_filter(
             array_keys($this->meta),
             // Amb maskIds() l'id real no es mostra per defecte (es veuria al costat del codi de la URL)
             fn (string $name): bool => ! $this->isDeletedField($name) && ! $this->isSensitive($name) && ! ($this->maskIds && $name === $this->primaryKey),
-        ), $this->translations['fields'] ?? []));
+        ), $this->translations['fields'] ?? [])));
     }
 
     /**
@@ -3873,7 +4005,7 @@ class Crud
      */
     protected function addFieldList(): array
     {
-        return $this->addFields ?? $this->defaultFormFields();
+        return $this->withoutHidden($this->addFields ?? $this->defaultFormFields());
     }
 
     /**
@@ -3881,7 +4013,7 @@ class Crud
      */
     protected function editFieldList(): array
     {
-        return $this->editFields ?? $this->defaultFormFields();
+        return $this->withoutHidden($this->editFields ?? $this->defaultFormFields());
     }
 
     /**
@@ -3890,7 +4022,7 @@ class Crud
     protected function showFieldList(): array
     {
         if ($this->showFields !== null) {
-            return $this->showFields;
+            return $this->withoutHidden($this->showFields);
         }
 
         $fields = array_filter(
@@ -3899,7 +4031,7 @@ class Crud
             fn (string $name): bool => ! $this->isDeletedField($name) && ! $this->isSensitive($name) && ! ($this->maskIds && $name === $this->primaryKey),
         );
 
-        return array_values(array_merge($fields, $this->translations['fields'] ?? [], array_keys($this->relationsNN)));
+        return $this->withoutHidden(array_values(array_merge($fields, $this->translations['fields'] ?? [], array_keys($this->relationsNN))));
     }
 
     /**
@@ -3907,13 +4039,13 @@ class Crud
      */
     protected function searchFieldList(): array
     {
-        return $this->searchFields ?? array_values(array_filter(
+        return $this->withoutHidden($this->searchFields ?? array_values(array_filter(
             $this->columnList(),
             // Una columna amb callbackColumn pot amagar el valor real (p. ex. ****): no es cerca si no es demana
             fn (string $name): bool => (isset($this->meta[$name]) || isset($this->relations[$name]) || $this->isTranslated($name))
                 && ! isset($this->columnCallbacks[$name]) && ! $this->isSensitive($name)
                 && ! in_array($this->typeOf($name), ['boolean', 'upload', 'image', 'password', 'date', 'datetime', 'time', 'relation_nn', 'multiselect'], true),
-        ));
+        )));
     }
 
     /**
@@ -3921,10 +4053,10 @@ class Crud
      */
     protected function filterFieldList(): array
     {
-        return $this->filterFields ?? array_values(array_filter(
+        return $this->withoutHidden($this->filterFields ?? array_values(array_filter(
             $this->columnList(),
             fn (string $name): bool => in_array($this->typeOf($name), self::SELECT_TYPES, true),
-        ));
+        )));
     }
 
     /**
@@ -4856,11 +4988,21 @@ class Crud
             return null;
         }
 
+        // Sense registre, la resposta no canvia dins de la mateixa petició: es desa
+        if ($row === null && array_key_exists($operation, $this->resolverCache)) {
+            return $this->resolverCache[$operation];
+        }
+
         $result = $this->resolver instanceof PermissionResolver
             ? $this->resolver->allows($this->getResource(), $operation, $row, $this)
             : ($this->resolver)($this->getResource(), $operation, $row, $this);
+        $result = $result === null ? null : (bool) $result;
 
-        return $result === null ? null : (bool) $result;
+        if ($row === null) {
+            $this->resolverCache[$operation] = $result;
+        }
+
+        return $result;
     }
 
     /**
@@ -4912,7 +5054,7 @@ class Crud
 
         $this->applyOrder($builder, $state);
 
-        $columns   = $this->exportColumns ?? $this->columnList();
+        $columns   = $this->withoutHidden($this->exportColumns ?? $this->columnList());
         $delimiter = $this->config->csvDelimiter;
         $handle    = fopen('php://temp', 'r+b');
 

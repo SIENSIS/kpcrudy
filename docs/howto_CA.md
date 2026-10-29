@@ -55,6 +55,9 @@ Als exemples, `$crud` és una instància de `Kpcrudy\Crud` dins d'un mètode de 
 - [Desar qui ha creat el registre](#desar-qui-ha-creat-el-registre)
 - [Permisos per rol i per registre](#permisos-per-rol-i-per-registre)
 - [Permisos centralitzats per a tots els CRUD](#permisos-centralitzats-per-a-tots-els-crud)
+- [Només els registres propis](#només-els-registres-propis)
+- [Amagar un camp segons un permís](#amagar-un-camp-segons-un-permís)
+- [Un catàleg de permisos complet](#un-catàleg-de-permisos-complet)
 - [Validacions entre camps](#validacions-entre-camps)
 - [Impedir esborrar si té registres relacionats](#impedir-esborrar-si-té-registres-relacionats)
 - [Executar codi després de cada canvi](#executar-codi-després-de-cada-canvi)
@@ -1199,6 +1202,62 @@ $crud->addAction('Assistents', 'admin/attendances?f[event_id]={id}', ['permissio
 ```
 
 Una acció que enllaça a una ruta pròpia només amaga el botó: aquella ruta també ha de comprovar el permís (`$crud->isAllowed('attendees', $row)` dona la mateixa resposta). Amb [`addOperation()`](#operacions-pròpies-a-la-ruta-del-crud) ho comprova el CRUD.
+
+### Només els registres propis
+
+No hi ha cap permís especial de registres "propis": tria un d'aquests dos patrons.
+
+**L'usuari només veu i modifica els seus registres** (despeses, inscripcions...): un `where()`. S'aplica al llistat, la fitxa, els formularis, l'esborrat, les accions massives i l'exportació, i un registre d'un altre és "inexistent" encara que se'n tingui la URL:
+
+```php
+$crud->setTable('expenses')->where('user_id', auth()->id());
+```
+
+**L'usuari veu tots els registres però només modifica els seus**: és una decisió per registre, amb `setPermission()` o el resolutor, que reben el registre (`null` per a la pregunta general):
+
+```php
+$crud->setPermission('edit', fn (?array $row) => $row === null || (int) $row['author_id'] === auth()->id());
+```
+
+La demo té tots dos casos: *My registrations* fa servir `where()`, i a *Events* l'editor veu tots els esdeveniments però només edita els que ha creat (`Libraries/DemoPermissions.php`).
+
+### Amagar un camp segons un permís
+
+Per amagar un camp a algú, ha de desaparèixer del llistat, la fitxa, els formularis, la cerca, els filtres, l'exportació CSV i la importació. `hideFields()` ho fa tot amb una sola crida, i el camp no es desa encara que arribi per POST:
+
+```php
+$crud->setTable('staff')
+     ->exportColumns(['name', 'department', 'salary', 'bank_account']);
+
+if (! auth()->user()->can('hr-staff.salary')) {
+    $crud->hideFields(['salary', 'bank_account']);
+}
+```
+
+Es pot cridar al final, després de `columns()`, `fields()`, `exportColumns()`..., perquè té prioritat sobre tots ells.
+
+### Un catàleg de permisos complet
+
+Quan els permisos es desen en algun lloc (Shield, una taula), cada CRUD necessita un permís per a cada operació per la qual pot preguntar. `permissionCatalogue()` les llista (les operacions del CRUD actives, les operacions pròpies i el `permission` de les accions), de manera que un resolutor pot refusar, en desenvolupament, qualsevol operació que no s'hagi declarat, i una pantalla de permisos pot mostrar exactament les caselles que calen:
+
+```php
+public function allows(string $resource, string $operation, ?array $row, Crud $crud): ?bool
+{
+    if (ENVIRONMENT !== 'production') {
+        $missing = array_diff($crud->permissionCatalogue(), $this->declared[$resource] ?? []);
+
+        if ($missing !== []) {
+            throw new RuntimeException("Declara els permisos de {$resource}: " . implode(', ', $missing));
+        }
+    }
+
+    return auth()->user()?->can("{$resource}.{$operation}") ?? false;
+}
+```
+
+En concedir permisos, `Crud::impliedPermissions(['edit'])` hi afegeix els que una operació necessita perquè tingui sentit a la interfície (`['edit', 'list', 'show']`).
+
+**Noms per a Shield.** Shield només expandeix el comodí a la primera part d'un permís (`news-posts.*`). Anomena cada CRUD `<mòdul>-<recurs>` amb `setResource('news-posts')`: els permisos són `news-posts.list`, `news-posts.edit`, `news-posts.publish`..., i `news-posts.*` concedeix tot el CRUD.
 
 ### Validacions entre camps
 

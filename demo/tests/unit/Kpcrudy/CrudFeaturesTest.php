@@ -66,13 +66,16 @@ final class CrudFeaturesTest extends CIUnitTestCase
      * CRUD on kp_items for a request to $path (as if routed by Crud::routes('items', ...)).
      *
      * @param array<string, mixed> $post
+     * @param array<string, mixed> $get
      */
-    private function crud(string $path = 'items', string $method = 'GET', array $post = []): Crud
+    private function crud(string $path = 'items', string $method = 'GET', array $post = [], array $get = []): Crud
     {
         $app     = config(App::class);
         $request = new IncomingRequest($app, new SiteURI($app, $path), null, new UserAgent());
         $request->setMethod($method);
         $request->setGlobal('post', $post);
+        $request->setGlobal('get', $get);
+        $_GET = $get;
         $_POST = $post;
         Services::injectMock('request', $request);
 
@@ -255,6 +258,84 @@ final class CrudFeaturesTest extends CIUnitTestCase
         $this->assertIsString($result, 'the form is shown again');
         $this->assertSame(0, $this->db->table('kp_items')->where('name', 'Third')->countAllResults());
         $this->assertStringContainsString('The Title (English) field is required.', $result);
+    }
+
+    public function testHiddenFieldsAreHiddenEverywhere(): void
+    {
+        $this->db->table('kp_items')->where('id', 1)->update(['tags' => 'secret-tag']);
+
+        $hide = static fn (Crud $crud): Crud => $crud->columns(['name', 'tags'])->fields(['name', 'tags'])->hideFields(['tags']);
+
+        $list = $hide($this->crud())->render();
+        $this->assertStringContainsString('First', $list);
+        $this->assertStringNotContainsString('secret-tag', $list);
+
+        $this->assertStringNotContainsString('secret-tag', $hide($this->crud('items/show/1'))->render());
+        $this->assertStringNotContainsString('name="tags', $hide($this->crud('items/edit/1'))->render());
+
+        // Searching or filtering by the hidden field finds nothing through it
+        $this->assertStringNotContainsString('First', $hide($this->crud('items', 'GET', [], ['q' => 'secret-tag']))->searchFields(['name', 'tags'])->render());
+
+        // Not saved even if it is posted
+        $hide($this->crud('items/edit/1', 'POST', ['name' => 'First', 'tags' => 'changed']))->render();
+        $this->assertSame('secret-tag', $this->db->table('kp_items')->where('id', 1)->get()->getRow()->tags);
+
+        // Not exported
+        $export = $hide($this->crud('items/export'))->exportColumns(['name', 'tags'])->render();
+        $csv    = (string) ($export->getBody() ?? '');
+        $this->assertStringContainsString('First', $csv);
+        $this->assertStringNotContainsString('secret-tag', $csv);
+    }
+
+    public function testPermissionCatalogue(): void
+    {
+        $crud = $this->crud()
+            ->unsetExport()
+            ->addOperation('archive', static fn () => null)
+            ->addOperation('report', static fn () => null, ['row' => false, 'permission' => 'reports'])
+            ->addAction('History', 'items/{id}/history', ['permission' => 'history'])
+            ->addBulkAction('tag', 'Tag', static fn () => null, ['permission' => 'tagging']);
+
+        $catalogue = $crud->permissionCatalogue();
+
+        foreach (['list', 'show', 'add', 'edit', 'delete', 'archive', 'reports', 'history', 'tagging'] as $operation) {
+            $this->assertContains($operation, $catalogue);
+        }
+
+        // No trash (no deleted_at), no import (not enabled), no export (unsetExport)
+        foreach (['trash', 'restore', 'purge', 'import', 'export'] as $operation) {
+            $this->assertNotContains($operation, $catalogue);
+        }
+    }
+
+    public function testImpliedPermissions(): void
+    {
+        $this->assertEqualsCanonicalizing(['edit', 'list', 'show'], Crud::impliedPermissions(['edit']));
+        $this->assertEqualsCanonicalizing(['purge', 'trash', 'list', 'export'], Crud::impliedPermissions(['purge', 'export']));
+        $this->assertSame(['publish'], Crud::impliedPermissions(['publish']));
+    }
+
+    public function testResolverAnswersWithoutRecordAreCached(): void
+    {
+        $calls = 0;
+        $crud  = $this->crud()->setPermissionResolver(static function (string $resource, string $operation, ?array $row) use (&$calls): ?bool {
+            $calls++;
+
+            return null;
+        });
+
+        $crud->isAllowed('add');
+        $crud->isAllowed('add');
+        $this->assertSame(1, $calls);
+
+        // Per-record questions are always asked
+        $crud->isAllowed('edit', ['owner' => 1]);
+        $crud->isAllowed('edit', ['owner' => 1]);
+        $this->assertSame(3, $calls);
+
+        // A new resource starts again
+        $crud->setResource('other')->isAllowed('add');
+        $this->assertSame(4, $calls);
     }
 }
 

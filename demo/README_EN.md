@@ -195,6 +195,8 @@ The demo also runs with a strict **Content-Security-Policy** (enabled in this pr
 - **Multiselect** field (`audience`): several values stored as JSON in one column, with a list filter.
 - **Central permissions** (`setResource('events')` and [DemoPermissions](../src/Demo/Libraries/DemoPermissions.php)): the editor sees fewer buttons (no *Attendees*, *Delete*, *Import* or *Cancel*) and can only edit and publish the events they created (duplicate one to try it).
 - **`permission` option** on actions and bulk actions: *Publish* only receives the ids the user can publish.
+- **`hideFields()`**: editors do not see the attendees or the creator of the events anywhere (list, details, CSV export, search).
+- **Permission catalogue**: in development, `DemoPermissions` compares `permissionCatalogue()` with its declared operations and fails if the CRUD asks about one that is not declared.
 - **`afterWrite()` hook**: the last change (form, bulk action or import) is shown on the home page.
 - Occupancy bar with a `<progress>` element, without `style` attributes (CSP).
 - Custom **bulk actions**: publish and cancel.

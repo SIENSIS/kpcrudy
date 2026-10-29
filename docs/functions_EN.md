@@ -22,7 +22,7 @@ For complete recipes for common cases, see [howto_EN.md](howto_EN.md).
 - [Creating and running](#creating-and-running): `__construct`, `render`, `routes`
 - [Data source](#data-source): `setTable`, `setModel`, `setDatabase`, `setPrimaryKey`, `setSubject`, `softDeletes`, `where`
 - [Columns and fields](#columns-and-fields): `columns`, `fields`, `addFields`, `editFields`, `showFields`, `searchFields`, `filters`, `exportColumns`, `unsortable`, `displayAs`
-- [Field types and validation](#field-types-and-validation): `fieldType`, `setRules`, `requiredFields`, `readonlyFields`, `setDefault`, `setHelp`
+- [Field types and validation](#field-types-and-validation): `fieldType`, `setRules`, `requiredFields`, `readonlyFields`, `hideFields`, `setDefault`, `setHelp`
 - [Relations](#relations): `setRelation`, `setRelationNN`
 - [Translations](#translations): `setTranslations`, `postedTranslations`
 - [Display callbacks](#display-callbacks): `callbackColumn`, `callbackField`, `callbackExport`
@@ -30,12 +30,12 @@ For complete recipes for common cases, see [howto_EN.md](howto_EN.md).
 - [Actions](#actions): `addAction`, `addHeaderAction`, `addBulkAction`
 - [Custom operations](#custom-operations): `addOperation`, `backToList`, `page`
 - [CSV import](#csv-import): `enableImport`, `callbackImport`
-- [Permissions](#permissions): `setPermission`, `unsetAdd`, `unsetEdit`, `unsetDelete`, `unsetShow`, `unsetExport`, `unsetTrash`, `unsetPurge`, `unsetSearch`, `unsetFilters`, `unsetBulk`, `readOnly`, `setResource`, `getResource`, `setPermissionResolver`, `isAllowed`, `PermissionResolver`
+- [Permissions](#permissions): `setPermission`, `unsetAdd`, `unsetEdit`, `unsetDelete`, `unsetShow`, `unsetExport`, `unsetTrash`, `unsetPurge`, `unsetSearch`, `unsetFilters`, `unsetBulk`, `readOnly`, `setResource`, `getResource`, `setPermissionResolver`, `isAllowed`, `permissionCatalogue`, `impliedPermissions`, `PermissionResolver`, only own records
 - [Display and navigation](#display-and-navigation): `setPerPage`, `defaultOrder`, `setBaseUrl`, `setBackUrl`, `setTheme`, `setLayout`, `setLayoutData`, `showTitle`, `getTitle`
 - [Access from callbacks](#access-from-callbacks): `getModel`, `getTable`, `getPrimaryKey`, `getBaseUrl`, `url`
 - [Masked ids](#masked-ids): `maskIds`, `encodeId`, `decodeId`, `maskId`, `unmaskId`, `idFromUrl`, `idForUrl`, `IdMasker`, `checkRoutes`
 - [Signed URLs](#signed-urls): `requireSignature`, `signedUrl`, `signUrl`, `checkSignature`, `hasValidSignature`
-- [Constants](#constants): `ID_OPERATIONS`, `OPERATIONS`
+- [Constants](#constants): `ID_OPERATIONS`, `OPERATIONS`, `IMPLIED_PERMISSIONS`
 - [Spark commands](#spark-commands): `kpcrudy:make`, `kpcrudy:demo`, `kpcrudy:maskid`, `kpcrudy:unmaskid`, `kpcrudy:signurl`, `kpcrudy:checkurl`
 - [Global configuration](#global-configuration): properties of `Config\Kpcrudy`, languages
 - [Templates](#templates): `Renderer::render`, `Renderer::renderParent`, `Renderer::locate`, `Renderer::hidden`, `Renderer::attrs`, `Renderer::nonce`, Content-Security-Policy, `kpcrudy:confirm` event
@@ -401,6 +401,22 @@ Fields that are shown in the **edit** form but cannot be modified. When adding, 
 ```php
 $crud->readonlyFields(['username', 'created_by']);
 ```
+
+### `hideFields(array $fields): static`
+
+Hides fields **from everywhere** with a single call: list, detail view, add and edit forms, search, filters, sorting, CSV export and CSV import. If a hidden field arrives in a POST or in a CSV file, it is not saved. It takes priority over `columns()`, `fields()`, `showFields()`, `exportColumns()`, `searchFields()`, `filters()` and `enableImport(['fields' => ...])`, so it can be called at the end, depending on a permission, without having to remove the field from each list (and without forgetting, for example, the export).
+
+```php
+$crud->setTable('staff')
+     ->columns(['name', 'department', 'salary'])
+     ->exportColumns(['name', 'department', 'salary', 'bank_account']);
+
+if (! auth()->user()->can('staff.salary')) {
+    $crud->hideFields(['salary', 'bank_account']);   // list, details, forms, search, CSV...
+}
+```
+
+It works with table fields, virtual columns, N-N relations and translated fields. The library does not decide anything about permissions here: your code decides when to hide. The records still contain the value (for example, a permission resolver or a `visible` closure can use it), it is just never shown or written.
 
 ### `setDefault(string $field, mixed $value): static`
 
@@ -1143,7 +1159,7 @@ public ?string $permissionResolver = \App\Libraries\CrudPermissions::class;
 public bool $denyByDefault         = true;   // optional: deny what nobody allows
 ```
 
-The library does not depend on any authentication system. As an example, a resolver backed by [CodeIgniter Shield](https://shield.codeigniter.com/), with permissions named `resource.operation` (`clients.edit`, `blog.posts.delete`...):
+The library does not depend on any authentication system. As an example, a resolver backed by [CodeIgniter Shield](https://shield.codeigniter.com/), with permissions named `resource.operation` (`clients.edit`, `blog-posts.delete`...):
 
 ```php
 <?php
@@ -1175,12 +1191,56 @@ class CrudPermissions implements PermissionResolver
 
 In the same way it could read the permissions from the session, from a table of your own or from another library. Record-level rules (only the owner can edit...) still go in each CRUD with `setPermission()`, which can restrict what the resolver allows.
 
-### `setResource(string $resource): static` · `getResource(): string`
+**Permission names with Shield.** Shield only expands the wildcard in the first part of the name (`clients.*`). With names like `<module>-<resource>.<operation>` (`blog-posts.edit`, `blog-categories.delete`), `blog-posts.*` grants a whole CRUD in one go. Use `setResource('blog-posts')` and the resolver above as it is.
 
-Name of the CRUD for the permission resolver (e.g. `'events'` or `'blog.posts'`). By default, the table name. Useful when two CRUDs use the same table with different permissions, or to group them.
+The answers of the resolver **without a record** (`$row === null`: buttons, menus, the list) are cached in each CRUD instance, because a page asks the same question many times. The answers about a specific record are always asked. `setResource()` and `setPermissionResolver()` empty the cache.
+
+### Only own records
+
+There is no special permission for "own" records; there are two patterns, depending on what the user must see:
+
+- **Users only see and change their own records**: use `where()`. It applies to the list, details, editing, deletion, bulk actions and export, and a record outside the scope is "not found" even with its URL. No permission is involved.
+
+  ```php
+  $crud->setTable('expenses')->where('user_id', auth()->id());
+  ```
+
+- **Users see every record but only change their own**: a decision per record, which `where()` cannot express. Use `setPermission()` with a closure, or the resolver, which receive the record:
+
+  ```php
+  $crud->setPermission('edit', fn (?array $row) => $row === null || (int) $row['author_id'] === auth()->id());
+  ```
+
+  With `$row === null` (the general question: whether to show the "Edit" column...) return `true` if the user may edit some record.
+
+### `permissionCatalogue(): array`
+
+Every operation this CRUD can ask the permissions about: the built-in operations it has active (without `trash`, `restore` and `purge` if the table has no trash, without `import` if `enableImport()` was not called, without the ones disabled with `setPermission(..., false)` or `unset*()`), plus the keys of the [custom operations](#custom-operations) and the `permission` of actions, header actions and bulk actions.
+
+It is useful to build or check a permission catalogue, for example in a resolver that fails in development when a CRUD asks about an operation that has not been declared (the demo does it in `Libraries/DemoPermissions.php`):
 
 ```php
-$crud->setTable('posts')->setResource('blog.posts');
+$missing = array_diff($crud->permissionCatalogue(), $declared[$resource]);
+
+if ($missing !== [] && ENVIRONMENT !== 'production') {
+    throw new RuntimeException('Undeclared permissions: ' . implode(', ', $missing));
+}
+```
+
+### `Crud::impliedPermissions(array $operations): array` (static)
+
+Completes a list of operations with the ones they presuppose ([`IMPLIED_PERMISSIONS`](#crudimplied_permissions)), for example when a permissions screen grants them: `['edit']` → `['edit', 'list', 'show']`. Operations it does not know (custom ones) are kept as they are.
+
+```php
+Crud::impliedPermissions(['purge', 'export']);   // ['purge', 'export', 'trash', 'list']
+```
+
+### `setResource(string $resource): static` · `getResource(): string`
+
+Name of the CRUD for the permission resolver (e.g. `'events'` or `'blog-posts'`). By default, the table name. Useful when two CRUDs use the same table with different permissions, or to group them.
+
+```php
+$crud->setTable('posts')->setResource('blog-posts');
 ```
 
 ### `setPermissionResolver(PermissionResolver|Closure|null $resolver): static`
@@ -1870,6 +1930,10 @@ URL words the CRUD interprets as an operation: `ID_OPERATIONS` are followed by a
 $segments = explode('/', uri_string());
 $isList   = ! array_intersect($segments, [...Crud::ID_OPERATIONS, ...Crud::OPERATIONS]);
 ```
+
+### `Crud::IMPLIED_PERMISSIONS`
+
+Operations that presuppose others to make sense in the interface: `add` → `list`; `edit` → `list`, `show`; `delete`, `export`, `trash`, `search`, `filters`, `bulk` → `list`; `import` → `list`, `add`; `restore` and `purge` → `trash`. The CRUD does not apply them (each operation is checked on its own); they are for the project, through [`impliedPermissions()`](#crudimpliedpermissionsarray-operations-array-static).
 
 ---
 

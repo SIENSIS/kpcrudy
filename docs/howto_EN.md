@@ -55,6 +55,9 @@ In the examples, `$crud` is an instance of `Kpcrudy\Crud` inside a controller me
 - [Store who created the record](#store-who-created-the-record)
 - [Permissions by role and by record](#permissions-by-role-and-by-record)
 - [Central permissions for all CRUDs](#central-permissions-for-all-cruds)
+- [Only own records](#only-own-records)
+- [Hiding a field depending on a permission](#hiding-a-field-depending-on-a-permission)
+- [A complete permission catalogue](#a-complete-permission-catalogue)
 - [Cross-field validation](#cross-field-validation)
 - [Prevent deletion when there are related records](#prevent-deletion-when-there-are-related-records)
 - [Run code after every change](#run-code-after-every-change)
@@ -1199,6 +1202,62 @@ $crud->addAction('Attendees', 'admin/attendances?f[event_id]={id}', ['permission
 ```
 
 An action that links to a route of your own only hides the button: that route must check the permission too (`$crud->isAllowed('attendees', $row)` gives the same answer). With [`addOperation()`](#custom-operations-on-the-crud-route) the CRUD checks it.
+
+### Only own records
+
+There is no special "own" permission: choose one of two patterns.
+
+**Users only see and change their own records** (expenses, registrations...): a `where()`. It applies to the list, details, forms, deletion, bulk actions and export, and someone else's record is "not found" even with its URL:
+
+```php
+$crud->setTable('expenses')->where('user_id', auth()->id());
+```
+
+**Users see every record but only change their own**: a decision per record, with `setPermission()` or the resolver, which receive the record (`null` for the general question):
+
+```php
+$crud->setPermission('edit', fn (?array $row) => $row === null || (int) $row['author_id'] === auth()->id());
+```
+
+The demo has both: *My registrations* uses `where()`, and in *Events* the editor sees every event but only edits the ones they created (`Libraries/DemoPermissions.php`).
+
+### Hiding a field depending on a permission
+
+To hide a field from someone, it must disappear from the list, the details page, the forms, search, filters, the CSV export and the import. `hideFields()` does all of it in one call, and the field is not saved even if it is posted:
+
+```php
+$crud->setTable('staff')
+     ->exportColumns(['name', 'department', 'salary', 'bank_account']);
+
+if (! auth()->user()->can('hr-staff.salary')) {
+    $crud->hideFields(['salary', 'bank_account']);
+}
+```
+
+It can be called at the end, after `columns()`, `fields()`, `exportColumns()`..., because it takes priority over all of them.
+
+### A complete permission catalogue
+
+When permissions are stored somewhere (Shield, a table), each CRUD needs one permission per operation it can ask about. `permissionCatalogue()` lists them (the active built-in operations, custom operations and the `permission` of actions), so a resolver can refuse, in development, any operation that has not been declared, and a permissions screen can show exactly the right checkboxes:
+
+```php
+public function allows(string $resource, string $operation, ?array $row, Crud $crud): ?bool
+{
+    if (ENVIRONMENT !== 'production') {
+        $missing = array_diff($crud->permissionCatalogue(), $this->declared[$resource] ?? []);
+
+        if ($missing !== []) {
+            throw new RuntimeException("Declare the permissions of {$resource}: " . implode(', ', $missing));
+        }
+    }
+
+    return auth()->user()?->can("{$resource}.{$operation}") ?? false;
+}
+```
+
+When granting permissions, `Crud::impliedPermissions(['edit'])` adds the ones an operation needs to make sense in the interface (`['edit', 'list', 'show']`).
+
+**Names for Shield.** Shield only expands the wildcard in the first part of a permission (`news-posts.*`). Name each CRUD `<module>-<resource>` with `setResource('news-posts')`: the permissions are `news-posts.list`, `news-posts.edit`, `news-posts.publish`..., and `news-posts.*` grants the whole CRUD.
 
 ### Cross-field validation
 
