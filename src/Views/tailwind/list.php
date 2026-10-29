@@ -13,7 +13,7 @@ $input   = 'rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm focu
     <?= $this->render('partials/assets') ?>
 
     <div class="mb-4 flex flex-wrap items-center justify-between gap-2">
-        <h1 class="text-2xl font-semibold"><?= esc($title) ?></h1>
+        <?php if ($showTitle ?? true): ?><h1 class="text-2xl font-semibold"><?= esc($title) ?></h1><?php endif ?>
         <div class="flex flex-wrap gap-2">
             <?php foreach ($headerActions as $action): ?>
                 <?= $this->render('partials/button', ['action' => $action]) ?>
@@ -34,7 +34,7 @@ $input   = 'rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm focu
         <?php endif ?>
         <div class="ml-auto flex items-center gap-2">
             <label class="text-sm text-slate-500" for="kp-per-page"><?= esc(lang('Kpcrudy.perPage')) ?></label>
-            <select id="kp-per-page" name="per_page" class="<?= $input ?>" onchange="this.form.submit()">
+            <select id="kp-per-page" name="per_page" class="<?= $input ?>" data-kp-autosubmit>
                 <?php foreach ($perPageOptions as $option): ?>
                     <option value="<?= (int) $option ?>"<?= (int) $option === $state['per_page'] ? ' selected' : '' ?>><?= (int) $option ?></option>
                 <?php endforeach ?>

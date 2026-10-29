@@ -15,7 +15,7 @@ $tags = [
     <?= $this->render('partials/assets') ?>
 
     <div class="w3-cell-row w3-margin-bottom">
-        <h2 class="w3-cell w3-cell-middle" style="margin: 0"><?= esc($title) ?></h2>
+        <?php if ($showTitle ?? true): ?><h2 class="w3-cell w3-cell-middle kp-m0"><?= esc($title) ?></h2><?php endif ?>
         <div class="w3-cell w3-cell-middle w3-right-align">
             <a href="<?= esc($backUrl, 'attr') ?>" class="w3-button w3-white w3-border w3-round"><i class="bi bi-arrow-left"></i> <?= esc(lang('Kpcrudy.backToList')) ?></a>
         </div>
@@ -28,7 +28,7 @@ $tags = [
     <?php endif ?>
 
     <?php if ($step === 'upload'): ?>
-        <div class="w3-row-padding" style="margin: 0 -16px">
+        <div class="w3-row-padding kp-row-flush">
             <div class="w3-col l7">
                 <form method="post" action="<?= esc($action, 'attr') ?>" enctype="multipart/form-data" class="w3-card w3-white">
                     <?= csrf_field() ?>
@@ -81,7 +81,7 @@ $tags = [
         <div class="w3-card w3-white w3-container w3-padding w3-margin-bottom">
             <b><?= esc(lang('Kpcrudy.importMapping')) ?></b><br>
             <?php foreach ($columns as $column): ?>
-                <span class="w3-tag w3-round w3-light-grey w3-small" style="margin: 4px 4px 0 0">
+                <span class="w3-tag w3-round w3-light-grey w3-small kp-tag-gap">
                     <?= esc($column['header']) ?> <i class="bi bi-arrow-right"></i>
                     <?= $column['field'] === null ? '<i>' . esc(lang('Kpcrudy.importIgnored')) . '</i>' : '<b>' . esc($column['field']) . '</b>' ?>
                     <?php if ($column['key']): ?>(<?= esc(lang('Kpcrudy.importKey')) ?>)<?php endif ?>

@@ -19,7 +19,7 @@
 
     <form method="get" action="<?= esc($listUrl, 'attr') ?>" class="w3-card w3-white w3-padding w3-margin-top">
         <?= $this->hidden($filterHidden) ?>
-        <div class="w3-row-padding" style="margin: 0 -16px">
+        <div class="w3-row-padding kp-row-flush">
             <?php foreach ($filters as $filter): ?>
                 <?php $id = 'kp-f-' . $filter['name']; ?>
                 <div class="w3-col m6 l4 w3-margin-bottom">
@@ -35,11 +35,11 @@
 
                     <?php elseif ($filter['kind'] === 'range'): ?>
                         <div class="w3-cell-row">
-                            <div class="w3-cell" style="padding-right: 4px">
+                            <div class="w3-cell kp-pr4">
                                 <input type="<?= esc($filter['input'], 'attr') ?>" class="w3-input w3-border w3-round" id="<?= esc($id, 'attr') ?>" step="any"
                                        name="f[<?= esc($filter['name'], 'attr') ?>][from]" value="<?= esc($filter['value']['from'], 'attr') ?>" placeholder="<?= esc(lang('Kpcrudy.from'), 'attr') ?>" title="<?= esc(lang('Kpcrudy.from'), 'attr') ?>">
                             </div>
-                            <div class="w3-cell" style="padding-left: 4px">
+                            <div class="w3-cell kp-pl4">
                                 <input type="<?= esc($filter['input'], 'attr') ?>" class="w3-input w3-border w3-round" step="any"
                                        name="f[<?= esc($filter['name'], 'attr') ?>][to]" value="<?= esc($filter['value']['to'], 'attr') ?>" placeholder="<?= esc(lang('Kpcrudy.to'), 'attr') ?>" title="<?= esc(lang('Kpcrudy.to'), 'attr') ?>">
                             </div>

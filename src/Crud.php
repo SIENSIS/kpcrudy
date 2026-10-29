@@ -55,7 +55,7 @@ class Crud
     /**
      * Tipus de camp que es mostren com a desplegable.
      */
-    protected const SELECT_TYPES = ['relation', 'relation_nn', 'enum', 'select', 'boolean'];
+    protected const SELECT_TYPES = ['relation', 'relation_nn', 'enum', 'select', 'boolean', 'multiselect'];
 
     protected KpcrudyConfig $config;
     protected IncomingRequest $request;
@@ -117,6 +117,20 @@ class Crud
     /** @var array<string, array<string, mixed>> */
     protected array $relationsNN = [];
 
+    /**
+     * Traduccions en una taula filla (setTranslations()).
+     *
+     * @var array<string, mixed>|null
+     */
+    protected ?array $translations = null;
+
+    /**
+     * Traduccions enviades amb el formulari que s'està desant: [locale => [camp => valor]].
+     *
+     * @var array<string, array<string, string>>
+     */
+    protected array $postedTranslations = [];
+
     /** @var array<string, Closure> */
     protected array $columnCallbacks = [];
 
@@ -138,8 +152,32 @@ class Crud
     /** @var array<string, array<string, mixed>> */
     protected array $bulkActions = [];
 
+    /**
+     * Operacions pròpies (addOperation()): clau => definició.
+     *
+     * @var array<string, array<string, mixed>>
+     */
+    protected array $operations = [];
+
+    /**
+     * requireSignature('*'): també les operacions pròpies, encara que s'afegeixin després.
+     */
+    protected bool $signAll = false;
+
     /** @var array<string, bool|Closure> */
     protected array $permissions = [];
+
+    /**
+     * Identificador del CRUD per al resolutor de permisos (per defecte, la taula).
+     */
+    protected ?string $resource = null;
+
+    /**
+     * Resolutor de permisos d'aquest CRUD: null = el de la configuració.
+     */
+    protected PermissionResolver|Closure|null $resolver = null;
+
+    protected bool $resolverResolved = false;
 
     /** @var array<string, mixed> */
     protected array $where = [];
@@ -206,6 +244,16 @@ class Crud
     protected static bool $routesChecked = false;
     protected string $theme;
     protected string|false $layout;
+    protected ?string $layoutSection;
+    protected bool $showTitle;
+
+    /** @var array<string, mixed> */
+    protected array $layoutData = [];
+
+    /**
+     * Títol de la pàgina que s'ha generat (getTitle()).
+     */
+    protected ?string $pageTitle = null;
 
     /**
      * Estructura de la taula: nom de camp => metadades.
@@ -229,6 +277,8 @@ class Crud
         $this->perPageOptions = $this->config->perPageOptions;
         $this->theme          = $this->config->theme;
         $this->layout         = $this->config->layout;
+        $this->layoutSection  = $this->config->layoutSection;
+        $this->showTitle      = $this->config->showTitle;
         $this->maskIds        = $this->config->maskIds;
 
         helper('url');
@@ -258,7 +308,7 @@ class Crud
             $instance = model($model, false);
 
             if (! $instance instanceof Model) {
-                throw new RuntimeException("Kpcrudy: no s'ha trobat el model '{$model}'.");
+                throw new RuntimeException(lang('Kpcrudy.exceptions.modelNotFound', [$model]));
             }
 
             $model = $instance;
@@ -451,11 +501,13 @@ class Crud
      * Força el tipus d'un camp.
      *
      * Tipus: text, textarea, number, decimal, email, url, password, date,
-     * datetime, time, color, boolean, enum, select, hidden, readonly,
-     * upload, image.
+     * datetime, time, color, boolean, enum, select, multiselect, hidden,
+     * readonly, upload, image.
      *
      * Opcions habituals:
      *  - select/enum:  ['options' => [valor => etiqueta]]
+     *  - multiselect:  ['options' => [valor => etiqueta], 'storage' => 'json' (per defecte) o 'csv']:
+     *                  diversos valors en una sola columna (llista JSON o separats per comes)
      *  - hidden:       ['value' => valor] (es desa sempre aquest valor)
      *  - password:     ['hash' => true]
      *  - upload/image: ['path' => ..., 'url' => ..., 'allowed' => [...], 'maxSize' => KB,
@@ -598,6 +650,62 @@ class Crud
         return $this;
     }
 
+    /**
+     * Camps traduïbles desats en una taula filla, una fila per idioma
+     * (p. ex. news + news_translations amb news_id, locale, title, body).
+     * Els camps es fan servir com qualsevol altre a columns(), fields(),
+     * showFields(), searchFields(), displayAs()...: el formulari els mostra
+     * en una pestanya per idioma.
+     *
+     * @param string                            $table       Taula de traduccions
+     * @param string                            $foreignKey  Camp de la taula de traduccions que apunta a aquesta
+     * @param string                            $localeField Camp amb el codi d'idioma
+     * @param list<string>                      $fields      Camps traduïbles (de la taula de traduccions)
+     * @param array<string, string>|list<string> $locales    Idiomes: ['ca', 'en'] o ['ca' => 'Català', 'en' => 'English']
+     * @param array<string, mixed>              $options     'required' (idiomes obligatoris; per defecte el primer),
+     *                                                       'rules' (camp => regles), 'types' (camp => 'text'|'textarea'),
+     *                                                       'listLocale' (idioma del llistat, la cerca i l'exportació;
+     *                                                       per defecte el de la petició si hi és, si no el primer)
+     */
+    public function setTranslations(string $table, string $foreignKey, string $localeField, array $fields, array $locales, array $options = []): static
+    {
+        $map = [];
+
+        foreach ($locales as $code => $label) {
+            is_int($code) ? $map[(string) $label] = strtoupper((string) $label) : $map[(string) $code] = (string) $label;
+        }
+
+        if ($map === [] || $fields === []) {
+            throw new RuntimeException(lang('Kpcrudy.exceptions.translationsEmpty'));
+        }
+
+        $this->translations = [
+            'table'      => $table,
+            'fk'         => $foreignKey,
+            'locale'     => $localeField,
+            'fields'     => array_values($fields),
+            'locales'    => $map,
+            'required'   => array_values(array_intersect(array_keys($map), (array) ($options['required'] ?? [array_key_first($map)]))),
+            'rules'      => (array) ($options['rules'] ?? []),
+            'types'      => (array) ($options['types'] ?? []),
+            'listLocale' => $options['listLocale'] ?? null,
+            'meta'       => null,
+        ];
+
+        return $this;
+    }
+
+    /**
+     * Traduccions enviades amb el formulari que s'està desant ([locale => [camp => valor]]),
+     * p. ex. per consultar-les des d'un hook beforeInsert o beforeUpdate.
+     *
+     * @return array<string, array<string, string>>
+     */
+    public function postedTranslations(): array
+    {
+        return $this->postedTranslations;
+    }
+
     // ------------------------------------------------------------------
     // Configuració: callbacks i hooks
     // ------------------------------------------------------------------
@@ -695,6 +803,23 @@ class Crud
         return $this->setHook('afterRestore', $callback);
     }
 
+    /**
+     * Després de qualsevol escriptura que fa el CRUD (alta, edició, esborrat,
+     * restauració, també des de les accions massives i la importació CSV), p. ex.
+     * per buidar una memòria cau o desar un registre d'auditoria.
+     *
+     * fn (string $operation, string $id, array $data, ?array $old): void
+     *  - $operation: 'insert', 'update', 'delete' (a la paperera o definitiu) o 'restore'
+     *  - $data:      els valors desats (buit a 'delete' i 'restore')
+     *  - $old:       el registre abans del canvi (null a 'insert')
+     *
+     * S'executa després dels hooks after* específics.
+     */
+    public function afterWrite(Closure $callback): static
+    {
+        return $this->setHook('afterWrite', $callback);
+    }
+
     protected function setHook(string $name, Closure $callback): static
     {
         $this->hooks[$name] = $callback;
@@ -714,7 +839,12 @@ class Crud
      *
      * Opcions: 'icon' (p. ex. 'bi bi-receipt'), 'class' (p. ex. 'btn-outline-info'),
      *          'target', 'confirm' (missatge), 'visible' (fn (array $row): bool),
-     *          'method' ('get' o 'post'; amb 'post' s'envia un formulari amb el token CSRF).
+     *          'method' ('get' o 'post'; amb 'post' s'envia un formulari amb el token CSRF),
+     *          'permission' (operació o permís que l'usuari ha de tenir sobre el registre,
+     *          p. ex. 'edit' o 'duplicate'; es comprova com les operacions del CRUD).
+     *
+     * El botó només enllaça: si la URL porta a una ruta pròpia, aquella ruta ha de
+     * comprovar els permisos pel seu compte. Amb addOperation() la comprovació la fa el CRUD.
      *
      * @param array<string, mixed> $options
      */
@@ -742,18 +872,87 @@ class Crud
      * fn (list<string> $ids, Crud $crud): string|ResponseInterface|null
      * Si retorna un string es mostra com a missatge.
      *
-     * Opcions: 'confirm' (missatge), 'trash' (true per oferir-la a la paperera).
+     * Opcions: 'confirm' (missatge), 'trash' (true per oferir-la a la paperera),
+     *          'permission' (operació o permís necessari, p. ex. 'edit'). Amb 'permission'
+     *          l'acció només es mostra si l'usuari el té, i el callback només rep els
+     *          registres sobre els quals el té (es comprova registre a registre).
+     *          Sense 'permission', l'acció és per a qualsevol usuari que pugui fer accions
+     *          massives ('bulk'): el callback ha de comprovar el que calgui.
      *
      * @param array<string, mixed> $options
      */
     public function addBulkAction(string $key, string $label, Closure $callback, array $options = []): static
     {
         $this->bulkActions[$key] = [
-            'label'    => $label,
-            'callback' => $callback,
-            'confirm'  => $options['confirm'] ?? null,
-            'trash'    => (bool) ($options['trash'] ?? false),
+            'label'      => $label,
+            'callback'   => $callback,
+            'confirm'    => $options['confirm'] ?? null,
+            'trash'      => (bool) ($options['trash'] ?? false),
+            'permission' => $options['permission'] ?? null,
         ];
+
+        return $this;
+    }
+
+    /**
+     * Operació pròpia servida per la mateixa ruta del CRUD: base/{clau}/{id}
+     * (sobre un registre) o base/{clau} (general). El CRUD hi aplica el mateix
+     * que a les seves operacions: CSRF, ids emmascarats, where(), permisos,
+     * signatures i redirecció al llistat amb el missatge.
+     *
+     * fn (?string $id, ?array $row, Crud $crud): ResponseInterface|string|false|null
+     *  - $id i $row: l'id real i el registre (null a les operacions sense registre)
+     *  - retorna una resposta (redirecció, descàrrega, $crud->page(...)), un missatge
+     *    d'èxit (string), false per cancel·lar o null (missatge genèric). Per tornar
+     *    al llistat amb un error: return $crud->backToList('danger', 'Missatge')
+     *
+     * Opcions:
+     *  - 'row'        true (per defecte): necessita un registre; false: operació general
+     *  - 'method'     'post' (per defecte) o 'get'
+     *  - 'permission' operació o permís que es comprova (per defecte, la clau). Es pot
+     *                 decidir amb setPermission('clau', ...) o amb el resolutor de permisos
+     *  - 'visible'    fn (?array $row): bool; si retorna false el botó no surt i l'operació es denega
+     *  - 'trash'      true: opera sobre registres de la paperera (només amb 'row')
+     *  - 'button'     false per no afegir-hi botó (p. ex. si s'hi arriba des d'un enllaç propi)
+     *  - 'label', 'icon', 'class', 'confirm', 'target': com a addAction()
+     *
+     * @param array<string, mixed> $options
+     */
+    public function addOperation(string $key, Closure $callback, array $options = []): static
+    {
+        if (! preg_match('/^[a-z][a-z0-9_-]*$/', $key) || $key === 'list'
+            || in_array($key, [...self::ID_OPERATIONS, ...self::OPERATIONS], true)) {
+            throw new RuntimeException(lang('Kpcrudy.exceptions.invalidOperation', [$key]));
+        }
+
+        $operation = [
+            'callback'   => $callback,
+            'row'        => (bool) ($options['row'] ?? true),
+            'method'     => strtolower($options['method'] ?? 'post') === 'get' ? 'get' : 'post',
+            'permission' => (string) ($options['permission'] ?? $key),
+            'visible'    => $options['visible'] ?? null,
+            'trash'      => (bool) ($options['trash'] ?? false),
+        ];
+
+        $this->operations[$key] = $operation;
+
+        if ($options['button'] ?? true) {
+            $action = $this->normalizeAction(
+                (string) ($options['label'] ?? ucfirst(str_replace(['_', '-'], ' ', $key))),
+                $operation['row']
+                    ? fn (array $row): string => $this->url($key, (string) $row[$this->primaryKey])
+                    : fn (): string => $this->url($key),
+                ['method' => $operation['method'], 'permission' => $operation['permission']] + $options,
+            );
+            $action['operation'] = $key;
+            $action['trash']     = $operation['trash'];
+
+            if ($operation['row']) {
+                $this->actions[] = $action;
+            } else {
+                $this->headerActions[] = $action;
+            }
+        }
 
         return $this;
     }
@@ -766,14 +965,15 @@ class Crud
     protected function normalizeAction(string $label, Closure|string $url, array $options): array
     {
         return [
-            'label'   => $label,
-            'url'     => $url,
-            'icon'    => $options['icon'] ?? null,
-            'class'   => $options['class'] ?? 'btn-outline-secondary',
-            'target'  => $options['target'] ?? null,
-            'confirm' => $options['confirm'] ?? null,
-            'visible' => $options['visible'] ?? null,
-            'method'  => strtolower($options['method'] ?? 'get') === 'post' ? 'post' : 'get',
+            'label'      => $label,
+            'url'        => $url,
+            'icon'       => $options['icon'] ?? null,
+            'class'      => $options['class'] ?? 'btn-outline-secondary',
+            'target'     => $options['target'] ?? null,
+            'confirm'    => $options['confirm'] ?? null,
+            'visible'    => $options['visible'] ?? null,
+            'method'     => strtolower($options['method'] ?? 'get') === 'post' ? 'post' : 'get',
+            'permission' => $options['permission'] ?? null,
         ];
     }
 
@@ -793,6 +993,48 @@ class Crud
         $this->permissions[$operation] = $allowed;
 
         return $this;
+    }
+
+    /**
+     * Nom del CRUD per al resolutor de permisos (p. ex. 'events' o 'blog.posts').
+     * Per defecte és el nom de la taula.
+     */
+    public function setResource(string $resource): static
+    {
+        $this->resource = $resource;
+
+        return $this;
+    }
+
+    public function getResource(): string
+    {
+        return $this->resource ?? (string) $this->getTable();
+    }
+
+    /**
+     * Resolutor de permisos per a aquest CRUD, en lloc del de la configuració
+     * (Config\Kpcrudy::$permissionResolver). Accepta una instància de
+     * PermissionResolver o una closure amb la mateixa signatura:
+     * fn (string $resource, string $operation, ?array $row, Crud $crud): ?bool
+     */
+    public function setPermissionResolver(PermissionResolver|Closure|null $resolver): static
+    {
+        $this->resolver         = $resolver;
+        $this->resolverResolved = true;
+
+        return $this;
+    }
+
+    /**
+     * Si l'usuari pot fer una operació (o una acció amb l'opció 'permission'),
+     * en general o sobre un registre concret. Combina el resolutor de permisos,
+     * setPermission() i Config\Kpcrudy::$denyByDefault, com fa el CRUD.
+     *
+     * @param array<string, mixed>|null $row
+     */
+    public function isAllowed(string $operation, ?array $row = null): bool
+    {
+        return $this->can($operation, $row);
     }
 
     public function unsetAdd(): static
@@ -909,18 +1151,61 @@ class Crud
 
     /**
      * 'default', false o el nom d'una vista de CodeIgniter (vegeu Config\Kpcrudy::$layout).
+     *
+     * $section: si la vista és un layout amb seccions ($this->renderSection()), la
+     * secció on va el CRUD (p. ex. 'content'); vegeu Config\Kpcrudy::$layoutSection.
      */
-    public function setLayout(string|false $layout): static
+    public function setLayout(string|false $layout, ?string $section = null): static
     {
         $this->layout = $layout;
+
+        if (func_num_args() > 1) {
+            $this->layoutSection = $section;
+        }
 
         return $this;
     }
 
     /**
+     * Variables que rep el layout del projecte a més de $kpcrudy i $title
+     * (menú, usuari, miges de pa...). Es poden cridar diverses vegades.
+     *
+     * @param array<string, mixed> $data
+     */
+    public function setLayoutData(array $data): static
+    {
+        $this->layoutData = array_merge($this->layoutData, $data);
+
+        return $this;
+    }
+
+    /**
+     * Mostra o amaga el títol (<h1>) del CRUD, p. ex. si el layout ja el mostra.
+     */
+    public function showTitle(bool $show = true): static
+    {
+        $this->showTitle = $show;
+
+        return $this;
+    }
+
+    /**
+     * Títol de la pàgina generada per render() (p. ex. "Nou: client"), per
+     * posar-lo al layout del projecte; null abans de render().
+     */
+    public function getTitle(): ?string
+    {
+        return $this->pageTitle;
+    }
+
+    /**
      * Registra les dues rutes que necessita un CRUD:
      *
-     *     Crud::routes($routes, 'admin/clients', 'Admin::clients');
+     *     Crud::routes($routes, 'admin/clients', 'Admin::clients', ['as' => 'clients']);
+     *
+     * El nom ('as') només el porta la ruta base: CodeIgniter no registra una
+     * segona ruta amb un nom que ja existeix, i les URL de les operacions
+     * (add, edit/5...) quedarien sense ruta. route_to('clients') dona la base.
      *
      * @param array<string, mixed> $options Opcions de ruta (filter, as...)
      */
@@ -936,6 +1221,8 @@ class Crud
         $options['kpcrudy'] = true;
 
         $routes->match(['GET', 'POST'], $path, $handler, $options);
+
+        unset($options['as']);
         $routes->match(['GET', 'POST'], $path . '/(:any)', $handler . '/$' . $next, $options);
     }
 
@@ -967,7 +1254,7 @@ class Crud
                 // Si "prefix/(:any)" ja existia, CodeIgniter ignora la del CRUD
                 if (! str_ends_with($key, '/(.*)')) {
                     if (in_array($key . '/(.*)', $keys, true) && ! in_array($key . '/(.*)', $own, true)) {
-                        throw new RuntimeException("Kpcrudy: la ruta {$verb} '{$key}/(.*)' s'ha definit abans de Crud::routes() i substitueix la del CRUD '{$key}'. Fes-la servir amb un altre prefix.");
+                        throw new RuntimeException(lang('Kpcrudy.exceptions.routeReplaced', [$verb, $key]));
                     }
 
                     continue;
@@ -980,7 +1267,7 @@ class Crud
                     if (in_array($other, $own, true)) {
                         // Un altre CRUD definit després dins d'aquest prefix (p. ex. "admin" i "admin/users")
                         if ($index > $position && $other !== $key && str_starts_with($other, $base . '/')) {
-                            throw new RuntimeException("Kpcrudy: el CRUD '{$other}' no s'executarà mai: el CRUD '{$key}' es defineix abans i el captura. Defineix primer el CRUD amb el prefix més llarg.");
+                            throw new RuntimeException(lang('Kpcrudy.exceptions.crudShadowed', [$other, $key]));
                         }
 
                         continue;
@@ -988,14 +1275,14 @@ class Crud
 
                     // Una ruta posterior amb el mateix prefix no s'executarà mai
                     if ($index > $position && str_starts_with($other, $base . '/')) {
-                        throw new RuntimeException("Kpcrudy: la ruta {$verb} '{$other}' no s'executarà mai: la ruta del CRUD '{$key}' es defineix abans i la captura. Fes-la servir amb un altre prefix (p. ex. per a enllaços públics amb l'id emmascarat).");
+                        throw new RuntimeException(lang('Kpcrudy.exceptions.routeShadowed', [$verb, $other, $key]));
                     }
 
                     // Una ruta anterior que captura URL del CRUD
                     if ($index < $position && ! str_contains($base, '(')) {
                         foreach ($samples as $sample) {
                             if (@preg_match('#^' . $other . '$#u', $base . '/' . $sample) === 1) {
-                                throw new RuntimeException("Kpcrudy: la ruta {$verb} '{$other}' captura '{$base}/{$sample}', que és una URL del CRUD '{$base}'. Fes-la servir amb un altre prefix.");
+                                throw new RuntimeException(lang('Kpcrudy.exceptions.routeCaptures', [$verb, $other, $base . '/' . $sample, $base]));
                             }
                         }
                     }
@@ -1099,7 +1386,7 @@ class Crud
         $masker = new $class($config);
 
         if (! $masker instanceof IdMasker) {
-            throw new RuntimeException("Kpcrudy: la classe '{$class}' no implementa Kpcrudy\\IdMasker.");
+            throw new RuntimeException(lang('Kpcrudy.exceptions.invalidMasker', [$class]));
         }
 
         return $masker;
@@ -1145,20 +1432,21 @@ class Crud
      */
     public function requireSignature(array|string $operations = '*', ?int $ttl = null, array|string $signFrom = []): static
     {
-        $all = ['list', ...self::ID_OPERATIONS, ...self::OPERATIONS];
+        $all = ['list', ...self::ID_OPERATIONS, ...self::OPERATIONS, ...array_keys($this->operations)];
 
-        $operations = $operations === '*' ? $all : array_values((array) $operations);
+        $this->signAll = $operations === '*';
+        $operations    = $operations === '*' ? $all : array_values((array) $operations);
         $signFrom   = array_values((array) $signFrom);
 
         // Un nom mal escrit deixaria l'operació oberta sense avisar
         foreach ([...$operations, ...$signFrom] as $operation) {
             if (! in_array($operation, $all, true)) {
-                throw new RuntimeException("Kpcrudy: l'operació '{$operation}' no existeix. Operacions: " . implode(', ', $all) . '.');
+                throw new RuntimeException(lang('Kpcrudy.exceptions.unknownOperation', [$operation, implode(', ', $all)]));
             }
         }
 
         if (array_intersect($operations, $signFrom) !== []) {
-            throw new RuntimeException('Kpcrudy: una operació no pot necessitar signatura i alhora repartir-ne ($signFrom).');
+            throw new RuntimeException(lang('Kpcrudy.exceptions.signAndSignFrom'));
         }
 
         $this->signedOperations = $operations;
@@ -1227,7 +1515,7 @@ class Crud
 
     protected function signatureRequired(string $operation): bool
     {
-        return in_array($operation, $this->signedOperations, true);
+        return in_array($operation, $this->signedOperations, true) || ($this->signAll && isset($this->operations[$operation]));
     }
 
     /**
@@ -1359,6 +1647,10 @@ class Crud
 
         $this->verifySignature($operation);
 
+        if (isset($this->operations[$operation])) {
+            return $this->customOperation($operation, $id);
+        }
+
         return match ($operation) {
             'list'       => $this->listOperation(false),
             'trash'      => $this->listOperation(true),
@@ -1413,7 +1705,7 @@ class Crud
         }
 
         if ($this->model === null && $this->table === null) {
-            throw new RuntimeException('Kpcrudy: cal cridar setTable() o setModel() abans de render().');
+            throw new RuntimeException(lang('Kpcrudy.exceptions.missingSource'));
         }
 
         if ($this->model !== null) {
@@ -1447,7 +1739,7 @@ class Crud
             $this->softDeletes ??= isset($this->meta[$this->deletedField]);
 
             if ($this->softDeletes && ! isset($this->meta[$this->deletedField])) {
-                throw new RuntimeException("Kpcrudy: la taula '{$this->table}' no té el camp '{$this->deletedField}'.");
+                throw new RuntimeException(lang('Kpcrudy.exceptions.missingDeletedField', [$this->table, $this->deletedField]));
             }
 
             $this->createdField = isset($this->meta['created_at']) ? 'created_at' : null;
@@ -1484,7 +1776,7 @@ class Crud
     protected function loadMeta(): void
     {
         if (! $this->db->tableExists($this->table)) {
-            throw new RuntimeException("Kpcrudy: la taula '{$this->table}' no existeix.");
+            throw new RuntimeException(lang('Kpcrudy.exceptions.tableNotFound', [$this->table]));
         }
 
         foreach ($this->db->getFieldData($this->table) as $field) {
@@ -1531,6 +1823,8 @@ class Crud
                 $segments === []                                                        => ['list', null],
                 count($segments) === 1 && in_array($segments[0], self::OPERATIONS, true)  => [$segments[0], null],
                 count($segments) === 2 && in_array($segments[0], self::ID_OPERATIONS, true) => [$segments[0], $segments[1]],
+                count($segments) === 1 && $this->isOperation($segments[0], false)        => [$segments[0], null],
+                count($segments) === 2 && $this->isOperation($segments[0], true)         => [$segments[0], $segments[1]],
                 default                                                                 => throw PageNotFoundException::forPageNotFound(),
             };
 
@@ -1546,11 +1840,11 @@ class Crud
         $operation = 'list';
         $id        = null;
 
-        if ($count >= 2 && in_array($segments[$count - 2], self::ID_OPERATIONS, true)) {
+        if ($count >= 2 && (in_array($segments[$count - 2], self::ID_OPERATIONS, true) || $this->isOperation($segments[$count - 2], true))) {
             $operation = $segments[$count - 2];
             $id        = $segments[$count - 1];
             $segments  = array_slice($segments, 0, $count - 2);
-        } elseif ($count >= 1 && in_array($segments[$count - 1], self::OPERATIONS, true)) {
+        } elseif ($count >= 1 && (in_array($segments[$count - 1], self::OPERATIONS, true) || $this->isOperation($segments[$count - 1], false))) {
             $operation = $segments[$count - 1];
             $segments  = array_slice($segments, 0, $count - 1);
         }
@@ -1558,6 +1852,14 @@ class Crud
         $this->baseUrl ??= rtrim(site_url(implode('/', $segments)), '/');
 
         return [$operation, $id];
+    }
+
+    /**
+     * Si $key és una operació pròpia (addOperation()) amb registre ($row) o sense.
+     */
+    protected function isOperation(string $key, bool $row): bool
+    {
+        return isset($this->operations[$key]) && $this->operations[$key]['row'] === $row;
     }
 
     /**
@@ -1900,6 +2202,21 @@ class Crud
         }
 
         if (isset($this->bulkActions[$action])) {
+            $permission = $this->bulkActions[$action]['permission'];
+
+            // Amb 'permission', el callback només rep els registres sobre els quals es té
+            if ($permission !== null) {
+                $ids = array_values(array_filter($ids, function (string $id) use ($permission, $trash): bool {
+                    $record = $this->findRecord($id, $trash);
+
+                    return $record !== null && $this->can($permission, $record);
+                }));
+
+                if ($ids === []) {
+                    return $this->redirectToList('danger', lang('Kpcrudy.notAllowed'));
+                }
+            }
+
             $result = ($this->bulkActions[$action]['callback'])($ids, $this);
 
             if ($result instanceof ResponseInterface) {
@@ -1932,6 +2249,71 @@ class Crud
         return $this->redirectToList($count === count($ids) ? 'success' : 'warning', lang('Kpcrudy.bulkDone', [$count]));
     }
 
+    /**
+     * Executa una operació pròpia (addOperation()).
+     */
+    protected function customOperation(string $key, ?string $id): ResponseInterface
+    {
+        $operation = $this->operations[$key];
+
+        if ($operation['method'] === 'post' && ! $this->isPost()) {
+            return $this->redirectToList('danger', lang('Kpcrudy.invalidRequest'));
+        }
+
+        $record = null;
+
+        if ($operation['row']) {
+            $record = $this->findRecord((string) $id, $operation['trash']);
+
+            if ($record === null) {
+                return $this->redirectToList('danger', lang('Kpcrudy.notFound'));
+            }
+
+            // A partir d'aquí, l'identificador real
+            $id = (string) $record[$this->primaryKey];
+        }
+
+        if (($operation['trash'] && ! $this->can('trash', $record))
+            || ! $this->can($operation['permission'], $record)
+            || ($operation['visible'] instanceof Closure && ! ($operation['visible'])($record))) {
+            return $this->redirectToList('danger', lang('Kpcrudy.notAllowed'));
+        }
+
+        $result = ($operation['callback'])($operation['row'] ? $id : null, $record, $this);
+
+        if ($result instanceof ResponseInterface) {
+            return $result;
+        }
+
+        if ($result === false) {
+            return $this->redirectToList('warning', lang('Kpcrudy.cancelled'));
+        }
+
+        return $this->redirectToList('success', is_string($result) && $result !== '' ? $result : lang('Kpcrudy.operationDone'));
+    }
+
+    /**
+     * Torna al llistat (o a setBackUrl()) amb un missatge: success, danger,
+     * warning o info. Per a les operacions pròpies que acaben amb un error.
+     */
+    public function backToList(string $type, string $text): ResponseInterface
+    {
+        return $this->redirectToList($type, $text);
+    }
+
+    /**
+     * Mostra un HTML propi amb el mateix layout que les pàgines del CRUD (p. ex.
+     * el resultat d'una operació pròpia que no és una redirecció):
+     *
+     *     return service('response')->setBody($crud->page($html, 'Report'));
+     */
+    public function page(string $html, string $title): string
+    {
+        $this->pageTitle = $title;
+
+        return $this->wrap($html, $title);
+    }
+
     // ------------------------------------------------------------------
     // Desar, esborrar i restaurar
     // ------------------------------------------------------------------
@@ -1953,7 +2335,7 @@ class Crud
         $scope = $this->scopeValues();
 
         foreach ($fields as $name) {
-            if (! $this->isEditable($name, $mode) || array_key_exists($name, $scope)) {
+            if (! $this->isEditable($name, $mode) || array_key_exists($name, $scope) || $this->isTranslated($name)) {
                 continue;
             }
 
@@ -1967,6 +2349,14 @@ class Crud
 
                     $input[$name] = array_values(array_intersect(array_unique($posted), $valid));
                     $nn[$name]    = $input[$name];
+                    break;
+
+                case 'multiselect':
+                    $posted = array_map('strval', array_filter((array) $this->request->getPost($name), 'is_scalar'));
+                    $valid  = array_map('strval', array_keys($this->optionsFor($name)));
+
+                    $input[$name] = array_values(array_intersect(array_unique($posted), $valid));
+                    $data[$name]  = $this->encodeMulti($name, $input[$name]);
                     break;
 
                 case 'upload':
@@ -2053,6 +2443,16 @@ class Crud
             }
         }
 
+        // Traduccions: es validen per idioma i es desen a la transacció
+        $translatedFields = array_values(array_filter($fields, fn (string $name): bool => $this->isTranslated($name) && $this->isEditable($name, $mode)));
+        $this->postedTranslations = [];
+
+        if ($translatedFields !== []) {
+            $this->postedTranslations = $this->readPostedTranslations($translatedFields);
+            $values['__tr']           = $this->postedTranslations;
+            $errors += $this->validateTranslations($this->postedTranslations, $translatedFields);
+        }
+
         if ($errors !== []) {
             return [$values, $errors, lang('Kpcrudy.validationErrors')];
         }
@@ -2101,7 +2501,7 @@ class Crud
             }
 
             // Retorna true si la validació del model falla (no s'ha escrit res)
-            $failed = $this->transaction(function () use ($mode, &$id, $data, $nn): bool {
+            $failed = $this->transaction(function () use ($mode, &$id, $data, $nn, $translatedFields): bool {
                 if ($mode === 'add') {
                     $result = $this->model->insert($data, true);
 
@@ -2115,6 +2515,11 @@ class Crud
                 }
 
                 $this->syncNN((string) $id, $nn);
+
+                if ($translatedFields !== []) {
+                    $this->syncTranslations((string) $id, $this->postedTranslations, $translatedFields);
+                }
+
                 $this->assertInScope((string) $id);
 
                 return false;
@@ -2139,10 +2544,7 @@ class Crud
             $this->callHook('afterUpdate', $id, $data, $record);
         }
 
-        session()->setFlashdata($this->stateKey() . '_flash', [
-            'type' => 'success',
-            'text' => lang($mode === 'add' ? 'Kpcrudy.created' : 'Kpcrudy.updated', [$this->subject]),
-        ]);
+        $this->flash('success', lang($mode === 'add' ? 'Kpcrudy.created' : 'Kpcrudy.updated', [$this->subject]));
 
         $next = match ($this->request->getPost('_kp_after')) {
             'continue' => $this->url('edit', $id),
@@ -2216,6 +2618,10 @@ class Crud
                     foreach ($this->relationsNN as $relation) {
                         $this->db->table($relation['junction'])->where($relation['thisKey'], $id)->delete();
                     }
+
+                    if ($this->translations !== null) {
+                        $this->db->table($this->translations['table'])->where($this->translations['fk'], $id)->delete();
+                    }
                 }
 
                 if ($this->model->delete($id, $hard) === false) {
@@ -2286,7 +2692,24 @@ class Crud
 
     protected function callHook(string $name, mixed ...$args): mixed
     {
-        return isset($this->hooks[$name]) ? ($this->hooks[$name])(...$args) : null;
+        $result = isset($this->hooks[$name]) ? ($this->hooks[$name])(...$args) : null;
+
+        // afterWrite: un sol punt per a totes les escriptures
+        if (isset($this->hooks['afterWrite'])) {
+            $write = match ($name) {
+                'afterInsert'  => ['insert', (string) $args[0], (array) $args[1], null],
+                'afterUpdate'  => ['update', (string) $args[0], (array) $args[1], $args[2] ?? null],
+                'afterDelete'  => ['delete', (string) $args[0], [], $args[1] ?? null],
+                'afterRestore' => ['restore', (string) $args[0], [], $args[1] ?? null],
+                default        => null,
+            };
+
+            if ($write !== null) {
+                ($this->hooks['afterWrite'])(...$write);
+            }
+        }
+
+        return $result;
     }
 
     protected function errorMessage(Throwable $e): string
@@ -2534,6 +2957,20 @@ class Crud
             }
         }
 
+        // Traduccions de l'idioma del llistat (alias kt)
+        if ($this->translations !== null) {
+            $tr = $this->translations;
+            $builder->join(
+                "{$tr['table']} kt",
+                "kt.{$tr['fk']} = {$this->table}.{$this->primaryKey} AND kt.{$tr['locale']} = " . $this->db->escape($this->listLocale()),
+                'left',
+            );
+
+            foreach ($tr['fields'] as $field) {
+                $builder->select("kt.{$field} AS kt__{$field}");
+            }
+        }
+
         return $builder;
     }
 
@@ -2568,7 +3005,7 @@ class Crud
             ->get()
             ->getRowArray();
 
-        return $row === null ? null : $this->attachNN([$row])[0];
+        return $row === null ? null : $this->attachTranslations($this->attachNN([$row]))[0];
     }
 
     /**
@@ -2617,6 +3054,8 @@ class Crud
                     foreach ($this->relations[$name]['fields'] as $relatedField) {
                         $targets[] = "kr_{$name}.{$relatedField}";
                     }
+                } elseif ($this->isTranslated($name)) {
+                    $targets[] = "kt.{$name}";
                 } elseif (isset($this->meta[$name])) {
                     $targets[] = "{$table}.{$name}";
                 }
@@ -2639,7 +3078,7 @@ class Crud
 
         foreach ($state['f'] as $name => $value) {
             $kind   = $this->filterKind($name);
-            $column = "{$table}.{$name}";
+            $column = $this->isTranslated($name) ? "kt.{$name}" : "{$table}.{$name}";
 
             if ($kind === 'range') {
                 if (! is_array($value)) {
@@ -2683,6 +3122,8 @@ class Crud
                         ->from($relation['junction'])
                         ->where($relation['otherKey'], $value),
                 );
+            } elseif ($this->typeOf($name) === 'multiselect') {
+                $this->whereMultiContains($builder, $name, $column, (string) $value);
             } elseif ($kind === 'select') {
                 $builder->where($column, $value);
             } else {
@@ -2702,6 +3143,8 @@ class Crud
 
         if (isset($this->relations[$sort])) {
             $builder->orderBy("kr_{$sort}.{$this->relations[$sort]['fields'][0]}", $dir);
+        } elseif ($this->isTranslated($sort)) {
+            $builder->orderBy("kt.{$sort}", $dir);
         } elseif (isset($this->meta[$sort])) {
             $builder->orderBy("{$this->table}.{$sort}", $dir);
         }
@@ -2806,7 +3249,7 @@ class Crud
             }
         } elseif ($type === 'boolean') {
             $options = ['1' => lang('Kpcrudy.yes'), '0' => lang('Kpcrudy.no')];
-        } elseif (in_array($type, ['enum', 'select'], true)) {
+        } elseif (in_array($type, ['enum', 'select', 'multiselect'], true)) {
             $defined = $this->types[$name]['options']['options'] ?? null;
 
             if ($defined === null) {
@@ -2820,6 +3263,412 @@ class Crud
         }
 
         return $this->optionsCache[$name] = $options;
+    }
+
+    // ------------------------------------------------------------------
+    // Traduccions
+    // ------------------------------------------------------------------
+
+    protected function isTranslated(string $name): bool
+    {
+        return $this->translations !== null && in_array($name, $this->translations['fields'], true);
+    }
+
+    /**
+     * Idioma de les traduccions al llistat, la cerca, l'ordenació i l'exportació.
+     */
+    protected function listLocale(): string
+    {
+        $locales = $this->translations['locales'] ?? [];
+        $locale  = $this->translations['listLocale'] ?? null;
+
+        if (is_string($locale) && isset($locales[$locale])) {
+            return $locale;
+        }
+
+        $current = $this->request->getLocale();
+
+        return isset($locales[$current]) ? $current : (string) array_key_first($locales);
+    }
+
+    /**
+     * Estructura de la taula de traduccions (per deduir regles i tipus).
+     *
+     * @return array<string, array<string, mixed>>
+     */
+    protected function translationMeta(): array
+    {
+        if ($this->translations['meta'] === null) {
+            $meta = [];
+
+            foreach ($this->db->getFieldData($this->translations['table']) as $field) {
+                $meta[$field->name] = [
+                    'type'       => strtolower((string) ($field->type ?? '')),
+                    'max_length' => isset($field->max_length) ? (int) $field->max_length : null,
+                    'nullable'   => (bool) ($field->nullable ?? true),
+                    'default'    => $field->default ?? null,
+                ];
+            }
+
+            $this->translations['meta'] = $meta;
+        }
+
+        return $this->translations['meta'];
+    }
+
+    protected function translationType(string $field): string
+    {
+        $type = $this->translations['types'][$field] ?? null;
+
+        if (in_array($type, ['text', 'textarea'], true)) {
+            return $type;
+        }
+
+        return preg_match('/text|clob|json/', (string) ($this->translationMeta()[$field]['type'] ?? '')) ? 'textarea' : 'text';
+    }
+
+    /**
+     * Traduccions de diversos registres: [id => [locale => [camp => valor]]].
+     *
+     * @param list<string> $ids
+     *
+     * @return array<string, array<string, array<string, mixed>>>
+     */
+    protected function loadTranslations(array $ids): array
+    {
+        if ($this->translations === null || $ids === []) {
+            return [];
+        }
+
+        $tr   = $this->translations;
+        $rows = $this->db->table($tr['table'])
+            ->select([$tr['fk'], $tr['locale'], ...$tr['fields']])
+            ->whereIn($tr['fk'], $ids)
+            ->whereIn($tr['locale'], array_keys($tr['locales']))
+            ->get()
+            ->getResultArray();
+        $map = [];
+
+        foreach ($rows as $row) {
+            $map[(string) $row[$tr['fk']]][(string) $row[$tr['locale']]] = array_intersect_key($row, array_flip($tr['fields']));
+        }
+
+        return $map;
+    }
+
+    /**
+     * Afegeix a cada fila totes les traduccions a $row['__tr'][locale][camp].
+     *
+     * @param list<array<string, mixed>> $rows
+     *
+     * @return list<array<string, mixed>>
+     */
+    protected function attachTranslations(array $rows): array
+    {
+        if ($this->translations === null || $rows === []) {
+            return $rows;
+        }
+
+        $map = $this->loadTranslations(array_map(fn (array $row): string => (string) $row[$this->primaryKey], $rows));
+
+        foreach ($rows as $i => $row) {
+            $rows[$i]['__tr'] = $map[(string) $row[$this->primaryKey]] ?? [];
+        }
+
+        return $rows;
+    }
+
+    /**
+     * Valor d'un camp traduït a la fitxa: tots els idiomes que en tenen.
+     *
+     * @param array<string, array<string, mixed>> $translations
+     */
+    protected function translationsHtml(string $name, array $translations): string
+    {
+        $html = '';
+
+        foreach ($this->translations['locales'] as $locale => $label) {
+            $value = trim((string) ($translations[$locale][$name] ?? ''));
+
+            if ($value === '') {
+                continue;
+            }
+
+            $text  = $this->translationType($name) === 'textarea' ? nl2br(esc($value)) : esc($value);
+            $html .= '<div class="kp-translation"><span class="kp-locale badge text-bg-light border" title="' . esc($label, 'attr') . '">'
+                . esc(strtoupper($locale)) . '</span> ' . $text . '</div>';
+        }
+
+        return $html;
+    }
+
+    /**
+     * Element del formulari amb tots els camps traduïts (una pestanya per idioma).
+     *
+     * @param list<string>                         $fields
+     * @param array<string, array<string, mixed>>  $values
+     * @param array<string, string>                $errors
+     *
+     * @return array<string, mixed>
+     */
+    protected function translationsField(array $fields, array $values, array $errors, string $mode): array
+    {
+        $tabs = [];
+
+        foreach ($this->translations['locales'] as $locale => $label) {
+            $required = in_array($locale, $this->translations['required'], true);
+            $inputs   = [];
+
+            foreach ($fields as $name) {
+                $key      = "kp_tr.{$locale}.{$name}";
+                $rules    = $this->translationRules($name, $required);
+                $inputs[] = [
+                    'name'      => "kp_tr[{$locale}][{$name}]",
+                    'id'        => 'kp-tr-' . $locale . '-' . $name,
+                    'label'     => $this->label($name),
+                    'type'      => $this->translationType($name),
+                    'value'     => (string) ($values[$locale][$name] ?? ''),
+                    'required'  => $required && in_array('required', $rules, true),
+                    'error'     => $errors[$key] ?? null,
+                    'help'      => $this->help[$name] ?? null,
+                    'maxlength' => $this->translationType($name) === 'text' ? ($this->translationMeta()[$name]['max_length'] ?? null) : null,
+                    'attrs'     => $this->types[$name]['options']['attrs'] ?? [],
+                ];
+            }
+
+            $tabs[] = [
+                'locale'   => $locale,
+                'label'    => $label,
+                'required' => $required,
+                'hasError' => array_filter(array_column($inputs, 'error')) !== [],
+                'inputs'   => $inputs,
+            ];
+        }
+
+        return [
+            'name'     => 'kp_tr',
+            'label'    => lang('Kpcrudy.translations'),
+            'type'     => 'translations',
+            'tabs'     => $tabs,
+            'value'    => null,
+            'options'  => [],
+            'required' => false,
+            'error'    => null,
+            'help'     => null,
+            'attrs'    => [],
+            'display'  => null,
+            'file'     => null,
+            'html'     => null,
+        ] + ['maxlength' => null];
+    }
+
+    /**
+     * Regles d'un camp traduït: les de l'opció 'rules' o deduïdes de la taula.
+     *
+     * @return list<string>
+     */
+    protected function translationRules(string $name, bool $requiredLocale): array
+    {
+        $rules = $this->translations['rules'][$name] ?? null;
+
+        if ($rules !== null) {
+            $rules = is_array($rules) ? array_values($rules) : explode('|', (string) $rules);
+        } else {
+            $meta  = $this->translationMeta()[$name] ?? null;
+            $rules = [];
+
+            if ($this->config->inferRules && $meta !== null) {
+                if (! $meta['nullable'] && $meta['default'] === null) {
+                    $rules[] = 'required';
+                }
+
+                if ($meta['max_length'] && $this->translationType($name) === 'text') {
+                    $rules[] = "max_length[{$meta['max_length']}]";
+                }
+            }
+        }
+
+        $rules = array_values(array_filter(array_map('trim', $rules), static fn (string $rule): bool => $rule !== ''));
+
+        // Als idiomes opcionals res no és obligatori: només es valida el que s'ha omplert
+        if (! $requiredLocale) {
+            $rules = array_values(array_filter($rules, static fn (string $rule): bool => $rule !== 'required'));
+        }
+
+        if ($rules !== [] && ! in_array('required', $rules, true) && ! in_array('permit_empty', $rules, true)) {
+            array_unshift($rules, 'permit_empty');
+        }
+
+        return $rules;
+    }
+
+    /**
+     * @param list<string> $fields
+     *
+     * @return array<string, array<string, string>>
+     */
+    protected function readPostedTranslations(array $fields): array
+    {
+        $posted = $this->request->getPost('kp_tr');
+        $posted = is_array($posted) ? $posted : [];
+        $values = [];
+
+        foreach (array_keys($this->translations['locales']) as $locale) {
+            foreach ($fields as $name) {
+                $value                   = $posted[$locale][$name] ?? '';
+                $values[$locale][$name] = is_scalar($value) ? trim((string) $value) : '';
+            }
+        }
+
+        return $values;
+    }
+
+    /**
+     * Errors de validació de les traduccions, amb claus "kp_tr.locale.camp".
+     *
+     * @param array<string, array<string, string>> $values
+     * @param list<string>                         $fields
+     *
+     * @return array<string, string>
+     */
+    protected function validateTranslations(array $values, array $fields): array
+    {
+        $rules = [];
+
+        foreach ($this->translations['locales'] as $locale => $label) {
+            $required = in_array($locale, $this->translations['required'], true);
+            $filled   = implode('', $values[$locale] ?? []) !== '';
+
+            // Un idioma opcional buit no es valida (no es desarà)
+            if (! $required && ! $filled) {
+                continue;
+            }
+
+            foreach ($fields as $name) {
+                $fieldRules = $this->translationRules($name, $required);
+
+                if ($fieldRules !== []) {
+                    $rules["kp_tr.{$locale}.{$name}"] = ['label' => $this->label($name) . ' (' . $label . ')', 'rules' => $fieldRules];
+                }
+            }
+        }
+
+        if ($rules === []) {
+            return [];
+        }
+
+        $validation = service('validation', null, false);
+
+        return $validation->setRules($rules)->run(['kp_tr' => $values]) ? [] : $validation->getErrors();
+    }
+
+    /**
+     * Desa les traduccions d'un registre: una fila per idioma omplert; els
+     * idiomes opcionals que s'han deixat buits s'esborren.
+     *
+     * @param array<string, array<string, string>> $values
+     * @param list<string>                         $fields
+     */
+    protected function syncTranslations(string $id, array $values, array $fields): void
+    {
+        $tr    = $this->translations;
+        $table = $this->db->table($tr['table']);
+        $meta  = $this->translationMeta();
+
+        foreach (array_keys($tr['locales']) as $locale) {
+            $row    = $values[$locale] ?? [];
+            $filled = implode('', $row) !== '';
+            $where  = [$tr['fk'] => $id, $tr['locale'] => $locale];
+            $exists = $this->db->table($tr['table'])->where($where)->countAllResults() > 0;
+
+            if (! $filled && ! in_array($locale, $tr['required'], true)) {
+                if ($exists) {
+                    $table->where($where)->delete();
+                }
+
+                continue;
+            }
+
+            $data = [];
+
+            foreach ($fields as $name) {
+                $value       = $row[$name] ?? '';
+                $data[$name] = ($value === '' && ($meta[$name]['nullable'] ?? true)) ? null : $value;
+            }
+
+            if ($exists) {
+                $table->where($where)->update($data);
+            } else {
+                $table->insert($where + $data);
+            }
+        }
+    }
+
+    /**
+     * Valor que es desa d'un camp multiselect: llista JSON o text separat per comes.
+     *
+     * @param list<string> $values
+     */
+    protected function encodeMulti(string $name, array $values): ?string
+    {
+        if ($values === []) {
+            return $this->isNullable($name) ? null : '';
+        }
+
+        return ($this->types[$name]['options']['storage'] ?? 'json') === 'csv'
+            ? implode(',', $values)
+            : json_encode(array_values($values), JSON_UNESCAPED_UNICODE);
+    }
+
+    /**
+     * Valors d'un camp multiselect desat (JSON o separat per comes).
+     *
+     * @return list<string>
+     */
+    protected function decodeMulti(mixed $value): array
+    {
+        if (is_array($value)) {
+            return array_values(array_map('strval', $value));
+        }
+
+        $value = trim((string) $value);
+
+        if ($value === '') {
+            return [];
+        }
+
+        if (str_starts_with($value, '[')) {
+            $decoded = json_decode($value, true);
+
+            if (is_array($decoded)) {
+                return array_values(array_map('strval', array_filter($decoded, 'is_scalar')));
+            }
+        }
+
+        return array_values(array_filter(array_map('trim', explode(',', $value)), static fn (string $v): bool => $v !== ''));
+    }
+
+    /**
+     * Filtre d'un multiselect: registres que contenen el valor (amb LIKE, per
+     * funcionar a qualsevol motor de base de dades).
+     */
+    protected function whereMultiContains(BaseBuilder $builder, string $name, string $column, string $value): void
+    {
+        $escaped = $this->escapeLike($value);
+
+        if (($this->types[$name]['options']['storage'] ?? 'json') === 'csv') {
+            $builder->groupStart()
+                ->where($column, $value)
+                ->orLike($column, $escaped . ',', 'after', true)
+                ->orLike($column, ',' . $escaped, 'before', true)
+                ->orLike($column, ',' . $escaped . ',', 'both', true)
+                ->groupEnd();
+
+            return;
+        }
+
+        // Dins el JSON, cada valor va entre cometes: ["a","b"]
+        $builder->like($column, $this->escapeLike(json_encode($value, JSON_UNESCAPED_UNICODE)), 'both', true);
     }
 
     // ------------------------------------------------------------------
@@ -2838,6 +3687,10 @@ class Crud
 
         if (isset($this->relationsNN[$name])) {
             return 'relation_nn';
+        }
+
+        if ($this->isTranslated($name)) {
+            return 'translation';
         }
 
         $meta = $this->meta[$name] ?? null;
@@ -2993,11 +3846,11 @@ class Crud
      */
     protected function columnList(): array
     {
-        return $this->columns ?? array_values(array_filter(
+        return $this->columns ?? array_values(array_merge(array_filter(
             array_keys($this->meta),
             // Amb maskIds() l'id real no es mostra per defecte (es veuria al costat del codi de la URL)
             fn (string $name): bool => ! $this->isDeletedField($name) && ! $this->isSensitive($name) && ! ($this->maskIds && $name === $this->primaryKey),
-        ));
+        ), $this->translations['fields'] ?? []));
     }
 
     /**
@@ -3012,7 +3865,7 @@ class Crud
             fn (string $name): bool => ! in_array($name, $exclude, true) && (! $this->isSensitive($name) || $this->typeOf($name) === 'password'),
         );
 
-        return array_values(array_merge($fields, array_keys($this->relationsNN)));
+        return array_values(array_merge($fields, $this->translations['fields'] ?? [], array_keys($this->relationsNN)));
     }
 
     /**
@@ -3046,7 +3899,7 @@ class Crud
             fn (string $name): bool => ! $this->isDeletedField($name) && ! $this->isSensitive($name) && ! ($this->maskIds && $name === $this->primaryKey),
         );
 
-        return array_values(array_merge($fields, array_keys($this->relationsNN)));
+        return array_values(array_merge($fields, $this->translations['fields'] ?? [], array_keys($this->relationsNN)));
     }
 
     /**
@@ -3057,9 +3910,9 @@ class Crud
         return $this->searchFields ?? array_values(array_filter(
             $this->columnList(),
             // Una columna amb callbackColumn pot amagar el valor real (p. ex. ****): no es cerca si no es demana
-            fn (string $name): bool => (isset($this->meta[$name]) || isset($this->relations[$name]))
+            fn (string $name): bool => (isset($this->meta[$name]) || isset($this->relations[$name]) || $this->isTranslated($name))
                 && ! isset($this->columnCallbacks[$name]) && ! $this->isSensitive($name)
-                && ! in_array($this->typeOf($name), ['boolean', 'upload', 'image', 'password', 'date', 'datetime', 'time', 'relation_nn'], true),
+                && ! in_array($this->typeOf($name), ['boolean', 'upload', 'image', 'password', 'date', 'datetime', 'time', 'relation_nn', 'multiselect'], true),
         ));
     }
 
@@ -3081,7 +3934,7 @@ class Crud
     {
         return array_values(array_filter(
             $this->columnList(),
-            fn (string $name): bool => (isset($this->meta[$name]) || isset($this->relations[$name]))
+            fn (string $name): bool => (isset($this->meta[$name]) || isset($this->relations[$name]) || $this->isTranslated($name))
                 && ! in_array($name, $this->unsortable, true),
         ));
     }
@@ -3143,6 +3996,11 @@ class Crud
             return $context === 'export' ? trim(html_entity_decode(strip_tags($html), ENT_QUOTES | ENT_HTML5, 'UTF-8')) : $html;
         }
 
+        // A la fitxa, un camp traduït es mostra en tots els idiomes
+        if ($context === 'show' && $this->isTranslated($name) && isset($row['__tr'])) {
+            return $this->translationsHtml($name, $row['__tr']);
+        }
+
         $text = $this->displayText($name, $row);
 
         if ($context === 'export' || $text === '') {
@@ -3176,12 +4034,12 @@ class Crud
                 return '<a href="mailto:' . esc($text, 'attr') . '">' . esc($text) . '</a>';
 
             case 'color':
-                // El valor va dins d'un style: només s'hi accepta un color hexadecimal
+                // El JavaScript del CRUD pinta el color (sense style="", per a la CSP): només hexadecimals
                 if (! preg_match('/^#[0-9a-f]{3,8}$/i', $text)) {
                     return esc($text);
                 }
 
-                return '<span class="kp-swatch" style="background:' . esc($text, 'attr') . '"></span> ' . esc($text);
+                return '<span class="kp-swatch" data-kp-color="' . esc($text, 'attr') . '"></span> ' . esc($text);
 
             case 'textarea':
                 return $context === 'show' ? nl2br(esc($text)) : esc($this->truncate($text, $context));
@@ -3219,6 +4077,14 @@ class Crud
 
             case 'relation_nn':
                 return implode(', ', $row['__nn'][$name] ?? []);
+
+            case 'translation':
+                return (string) ($row['kt__' . $name] ?? ($row['__tr'][$this->listLocale()][$name] ?? ''));
+
+            case 'multiselect':
+                $options = $this->optionsFor($name);
+
+                return implode(', ', array_map(static fn (string $v): string => $options[$v] ?? $v, $this->decodeMulti($value)));
 
             case 'boolean':
                 return $value === null || $value === '' ? '' : lang($value ? 'Kpcrudy.yes' : 'Kpcrudy.no');
@@ -3332,6 +4198,10 @@ class Crud
             }
         }
 
+        if ($this->translations !== null) {
+            $values['__tr'] = $this->loadTranslations([$id])[$id] ?? [];
+        }
+
         return $values;
     }
 
@@ -3349,9 +4219,20 @@ class Crud
         $display = null;
         $scope   = $this->scopeValues();
 
+        $translated = array_values(array_filter($fields, $this->isTranslated(...)));
+
         foreach ($fields as $name) {
             $type    = $this->typeOf($name);
             $options = $this->types[$name]['options'] ?? [];
+
+            // Tots els camps traduïts van junts (pestanyes per idioma), al lloc del primer
+            if ($type === 'translation') {
+                if ($name === $translated[0]) {
+                    $items[] = $this->translationsField($translated, $values['__tr'] ?? [], $errors, $mode);
+                }
+
+                continue;
+            }
 
             if (($type === 'hidden' && array_key_exists('value', $options)) || ($type === 'virtual' && ! isset($this->fieldCallbacks[$name]))
                 || array_key_exists($name, $scope)) {
@@ -3404,6 +4285,10 @@ class Crud
 
     protected function formValue(string $type, mixed $value): mixed
     {
+        if ($type === 'multiselect') {
+            return is_array($value) ? array_map('strval', $value) : $this->decodeMulti($value);
+        }
+
         if ($value === null || is_array($value)) {
             return $value;
         }
@@ -3472,7 +4357,7 @@ class Crud
                 $actions[] = $this->builtinAction('purge', $this->url('purge', $id), 'bi bi-x-octagon', 'btn-outline-danger', 'post', lang('Kpcrudy.confirmPurge'));
             }
 
-            return $actions;
+            return [...$actions, ...$this->customActions($row, true)];
         }
 
         if ($context === 'list' && $this->can('show', $row)) {
@@ -3483,14 +4368,7 @@ class Crud
             $actions[] = $this->builtinAction('edit', $this->url('edit', $id), 'bi bi-pencil', 'btn-outline-primary');
         }
 
-        foreach ($this->actions as $action) {
-            if ($action['visible'] instanceof Closure && ! ($action['visible'])($row)) {
-                continue;
-            }
-
-            $action['url'] = $this->actionUrl($action['url'], $row);
-            $actions[]     = $action;
-        }
+        $actions = [...$actions, ...$this->customActions($row, false)];
 
         if ($this->can('delete', $row)) {
             $actions[] = $this->builtinAction(
@@ -3501,6 +4379,37 @@ class Crud
                 'post',
                 lang($this->softDeletes ? 'Kpcrudy.confirmTrash' : 'Kpcrudy.confirmDelete'),
             );
+        }
+
+        return $actions;
+    }
+
+    /**
+     * Accions de addAction() i addOperation() visibles en un registre.
+     *
+     * @param array<string, mixed> $row
+     *
+     * @return list<array<string, mixed>>
+     */
+    protected function customActions(array $row, bool $trash): array
+    {
+        $actions = [];
+
+        foreach ($this->actions as $action) {
+            if (($action['trash'] ?? false) !== $trash) {
+                continue;
+            }
+
+            if ($action['visible'] instanceof Closure && ! ($action['visible'])($row)) {
+                continue;
+            }
+
+            if ($action['permission'] !== null && ! $this->can($action['permission'], $row)) {
+                continue;
+            }
+
+            $action['url'] = $this->actionUrl($action['url'], $row);
+            $actions[]     = $action;
         }
 
         return $actions;
@@ -3589,6 +4498,10 @@ class Crud
                     continue;
                 }
 
+                if ($action['permission'] !== null && ! $this->can($action['permission'])) {
+                    continue;
+                }
+
                 $action['url'] = $this->actionUrl($action['url'], [$this->primaryKey => '']);
                 $actions[]     = $action;
             }
@@ -3654,7 +4567,7 @@ class Crud
         }
 
         foreach ($this->bulkActions as $key => $action) {
-            if ($action['trash'] === $trash) {
+            if ($action['trash'] === $trash && ($action['permission'] === null || $this->can($action['permission']))) {
                 $list[$key] = ['label' => $action['label'], 'confirm' => $action['confirm'], 'url' => null];
             }
         }
@@ -3863,9 +4776,26 @@ class Crud
             throw PageNotFoundException::forPageNotFound($text);
         }
 
-        session()->setFlashdata($this->stateKey() . '_flash', ['type' => $type, 'text' => $text]);
+        $this->flash($type, $text);
 
         return redirect()->to($this->backUrl());
+    }
+
+    /**
+     * Missatge per a la pàgina següent: al bloc d'avisos del CRUD o, si el tipus
+     * és a Config\Kpcrudy::$flashKeys, a la clau de sessió del projecte.
+     */
+    protected function flash(string $type, string $text): void
+    {
+        $key = $this->config->flashKeys[$type] ?? null;
+
+        if (is_string($key) && $key !== '') {
+            session()->setFlashdata($key, $text);
+
+            return;
+        }
+
+        session()->setFlashdata($this->stateKey() . '_flash', ['type' => $type, 'text' => $text]);
     }
 
     // ------------------------------------------------------------------
@@ -3884,9 +4814,53 @@ class Crud
             }
         }
 
-        $rule = $this->permissions[$operation] ?? true;
+        // El resolutor de permisos té l'última paraula si denega
+        $resolved = $this->resolvePermission($operation, $row);
 
-        return $rule instanceof Closure ? (bool) $rule($row, $operation) : $rule;
+        if ($resolved === false) {
+            return false;
+        }
+
+        $rule = $this->permissions[$operation] ?? null;
+
+        if ($rule !== null) {
+            return $rule instanceof Closure ? (bool) $rule($row, $operation) : $rule;
+        }
+
+        return $resolved ?? ! $this->config->denyByDefault;
+    }
+
+    /**
+     * Opinió del resolutor de permisos: true, false o null (no n'hi ha o no opina).
+     *
+     * @param array<string, mixed>|null $row
+     */
+    protected function resolvePermission(string $operation, ?array $row): ?bool
+    {
+        if (! $this->resolverResolved) {
+            $this->resolverResolved = true;
+            $class                  = $this->config->permissionResolver;
+
+            if ($class !== null && $class !== '') {
+                $resolver = new $class();
+
+                if (! $resolver instanceof PermissionResolver) {
+                    throw new RuntimeException(lang('Kpcrudy.exceptions.invalidResolver', [$class]));
+                }
+
+                $this->resolver = $resolver;
+            }
+        }
+
+        if ($this->resolver === null) {
+            return null;
+        }
+
+        $result = $this->resolver instanceof PermissionResolver
+            ? $this->resolver->allows($this->getResource(), $operation, $row, $this)
+            : ($this->resolver)($this->getResource(), $operation, $row, $this);
+
+        return $result === null ? null : (bool) $result;
     }
 
     /**
@@ -4006,7 +4980,7 @@ class Crud
 
         while (! isset($seen[$name])) {
             if (! isset($themes[$name])) {
-                throw new RuntimeException("Kpcrudy: el tema '{$name}' no existeix.");
+                throw new RuntimeException(lang('Kpcrudy.exceptions.themeNotFound', [$name]));
             }
 
             $seen[$name] = true;
@@ -4025,22 +4999,42 @@ class Crud
      */
     protected function output(string $view, array $data, string $title): string
     {
-        $renderer = $this->renderer();
-        $html     = $renderer->render($view, $data + [
+        $this->pageTitle = $title;
+
+        $html = $this->renderer()->render($view, $data + [
             'title'         => $title,
+            'showTitle'     => $this->showTitle,
             'subject'       => $this->subject,
             'subjectPlural' => $this->subjectPlural,
             'flash'         => session()->getFlashdata($this->stateKey() . '_flash'),
         ]);
 
+        return $this->wrap($html, $title);
+    }
+
+    /**
+     * Embolcalla el fragment amb el layout configurat.
+     */
+    protected function wrap(string $html, string $title): string
+    {
         if ($this->layout === false) {
             return $html;
         }
 
         if ($this->layout === 'default') {
-            return $renderer->render('layout', ['title' => $title, 'content' => $html, 'config' => $this->config]);
+            return $this->renderer()->render('layout', ['title' => $title, 'content' => $html, 'config' => $this->config]);
         }
 
-        return view($this->layout, ['kpcrudy' => $html, 'title' => $title]);
+        $data = ['kpcrudy' => $html] + $this->layoutData + ['title' => $title];
+
+        // Layout amb seccions: una vista intermèdia l'estén i posa el CRUD a la secció
+        if ($this->layoutSection !== null && $this->layoutSection !== '') {
+            return view('Kpcrudy\Views\section', $data + [
+                'kpcrudyLayout'  => $this->layout,
+                'kpcrudySection' => $this->layoutSection,
+            ]);
+        }
+
+        return view($this->layout, $data);
     }
 }

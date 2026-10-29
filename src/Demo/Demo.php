@@ -10,6 +10,7 @@ use Kpcrudy\Demo\Config\CrudConfig;
 use Kpcrudy\Demo\Filters\AdminFilter;
 use Kpcrudy\Demo\Filters\AuthFilter;
 use Kpcrudy\Demo\Filters\CsrfFilter;
+use Kpcrudy\Demo\Filters\StaffFilter;
 use RuntimeException;
 
 /**
@@ -26,7 +27,7 @@ final class Demo
     /**
      * Demo tables, in creation order.
      */
-    public const TABLES = ['kpdemo_categories', 'kpdemo_users', 'kpdemo_user_interests', 'kpdemo_events', 'kpdemo_attendances'];
+    public const TABLES = ['kpdemo_categories', 'kpdemo_users', 'kpdemo_user_interests', 'kpdemo_events', 'kpdemo_attendances', 'kpdemo_category_translations'];
 
     public static function url(string $path = ''): string
     {
@@ -202,29 +203,29 @@ final class Demo
                 $routes->post('logout', 'Auth::logout');
 
                 // No login: the shared agenda only opens with a signed link (see Shared)
-                Crud::routes($routes, 'shared/agenda', 'Shared::agenda');
+                Crud::routes($routes, 'shared/agenda', 'Shared::agenda', ['as' => 'kpdemo-shared']);
             });
 
             // Any logged-in demo user
             $routes->group('', ['filter' => AuthFilter::class], static function (RouteCollection $routes): void {
                 $routes->get('/', 'Home::index');
 
-                Crud::routes($routes, 'agenda', 'Agenda::index');
-                Crud::routes($routes, 'my/attendances', 'MyAttendances::index');
-                Crud::routes($routes, 'profile', 'Profile::index');
+                // The "join" and "cancel" operations use these same routes (addOperation())
+                Crud::routes($routes, 'agenda', 'Agenda::index', ['as' => 'kpdemo-agenda']);
+                Crud::routes($routes, 'my/attendances', 'MyAttendances::index', ['as' => 'kpdemo-my']);
+                Crud::routes($routes, 'profile', 'Profile::index', ['as' => 'kpdemo-profile']);
+            });
 
-                $routes->post('agenda-join/(:segment)', 'Agenda::join/$1');
-                $routes->post('my/cancel/(:segment)', 'MyAttendances::cancel/$1');
+            // Administrators and editors: what each one can do is decided by Libraries\DemoPermissions
+            $routes->group('', ['filter' => StaffFilter::class], static function (RouteCollection $routes): void {
+                Crud::routes($routes, 'admin/categories', 'Admin\Categories::index', ['as' => 'kpdemo-categories']);
+                Crud::routes($routes, 'admin/events', 'Admin\Events::index', ['as' => 'kpdemo-events']);
             });
 
             // Demo administrators only
             $routes->group('', ['filter' => AdminFilter::class], static function (RouteCollection $routes): void {
-                Crud::routes($routes, 'admin/users', 'Admin\Users::index');
-                Crud::routes($routes, 'admin/categories', 'Admin\Categories::index');
-                Crud::routes($routes, 'admin/events', 'Admin\Events::index');
-                Crud::routes($routes, 'admin/attendances', 'Admin\Attendances::index');
-
-                $routes->post('admin/events-duplicate/(:segment)', 'Admin\Events::duplicate/$1');
+                Crud::routes($routes, 'admin/users', 'Admin\Users::index', ['as' => 'kpdemo-users']);
+                Crud::routes($routes, 'admin/attendances', 'Admin\Attendances::index', ['as' => 'kpdemo-attendances']);
 
                 if (self::canResetFromWeb()) {
                     $routes->post('admin/reset', 'Home::reset');

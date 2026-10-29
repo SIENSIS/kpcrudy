@@ -125,4 +125,33 @@ return [
     'importInvalidValue'  => 'Ungültiger Wert für {0}: „{1}“.',
     'importShortRow'      => 'Die Zeile hat weniger Spalten als die Kopfzeile.',
     'importAmbiguous'     => 'Der Wert „{1}“ von {0} passt zu mehreren Datensätzen.',
+
+    'operationDone'       => 'Vorgang abgeschlossen.',
+    'translations'        => 'Übersetzungen',
+
+    // Exceptions (programming errors)
+    'exceptions' => [
+        'modelNotFound'       => 'Kpcrudy: Model "{0}" nicht gefunden.',
+        'missingSource'       => 'Kpcrudy: Rufen Sie setTable() oder setModel() vor render() auf.',
+        'tableNotFound'       => 'Kpcrudy: Die Tabelle "{0}" existiert nicht.',
+        'missingDeletedField' => 'Kpcrudy: Die Tabelle "{0}" hat kein Feld "{1}".',
+        'themeNotFound'       => 'Kpcrudy: Das Theme "{0}" existiert nicht.',
+        'templateNotFound'    => 'Kpcrudy: Vorlage "{0}" nicht gefunden.',
+        'noParentTemplate'    => 'Kpcrudy: Die Vorlage "{0}" hat kein übergeordnetes Theme.',
+        'invalidMasker'       => 'Kpcrudy: Die Klasse "{0}" implementiert Kpcrudy\\IdMasker nicht.',
+        'invalidResolver'     => 'Kpcrudy: Die Klasse "{0}" implementiert Kpcrudy\\PermissionResolver nicht.',
+        'maskFailed'          => 'Kpcrudy: Die Kennung konnte nicht maskiert werden.',
+        'opensslRequired'     => 'Kpcrudy: Zum Maskieren der Kennungen wird die PHP-Erweiterung openssl benötigt.',
+        'maskKeyTooShort'     => 'Kpcrudy: $maskKey muss mindestens 32 Zeichen lang sein (z. B. bin2hex(random_bytes(32))).',
+        'invalidKeyFile'      => 'Kpcrudy: Der Schlüssel "{0}" ist ungültig.',
+        'cannotCreateDir'     => 'Kpcrudy: Das Verzeichnis "{0}" kann nicht erstellt werden.',
+        'routeReplaced'       => 'Kpcrudy: Die Route {0} "{1}/(.*)" ist vor Crud::routes() definiert und ersetzt die des CRUD "{1}". Verwenden Sie ein anderes Präfix.',
+        'crudShadowed'        => 'Kpcrudy: Das CRUD "{0}" wird nie ausgeführt: Das CRUD "{1}" ist vorher definiert und fängt es ab. Definieren Sie zuerst das CRUD mit dem längeren Präfix.',
+        'routeShadowed'       => 'Kpcrudy: Die Route {0} "{1}" wird nie ausgeführt: Die Route des CRUD "{2}" ist vorher definiert und fängt sie ab. Verwenden Sie ein anderes Präfix (z. B. für öffentliche Links mit maskierter ID).',
+        'routeCaptures'       => 'Kpcrudy: Die Route {0} "{1}" fängt "{2}" ab, eine URL des CRUD "{3}". Verwenden Sie ein anderes Präfix.',
+        'invalidOperation'    => 'Kpcrudy: "{0}" ist kein gültiger Operationsname: Verwenden Sie Kleinbuchstaben, Ziffern, - und _ und nicht den Namen einer eingebauten Operation.',
+        'unknownOperation'    => 'Kpcrudy: Die Operation "{0}" existiert nicht. Gültige Operationen: {1}.',
+        'signAndSignFrom'     => 'Kpcrudy: Eine Operation kann nicht gleichzeitig eine Signatur verlangen und signierte Links verteilen.',
+        'translationsEmpty'   => 'Kpcrudy: setTranslations() benötigt mindestens ein Feld und eine Sprache.',
+    ],
 ];

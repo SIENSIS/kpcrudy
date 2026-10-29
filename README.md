@@ -15,4 +15,5 @@ Automatic CRUD generator for **CodeIgniter 4** · Generador automàtic de CRUD p
 | Recipes · Receptes | [docs/howto_EN.md](docs/howto_EN.md) | [docs/howto_CA.md](docs/howto_CA.md) |
 | Creating a theme · Crear un tema | [docs/new_theme_EN.md](docs/new_theme_EN.md) | [docs/new_theme_CA.md](docs/new_theme_CA.md) |
 | Demo application · Aplicació de demostració | [demo/README_EN.md](demo/README_EN.md) | [demo/README_CA.md](demo/README_CA.md) |
+| Changes · Canvis | [CHANGELOG.md](CHANGELOG.md) | [CHANGELOG.md](CHANGELOG.md) |
 | Screenshots · Captures | [screenshots/README_EN.md](screenshots/README_EN.md) | [screenshots/README_CA.md](screenshots/README_CA.md) |

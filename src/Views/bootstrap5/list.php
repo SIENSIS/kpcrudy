@@ -29,7 +29,7 @@ $colspan    = count($columns) + 1 + ($hasBulk ? 1 : 0);
     <?= $this->render('partials/assets') ?>
 
     <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
-        <h1 class="h3 mb-0"><?= esc($title) ?></h1>
+        <?php if ($showTitle ?? true): ?><h1 class="h3 mb-0"><?= esc($title) ?></h1><?php endif ?>
         <div class="d-flex flex-wrap gap-2">
             <?php foreach ($headerActions as $action): ?>
                 <?= $this->render('partials/button', ['action' => $action]) ?>
@@ -42,7 +42,7 @@ $colspan    = count($columns) + 1 + ($hasBulk ? 1 : 0);
     <form method="get" action="<?= esc($listUrl, 'attr') ?>" class="d-flex flex-wrap align-items-center gap-2 mb-3">
         <?= $this->hidden($searchHidden) ?>
         <?php if ($canSearch): ?>
-            <div class="input-group" style="max-width: 28rem">
+            <div class="input-group kp-search">
                 <input type="search" name="q" class="form-control" value="<?= esc($state['q'], 'attr') ?>"
                        placeholder="<?= esc(lang('Kpcrudy.searchPlaceholder'), 'attr') ?>" aria-label="<?= esc(lang('Kpcrudy.search'), 'attr') ?>">
                 <button class="btn btn-outline-secondary" type="submit" title="<?= esc(lang('Kpcrudy.search'), 'attr') ?>"><i class="bi bi-search"></i></button>
@@ -58,7 +58,7 @@ $colspan    = count($columns) + 1 + ($hasBulk ? 1 : 0);
 
         <div class="ms-auto d-flex align-items-center gap-2">
             <label class="text-body-secondary small text-nowrap" for="kp-per-page"><?= esc(lang('Kpcrudy.perPage')) ?></label>
-            <select id="kp-per-page" name="per_page" class="form-select form-select-sm w-auto" onchange="this.form.submit()">
+            <select id="kp-per-page" name="per_page" class="form-select form-select-sm w-auto" data-kp-autosubmit>
                 <?php foreach ($perPageOptions as $option): ?>
                     <option value="<?= (int) $option ?>"<?= (int) $option === $state['per_page'] ? ' selected' : '' ?>><?= (int) $option ?></option>
                 <?php endforeach ?>

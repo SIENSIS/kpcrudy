@@ -19,10 +19,14 @@ Funcionalitats:
 - Tipus de camp: text, textarea, número, decimal, email, url, data, data i hora, hora, color, booleà, enum/select, contrasenya, ocult, només lectura, **pujada de fitxers i imatges**
 - **Callbacks** de columna, de camp i d'exportació, i **hooks** abans i després de desar o esborrar
 - **Accions massives** (esborrar, restaurar, exportar i les teves pròpies)
+- **Operacions pròpies** a la mateixa ruta del CRUD (`addOperation()`), amb el mateix CSRF, ids emmascarats, permisos i signatures que les del CRUD
+- **Permisos centralitzats**: una sola classe `PermissionResolver` pot decidir totes les operacions de tots els CRUD (p. ex. a partir de CodeIgniter Shield), i l'opció `permission` a les accions
+- Camps **multiselecció** (diversos valors en una columna) i **camps traduïts** desats en una taula filla, amb una pestanya per idioma
 - **Permisos** per operació, globals o registre a registre
 - **Identificadors emmascarats** a les URL (`edit/Xk3f9...` en lloc d'`edit/5`), opcionals, per CRUD o per a tot el projecte
 - **URL signades amb caducitat** per compartir pàgines de consulta sense iniciar sessió (`requireSignature()`): el visitant hi pot cercar i navegar, però no pot canviar el camí ni allargar la caducitat
-- **Plantilles intercanviables** (tema Bootstrap 5 per defecte) i layout configurable
+- **Plantilles intercanviables** (tema Bootstrap 5 per defecte) i layout configurable, també com a secció del layout del projecte
+- Funciona amb una **Content-Security-Policy** estricta (nonces de CodeIgniter, sense gestors d'esdeveniments ni atributs `style` en línia)
 - Textos en **català, castellà, anglès, francès, portuguès i alemany**
 
 ---
@@ -44,7 +48,7 @@ La llibreria inclou una aplicació completa de gestió d'esdeveniments que fa se
 
 ## Instal·lació
 
-La llibreria no és a Packagist. Afegeix el repositori al `composer.json` del projecte:
+La llibreria encara no és a Packagist (es recomana publicar-la-hi, amb versions etiquetades: així `composer require siensis/kpcrudy` funcionaria sense l'entrada `repositories`; vegeu [CHANGELOG.md](CHANGELOG.md)). Afegeix el repositori al `composer.json` del projecte:
 
 ```json
 "repositories": [
@@ -561,6 +565,9 @@ $crud->afterInsert(fn (string $id, array $data) => log_message('info', "Client {
 $crud->afterUpdate(fn (string $id, array $data, array $old) => null);
 $crud->afterDelete(fn (string $id, array $row, bool $purge) => null);
 $crud->afterRestore(fn (string $id, array $row) => null);
+
+// Després de qualsevol escriptura (formulari, accions massives, importació): p. ex. buidar una memòria cau o desar un registre d'auditoria
+$crud->afterWrite(fn (string $operation, string $id, array $data, ?array $old) => cache()->delete('clients'));
 ```
 
 Els hooks `before*` poden retornar un array (dades noves), `null` (sense canvis), un string (missatge d'error) o `false` (cancel·lar).
@@ -581,10 +588,18 @@ $crud->addAction('Factures', 'factures/client/{kp_id}', [
     'visible' => fn (array $row) => $row['active'] == 1,
 ]);
 
-// Accions que modifiquen dades: per POST (amb el token CSRF)
-$crud->addAction('Duplica', 'admin/events-duplicate/{kp_id}', ['method' => 'post', 'confirm' => 'Segur?']);
-// Routes.php: $routes->post('admin/events-duplicate/(:segment)', 'Admin\Events::duplicate/$1');
-// duplicate(string $code): $id = Crud::idFromUrl($code, 'events') ?? throw PageNotFoundException::forPageNotFound();
+// Operacions que modifiquen dades: addOperation() les serveix des de la mateixa ruta del CRUD
+// (POST admin/events/duplicate/{id emmascarat}), amb CSRF, permisos, where() i ids emmascarats.
+// La closure retorna un missatge, una resposta, false (cancel·lat) o $crud->backToList('danger', '...')
+$crud->addOperation('duplicate', function (string $id, array $row, Crud $crud) {
+    unset($row['id']);
+    db_connect()->table('events')->insert(['title' => $row['title'] . ' (còpia)'] + $row);
+
+    return "S'ha creat una còpia.";
+}, ['label' => 'Duplica', 'icon' => 'bi bi-copy', 'confirm' => 'Segur?']);
+
+// Qualsevol acció pot dependre d'un permís (setPermission() o el resolutor de permisos)
+$crud->addAction('Assistents', 'admin/attendances?f[event_id]={id}', ['permission' => 'attendees']);
 
 // La URL també pot ser una closure
 $crud->addAction('Mapa', fn (array $row) => 'https://maps.google.com/?q=' . urlencode($row['address']));
@@ -643,6 +658,21 @@ $crud->setPermission('edit', fn (?array $row) => $row === null || $row['owner_id
 
 Els permisos es comproven també al servidor, no només a la interfície. La closure d'`edit` es torna a avaluar en desar (formulari i importació) amb el registre tal com quedaria després del canvi: si retorna `false`, no es desa. L'exportació necessita, a més d'`export`, el permís `list`.
 
+**Permisos centralitzats.** En lloc de repetir regles a cada controlador, una classe que implementi `Kpcrudy\PermissionResolver` pot decidir per a tots els CRUD (`$permissionResolver` a la configuració, o `setPermissionResolver()` en un CRUD). Cada CRUD s'identifica amb `setResource()` (per defecte, la seva taula):
+
+```php
+class ShieldPermissions implements \Kpcrudy\PermissionResolver
+{
+    public function allows(string $resource, string $operation, ?array $row, \Kpcrudy\Crud $crud): ?bool
+    {
+        // true permet, false denega (setPermission() no ho pot desfer), null: no opina
+        return auth()->user()?->can("{$resource}.{$operation}") ?? false;
+    }
+}
+```
+
+Shield només és un exemple: el resolutor pot fer servir qualsevol autenticació. Amb `$denyByDefault = true`, una operació que ningú permet queda denegada. Vegeu "Permisos" a la [referència](docs/functions_CA.md) i `Libraries/DemoPermissions.php` de la demo.
+
 ### Presentació
 
 | Mètode | Descripció |
@@ -650,7 +680,9 @@ Els permisos es comproven també al servidor, no només a la interfície. La clo
 | `setPerPage(int $n, ?array $options)` | Registres per pàgina i opcions del selector. |
 | `defaultOrder(string $field, string $dir = 'asc')` | Ordre inicial. |
 | `setTheme(string $theme)` | Tema de plantilles. |
-| `setLayout(string\|false $layout)` | `'default'`, `false` o una vista del projecte. |
+| `setLayout(string\|false $layout, ?string $section = null)` | `'default'`, `false` o una vista del projecte; amb `$section`, s'estén la vista (`$this->extend()`) i el CRUD va a aquesta secció. |
+| `setLayoutData(array $data)` | Variables addicionals per al layout del projecte. |
+| `showTitle(bool $show)` | `false` si el layout ja mostra el títol (disponible amb `getTitle()` o com a `$title`). |
 | `setBaseUrl(string $url)` | URL base del CRUD. |
 | `setBackUrl(string $url)` | On es torna després de desar, esborrar o cancel·lar (per defecte, el llistat tal com l'havies deixat). |
 
@@ -675,6 +707,11 @@ class Kpcrudy extends \Kpcrudy\Config\Kpcrudy
     public int $importMaxRows      = 1000;
     public int $exportMaxRows      = 100000;   // 0 = sense límit
     public bool $csrfProtection    = true;     // verifica el token si el filtre csrf no és actiu
+    public ?string $layoutSection  = null;     // p. ex. 'content': el CRUD va a una secció de $layout
+    public bool $showTitle         = true;
+    public array $flashKeys        = [];       // p. ex. ['success' => 'message', 'danger' => 'error']
+    public ?string $permissionResolver = null; // classe que implementa Kpcrudy\PermissionResolver
+    public bool $denyByDefault     = false;
     public bool $maskIds           = false;    // true: identificadors emmascarats a totes les URL
     public string|false $layout    = 'layouts/admin';
     public array $themes           = ['admin' => APPPATH . 'Views/kpcrudy/admin'];
@@ -713,6 +750,16 @@ La vista `app/Views/layouts/admin.php` rep `$kpcrudy` (l'HTML del CRUD) i `$titl
 ```
 
 Amb `setLayout(false)`, `render()` retorna només el fragment HTML.
+
+Si el layout del projecte fa servir seccions, indica el nom de la secció: s'estén la vista i el CRUD es mostra en aquesta secció. Amb `flashKeys`, els missatges del CRUD van a les claus de sessió que el layout ja mostra:
+
+```php
+$crud->setLayout('layouts/admin', 'content')     // <?= $this->renderSection('content') ?>
+     ->setLayoutData(['menu' => 'events'])
+     ->showTitle(false);                         // el layout mostra $title
+```
+
+**Content-Security-Policy.** Les plantilles no tenen gestors d'esdeveniments ni atributs `style` en línia, i els blocs `<script>` i `<style>` porten el nonce de CodeIgniter, de manera que el CRUD funciona amb `$CSPEnabled = true`. Permet el CDN del layout per defecte a `Config\ContentSecurityPolicy` (fonts de scripts, estils i tipus de lletra) i les imatges `data:` (vegeu `demo/app/Config/ContentSecurityPolicy.php`). Les confirmacions fan servir `window.confirm()` llevat que un listener cancel·li l'esdeveniment `kpcrudy:confirm` per mostrar el seu propi diàleg (vegeu les [receptes](docs/howto_CA.md)).
 
 **Temes.** La llibreria inclou tres temes: `bootstrap5` (per defecte), `w3css` ([W3.CSS](https://www.w3schools.com/w3css/)) i `tailwind` ([Tailwind CSS](https://tailwindcss.com/)).
 
@@ -772,6 +819,8 @@ Els textos són a `src/Language/{codi}/Kpcrudy.php` i segueixen el locale de la 
 
 Per afegir-hi un idioma nou, copia `src/Language/en/Kpcrudy.php` a la carpeta del codi corresponent i tradueix-ne els valors. Els `{0}`, `{1}`... són paràmetres i s'han de mantenir. El portuguès és el de Portugal: per al del Brasil, crea `app/Language/pt-BR/Kpcrudy.php`.
 
+Si no hi ha traducció de kpcrudy per al locale, CodeIgniter prova el locale sense regió (`pt-BR` → `pt`) i després l'anglès. Els missatges d'error de programació (taula inexistent, resolutor de permisos no vàlid...) també estan traduïts (claus `exceptions`).
+
 ## Notes de seguretat
 
 - Tot el text s'escapa a les plantilles. Els callbacks `callbackColumn` i `callbackField` retornen HTML tal qual: escapa-hi les dades.
@@ -787,3 +836,5 @@ Per afegir-hi un idioma nou, copia `src/Language/en/Kpcrudy.php` a la carpeta de
 - L'exportació CSV neutralitza els valors que comencen per `=`, `+`, `-` o `@` (també amb espais o salts de línia al davant, i les variants d'amplada completa) per evitar la injecció de fórmules. Té un límit de files (`$exportMaxRows`) i llegeix els registres per blocs.
 - El fitxer temporal de la importació és privat i s'esborra en tornar a la pàgina de pujada o al cap d'una hora.
 - Fora de `production`, els errors de base de dades es mostren al missatge; en producció només es registren al log.
+- Les plantilles funcionen amb una Content-Security-Policy estricta (nonces a `<script>` i `<style>`, sense gestors d'esdeveniments ni atributs `style` en línia), de manera que pots activar la CSP de CodeIgniter.
+- Una operació pròpia (`addOperation()`) passa per les mateixes comprovacions que les del CRUD: mètode, CSRF, id emmascarat, `where()`, permisos (el seu `permission`, per defecte la clau), `visible` i signatures.

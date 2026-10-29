@@ -19,10 +19,14 @@ Features:
 - Field types: text, textarea, number, decimal, email, url, date, date and time, time, color, boolean, enum/select, password, hidden, read-only, **file and image upload**
 - Column, field and export **callbacks**, and **hooks** before and after saving or deleting
 - **Bulk actions** (delete, restore, export and your own)
+- **Custom operations** on the CRUD's own route (`addOperation()`), with the same CSRF, masked ids, permissions and signatures as the built-in ones
+- **Central permissions**: one `PermissionResolver` class can decide every operation of every CRUD (e.g. from CodeIgniter Shield), plus a `permission` option on actions
+- **Multiselect** fields (several values in one column) and **translated fields** stored in a child table, with one tab per language
 - **Permissions** per operation, global or record by record
 - **Masked ids** in the URLs (`edit/Xk3f9...` instead of `edit/5`), optional, per CRUD or for the whole project
 - **Signed URLs with an expiry** to share read-only pages without logging in (`requireSignature()`): the visitor can search and browse, but cannot change the path or extend the expiry
-- **Swappable templates** (Bootstrap 5 theme by default) and configurable layout
+- **Swappable templates** (Bootstrap 5 theme by default) and configurable layout, also as a section of the project's layout
+- Works with a strict **Content-Security-Policy** (CodeIgniter nonces, no inline handlers or `style` attributes)
 - Texts in **Catalan, Spanish, English, French, Portuguese and German**
 
 ---
@@ -44,7 +48,7 @@ The library includes a complete event management application that uses all the f
 
 ## Installation
 
-The library is not on Packagist. Add the repository to your project's `composer.json`:
+The library is not on Packagist yet (publishing it there, with tagged versions, is recommended: then `composer require siensis/kpcrudy` would work without the `repositories` entry; see [CHANGELOG.md](CHANGELOG.md)). Add the repository to your project's `composer.json`:
 
 ```json
 "repositories": [
@@ -561,6 +565,9 @@ $crud->afterInsert(fn (string $id, array $data) => log_message('info', "Client {
 $crud->afterUpdate(fn (string $id, array $data, array $old) => null);
 $crud->afterDelete(fn (string $id, array $row, bool $purge) => null);
 $crud->afterRestore(fn (string $id, array $row) => null);
+
+// After any write (form, bulk actions, import): e.g. clear a cache or keep an audit log
+$crud->afterWrite(fn (string $operation, string $id, array $data, ?array $old) => cache()->delete('clients'));
 ```
 
 The `before*` hooks can return an array (new data), `null` (no changes), a string (error message) or `false` (cancel).
@@ -581,10 +588,18 @@ $crud->addAction('Invoices', 'invoices/customer/{kp_id}', [
     'visible' => fn (array $row) => $row['active'] == 1,
 ]);
 
-// Actions that modify data: via POST (with the CSRF token)
-$crud->addAction('Duplicate', 'admin/events-duplicate/{kp_id}', ['method' => 'post', 'confirm' => 'Are you sure?']);
-// Routes.php: $routes->post('admin/events-duplicate/(:segment)', 'Admin\Events::duplicate/$1');
-// duplicate(string $code): $id = Crud::idFromUrl($code, 'events') ?? throw PageNotFoundException::forPageNotFound();
+// Operations that modify data: addOperation() serves them from the CRUD's own route
+// (POST admin/events/duplicate/{masked id}), with CSRF, permissions, where() and masked ids.
+// The callback returns a message, a response, false (cancelled) or $crud->backToList('danger', '...')
+$crud->addOperation('duplicate', function (string $id, array $row, Crud $crud) {
+    unset($row['id']);
+    db_connect()->table('events')->insert(['title' => $row['title'] . ' (copy)'] + $row);
+
+    return 'A copy has been created.';
+}, ['icon' => 'bi bi-copy', 'confirm' => 'Are you sure?']);
+
+// Any action can depend on a permission (setPermission() or the permission resolver)
+$crud->addAction('Attendees', 'admin/attendances?f[event_id]={id}', ['permission' => 'attendees']);
 
 // The URL can also be a closure
 $crud->addAction('Map', fn (array $row) => 'https://maps.google.com/?q=' . urlencode($row['address']));
@@ -643,6 +658,21 @@ $crud->setPermission('edit', fn (?array $row) => $row === null || $row['owner_id
 
 Permissions are also checked on the server, not just in the interface. The `edit` closure is evaluated again when saving (form and import) with the record as it would be after the change: if it returns `false`, nothing is saved. Export requires the `list` permission in addition to `export`.
 
+**Central permissions.** Instead of repeating rules in every controller, a class that implements `Kpcrudy\PermissionResolver` can decide for every CRUD (`$permissionResolver` in the configuration, or `setPermissionResolver()` on one CRUD). Each CRUD names itself with `setResource()` (by default, its table):
+
+```php
+class ShieldPermissions implements \Kpcrudy\PermissionResolver
+{
+    public function allows(string $resource, string $operation, ?array $row, \Kpcrudy\Crud $crud): ?bool
+    {
+        // true allows, false denies (setPermission() cannot undo it), null: no opinion
+        return auth()->user()?->can("{$resource}.{$operation}") ?? false;
+    }
+}
+```
+
+Shield is only an example: the resolver can use any authentication. With `$denyByDefault = true`, an operation nobody allows is denied. See [Permissions](docs/functions_EN.md) in the reference and the demo's `Libraries/DemoPermissions.php`.
+
 ### Presentation
 
 | Method | Description |
@@ -650,7 +680,9 @@ Permissions are also checked on the server, not just in the interface. The `edit
 | `setPerPage(int $n, ?array $options)` | Records per page and selector options. |
 | `defaultOrder(string $field, string $dir = 'asc')` | Initial order. |
 | `setTheme(string $theme)` | Template theme. |
-| `setLayout(string\|false $layout)` | `'default'`, `false` or a project view. |
+| `setLayout(string\|false $layout, ?string $section = null)` | `'default'`, `false` or a project view; with `$section`, the view is extended (`$this->extend()`) and the CRUD goes in that section. |
+| `setLayoutData(array $data)` | Extra variables for the project layout. |
+| `showTitle(bool $show)` | `false` if the layout already shows the title (available with `getTitle()` or as `$title`). |
 | `setBaseUrl(string $url)` | Base URL of the CRUD. |
 | `setBackUrl(string $url)` | Where to go back after saving, deleting or cancelling (by default, the list as you left it). |
 
@@ -675,6 +707,11 @@ class Kpcrudy extends \Kpcrudy\Config\Kpcrudy
     public int $importMaxRows      = 1000;
     public int $exportMaxRows      = 100000;   // 0 = no limit
     public bool $csrfProtection    = true;     // verify the token if the csrf filter is not active
+    public ?string $layoutSection  = null;     // e.g. 'content': the CRUD goes in a section of $layout
+    public bool $showTitle         = true;
+    public array $flashKeys        = [];       // e.g. ['success' => 'message', 'danger' => 'error']
+    public ?string $permissionResolver = null; // class implementing Kpcrudy\PermissionResolver
+    public bool $denyByDefault     = false;
     public bool $maskIds           = false;    // true: masked ids in every URL
     public string|false $layout    = 'layouts/admin';
     public array $themes           = ['admin' => APPPATH . 'Views/kpcrudy/admin'];
@@ -713,6 +750,16 @@ The `app/Views/layouts/admin.php` view receives `$kpcrudy` (the CRUD HTML) and `
 ```
 
 With `setLayout(false)`, `render()` returns only the HTML fragment.
+
+If the project layout uses sections, pass the section name: the view is extended and the CRUD is rendered in that section. With `flashKeys`, the CRUD's messages go to the session keys the layout already shows:
+
+```php
+$crud->setLayout('layouts/admin', 'content')     // <?= $this->renderSection('content') ?>
+     ->setLayoutData(['menu' => 'events'])
+     ->showTitle(false);                         // the layout prints $title
+```
+
+**Content-Security-Policy.** The templates have no inline event handlers or `style` attributes, and their `<script>` and `<style>` blocks carry CodeIgniter's nonce, so the CRUD works with `$CSPEnabled = true`. Allow the CDN of the default layout in `Config\ContentSecurityPolicy` (script, style and font sources) and `data:` images (see `demo/app/Config/ContentSecurityPolicy.php`). Confirmations use `window.confirm()` unless a listener cancels the `kpcrudy:confirm` event to show its own dialog (see the [recipes](docs/howto_EN.md)).
 
 **Themes.** The library includes three themes: `bootstrap5` (default), `w3css` ([W3.CSS](https://www.w3schools.com/w3css/)) and `tailwind` ([Tailwind CSS](https://tailwindcss.com/)).
 
@@ -772,6 +819,8 @@ The texts are in `src/Language/{code}/Kpcrudy.php` and follow the request locale
 
 To add a new language, copy `src/Language/en/Kpcrudy.php` to the folder of the corresponding code and translate its values. `{0}`, `{1}`... are parameters and must be kept. Portuguese is European Portuguese: for Brazilian Portuguese, create `app/Language/pt-BR/Kpcrudy.php`.
 
+If there is no kpcrudy translation for the locale, CodeIgniter tries the locale without region (`pt-BR` → `pt`) and then English. The error messages for programming mistakes (unknown table, invalid permission resolver...) are also translated (`exceptions` keys).
+
 ## Security notes
 
 - All text is escaped in the templates. The `callbackColumn` and `callbackField` callbacks return HTML as is: escape the data in them.
@@ -787,3 +836,5 @@ To add a new language, copy `src/Language/en/Kpcrudy.php` to the folder of the c
 - The CSV export neutralizes values starting with `=`, `+`, `-` or `@` (also with leading spaces or line breaks, and their full-width variants) to prevent formula injection. It has a row limit (`$exportMaxRows`) and reads the records in chunks.
 - The temporary import file is private and is deleted when the user goes back to the upload page or after one hour.
 - Outside `production`, database errors are shown in the message; in production they are only logged.
+- The templates work with a strict Content-Security-Policy (nonces on `<script>` and `<style>`, no inline handlers or `style` attributes), so you can enable CodeIgniter's CSP.
+- A custom operation (`addOperation()`) goes through the same checks as the built-in ones: method, CSRF, masked id, `where()`, permissions (its `permission`, by default its key), `visible` and signatures.

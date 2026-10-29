@@ -18,8 +18,8 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title><?= esc($title) ?></title>
-    <script src="https://cdn.tailwindcss.com/3.4.16"></script>
-    <link rel="stylesheet" href="<?= esc($config->iconsCss, 'attr') ?>">
+    <script<?= $this->nonce() ?> src="https://cdn.tailwindcss.com/3.4.16"></script>
+    <link rel="stylesheet"<?= $this->nonce('style') ?> href="<?= esc($config->iconsCss, 'attr') ?>">
 </head>
 <body class="bg-slate-100 text-slate-800">
     <main class="mx-auto max-w-7xl px-4 py-8">

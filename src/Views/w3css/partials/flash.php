@@ -11,8 +11,8 @@ $colors = [
 ];
 ?>
 <?php if (! empty($flash['text'])): ?>
-    <div class="w3-panel w3-leftbar <?= $colors[$flash['type'] ?? 'info'] ?? $colors['info'] ?> w3-display-container">
-        <span onclick="this.parentElement.remove()" class="w3-button w3-display-topright" title="<?= esc(lang('Kpcrudy.close'), 'attr') ?>">&times;</span>
+    <div data-kp-alert class="w3-panel w3-leftbar <?= $colors[$flash['type'] ?? 'info'] ?? $colors['info'] ?> w3-display-container">
+        <span data-kp-dismiss class="w3-button w3-display-topright" title="<?= esc(lang('Kpcrudy.close'), 'attr') ?>">&times;</span>
         <p><?= esc($flash['text']) ?></p>
     </div>
 <?php endif ?>

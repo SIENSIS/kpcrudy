@@ -73,11 +73,16 @@ class Agenda extends BaseController
 
                 return $status === null ? '' : '<span class="badge text-bg-' . Attendances::STATUS_COLORS[$status] . '">' . esc(Attendances::STATUSES[$status]) . '</span>';
             })
-            ->addAction('Join', 'kpcrudy-demo/agenda-join/{kp_id}', [
+            // POST agenda/join/{masked id}. The operation runs on read-only CRUDs too, and only
+            // on records allowed by where(): drafts or past events cannot be joined
+            ->addOperation('join', function (string $id, array $event, Crud $crud) use ($me) {
+                return $this->join($id, $event, $me, $crud);
+            }, [
+                'label'   => 'Join',
                 'icon'    => 'bi bi-person-plus',
                 'class'   => 'btn-success',
-                'method'  => 'post',
                 'confirm' => 'Do you want to register for this event?',
+                // Hides the button and also blocks the operation
                 'visible' => static fn (array $row) => ($mine[$row['id']] ?? 'cancelled') === 'cancelled' && $freePlaces($row) !== 0,
             ])
             ->filters(['category_id', 'starts_at', 'price'])
@@ -89,35 +94,22 @@ class Agenda extends BaseController
     }
 
     /**
-     * Registers the logged-in user to an event (row action, POST).
+     * Registers the logged-in user to an event (the "join" operation).
+     * A string is the success message; backToList() returns with an error.
      */
-    public function join(string $code)
+    private function join(string $id, array $event, array $me, Crud $crud)
     {
-        $id    = Demo::unmaskId('kpdemo_events', $code) ?? 0;
-        $db    = db_connect();
-        $me    = $this->user();
-        $event = $db->table('kpdemo_events')
-            ->where('id', $id)
-            ->where('status', 'published')
-            ->where('starts_at >=', date('Y-m-d H:i:s'))
-            ->where('deleted_at', null)
-            ->get()
-            ->getRowArray();
-
-        if ($event === null) {
-            return redirect()->back()->with('error', 'This event does not accept registrations.');
-        }
-
+        $db      = db_connect();
         $current = $db->table('kpdemo_attendances')->where('event_id', $id)->where('user_id', $me['id'])->get()->getRowArray();
 
         if ($current !== null && $current['status'] !== 'cancelled') {
-            return redirect()->back()->with('error', 'You are already registered.');
+            return $crud->backToList('danger', 'You are already registered.');
         }
 
         $taken = $db->table('kpdemo_attendances')->where('event_id', $id)->whereIn('status', ['registered', 'attended'])->countAllResults();
 
         if ($event['capacity'] !== null && $taken >= (int) $event['capacity']) {
-            return redirect()->back()->with('error', 'There are no places left.');
+            return $crud->backToList('danger', 'There are no places left.');
         }
 
         $now = date('Y-m-d H:i:s');
@@ -129,6 +121,6 @@ class Agenda extends BaseController
             $db->table('kpdemo_attendances')->where('id', $current['id'])->update($row);
         }
 
-        return redirect()->back()->with('message', 'You are now registered for "' . $event['title'] . '".');
+        return 'You are now registered for "' . $event['title'] . '".';
     }
 }

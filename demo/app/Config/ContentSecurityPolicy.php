@@ -59,14 +59,14 @@ class ContentSecurityPolicy extends BaseConfig
      *
      * @var list<string>|string
      */
-    public $scriptSrc = 'self';
+    public $scriptSrc = ['self', 'https://cdn.jsdelivr.net', 'https://cdnjs.cloudflare.com'];
 
     /**
      * Specifies valid sources for JavaScript <script> elements.
      *
      * @var list<string>|string
      */
-    public array|string $scriptSrcElem = 'self';
+    public array|string $scriptSrcElem = ['self', 'https://cdn.jsdelivr.net', 'https://cdnjs.cloudflare.com'];
 
     /**
      * Specifies valid sources for JavaScript inline event
@@ -81,14 +81,14 @@ class ContentSecurityPolicy extends BaseConfig
      *
      * @var list<string>|string
      */
-    public $styleSrc = 'self';
+    public $styleSrc = ['self', 'https://cdn.jsdelivr.net', 'https://cdnjs.cloudflare.com'];
 
     /**
      * Specifies valid sources for stylesheets <link> elements.
      *
      * @var list<string>|string
      */
-    public array|string $styleSrcElem = 'self';
+    public array|string $styleSrcElem = ['self', 'https://cdn.jsdelivr.net', 'https://cdnjs.cloudflare.com'];
 
     /**
      * Specifies valid sources for stylesheets inline
@@ -103,7 +103,8 @@ class ContentSecurityPolicy extends BaseConfig
      *
      * @var list<string>|string
      */
-    public $imageSrc = 'self';
+    // data: for the SVG icons embedded in Bootstrap's CSS (selects, close buttons...)
+    public $imageSrc = ['self', 'data:'];
 
     /**
      * Restricts the URLs that can appear in a page's `<base>` element.
@@ -134,7 +135,8 @@ class ContentSecurityPolicy extends BaseConfig
      *
      * @var list<string>|string
      */
-    public $fontSrc;
+    // Bootstrap Icons font
+    public $fontSrc = ['self', 'https://cdn.jsdelivr.net'];
 
     /**
      * Lists valid endpoints for submission from `<form>` tags.

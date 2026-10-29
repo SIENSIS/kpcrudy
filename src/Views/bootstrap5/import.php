@@ -43,7 +43,7 @@ $badges = [
     <?= $this->render('partials/assets') ?>
 
     <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
-        <h1 class="h3 mb-0"><?= esc($title) ?></h1>
+        <?php if ($showTitle ?? true): ?><h1 class="h3 mb-0"><?= esc($title) ?></h1><?php endif ?>
         <a href="<?= esc($backUrl, 'attr') ?>" class="btn btn-outline-secondary"><i class="bi bi-arrow-left"></i> <?= esc(lang('Kpcrudy.backToList')) ?></a>
     </div>
 

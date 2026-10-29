@@ -38,9 +38,34 @@ class Kpcrudy extends BaseConfig
      *  - 'default': pàgina HTML completa del tema (layout.php)
      *  - false:     només el fragment HTML del CRUD
      *  - qualsevol altre valor: nom d'una vista de CodeIgniter que rebrà
-     *    les variables $kpcrudy (HTML del CRUD) i $title.
+     *    les variables $kpcrudy (HTML del CRUD) i $title, més les de
+     *    Crud::setLayoutData().
      */
     public string|false $layout = 'default';
+
+    /**
+     * Amb un layout del projecte que fa servir seccions ($this->renderSection()),
+     * nom de la secció on va el CRUD (p. ex. 'content'). Aleshores $layout és la
+     * vista que s'estén amb $this->extend(). null = el layout rep $kpcrudy.
+     */
+    public ?string $layoutSection = null;
+
+    /**
+     * Si el CRUD mostra el seu títol (<h1>). Posa-ho a false si el layout del
+     * projecte ja mostra el títol de la pàgina (el rep a $title o amb Crud::getTitle()).
+     */
+    public bool $showTitle = true;
+
+    /**
+     * Missatges del CRUD (desat, esborrat, error...) a les claus de sessió del
+     * projecte en lloc del bloc d'avisos propi: tipus => clau de flashdata.
+     * Tipus: success, danger, warning, info. Exemple, amb els noms habituals de
+     * CodeIgniter: ['success' => 'message', 'danger' => 'error', 'warning' => 'warning'].
+     * Els tipus que no hi siguin es continuen mostrant dins el CRUD.
+     *
+     * @var array<string, string>
+     */
+    public array $flashKeys = [];
 
     public int $perPage = 25;
 
@@ -78,6 +103,23 @@ class Kpcrudy extends BaseConfig
      * si el projecte protegeix les peticions d'una altra manera.
      */
     public bool $csrfProtection = true;
+
+    /**
+     * Classe que decideix els permisos de tots els CRUD (ha d'implementar
+     * Kpcrudy\PermissionResolver). Rep el recurs (setResource(), per defecte la
+     * taula), l'operació i el registre. null = cap resolutor: només compten
+     * les regles de setPermission() de cada CRUD.
+     *
+     * @var class-string<\Kpcrudy\PermissionResolver>|null
+     */
+    public ?string $permissionResolver = null;
+
+    /**
+     * Què passa amb una operació sobre la qual ni el resolutor ni setPermission()
+     * diuen res: false (per defecte) la permet; true la denega. Amb true, cada
+     * CRUD o el resolutor ha de permetre explícitament el que es pot fer.
+     */
+    public bool $denyByDefault = false;
 
     /**
      * En desenvolupament, comprova que cap ruta del projecte xoqui amb les de

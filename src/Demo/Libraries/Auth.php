@@ -58,9 +58,25 @@ class Auth
         return isset(self::user()['id']) ? (int) self::user()['id'] : null;
     }
 
+    /**
+     * Role of the logged-in user: 'admin', 'editor', 'user' or null.
+     */
+    public static function role(): ?string
+    {
+        return self::user()['role'] ?? null;
+    }
+
     public static function isAdmin(): bool
     {
-        return (self::user()['role'] ?? null) === 'admin';
+        return self::role() === 'admin';
+    }
+
+    /**
+     * Administrators and editors: both can open the events and categories pages.
+     */
+    public static function isStaff(): bool
+    {
+        return in_array(self::role(), ['admin', 'editor'], true);
     }
 
     /**
@@ -74,6 +90,7 @@ class Auth
             ->select('id, username, first_name, last_name, avatar, role')
             ->where('active', 1)
             ->where('deleted_at', null)
+            // admin, editor, user
             ->orderBy('role', 'asc')
             ->orderBy('last_name', 'asc')
             ->get()

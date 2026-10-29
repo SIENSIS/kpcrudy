@@ -10,7 +10,7 @@
  * @var \Kpcrudy\Renderer $this
  */
 ?>
-<style>
+<style<?= $this->nonce('style') ?>>
     .kpcrudy .badge, .kpcrudy .kp-badge { display: inline-block; padding: 1px 8px; border-radius: 4px; font-size: 12px; font-weight: 600; }
     .kpcrudy .text-bg-primary { background: #2196F3; color: #fff; }
     .kpcrudy .text-bg-secondary, .kpcrudy .kp-no { background: #9e9e9e; color: #fff; }
@@ -23,5 +23,15 @@
     .kpcrudy .kp-filters > summary { cursor: pointer; list-style: none; }
     .kpcrudy .kp-filters > summary::-webkit-details-marker { display: none; }
     .kpcrudy .kp-pages .w3-button { min-width: 36px; }
+    .kpcrudy .kp-m0 { margin: 0; }
+    .kpcrudy .kp-row-flush { margin: 0 -16px; }
+    .kpcrudy .kp-tag-gap { margin: 4px 4px 0 0; }
+    .kpcrudy .kp-search { display: flex; gap: 4px; }
+    .kpcrudy .kp-grow { flex: 1; }
+    .kpcrudy .kp-wauto { width: auto; }
+    .kpcrudy .kp-nodeco { text-decoration: none; }
+    .kpcrudy .kp-w25 { width: 25%; }
+    .kpcrudy .kp-pr4 { padding-right: 4px; }
+    .kpcrudy .kp-pl4 { padding-left: 4px; }
 </style>
 <?= $this->renderParent('partials/assets') ?>

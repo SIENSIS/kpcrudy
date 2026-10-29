@@ -14,8 +14,11 @@ class Events extends BaseController
 
     private const STATUS_COLORS = ['draft' => 'secondary', 'published' => 'success', 'cancelled' => 'danger'];
 
+    public const AUDIENCES = ['kids' => 'Children', 'teens' => 'Teenagers', 'adults' => 'Adults', 'seniors' => 'Seniors'];
+
     /**
-     * Event management (admins only).
+     * Event management (administrators, and editors with the limits set in
+     * Libraries\DemoPermissions).
      */
     public function index()
     {
@@ -30,11 +33,13 @@ class Events extends BaseController
 
         $crud = new Crud(new CrudConfig());
         $crud->setTable('kpdemo_events')
+            // Name of this CRUD for the central permissions (Libraries\DemoPermissions)
+            ->setResource('events')
             ->setSubject('event', 'Events')
             ->columns(['poster', 'title', 'category_id', 'starts_at', 'location', 'status', 'price', 'occupancy'])
-            ->fields(['title', 'category_id', 'summary', 'description', 'starts_at', 'ends_at', 'location', 'capacity', 'price', 'status', 'poster'])
-            ->showFields(['poster', 'title', 'category_id', 'summary', 'description', 'starts_at', 'ends_at', 'location', 'capacity', 'price', 'status', 'occupancy', 'attendees', 'created_by', 'created_at', 'updated_at'])
-            ->exportColumns(['id', 'title', 'category_id', 'starts_at', 'ends_at', 'location', 'capacity', 'price', 'status', 'attendees'])
+            ->fields(['title', 'category_id', 'summary', 'description', 'starts_at', 'ends_at', 'location', 'capacity', 'price', 'audience', 'status', 'poster'])
+            ->showFields(['poster', 'title', 'category_id', 'summary', 'description', 'starts_at', 'ends_at', 'location', 'capacity', 'price', 'audience', 'status', 'occupancy', 'attendees', 'created_by', 'created_at', 'updated_at'])
+            ->exportColumns(['id', 'title', 'category_id', 'starts_at', 'ends_at', 'location', 'capacity', 'price', 'audience', 'status', 'attendees'])
             ->displayAs([
                 'poster'      => 'Poster',
                 'title'       => 'Title',
@@ -46,6 +51,7 @@ class Events extends BaseController
                 'location'    => 'Location',
                 'capacity'    => 'Capacity',
                 'price'       => 'Price',
+                'audience'    => 'Audience',
                 'status'      => 'Status',
                 'occupancy'   => 'Occupancy',
                 'attendees'   => 'Attendees',
@@ -63,6 +69,8 @@ class Events extends BaseController
                 'subdir' => static fn (array $data) => date('Y/m', strtotime($data['starts_at'] ?? 'now')),
             ])
             ->fieldType('status', 'select', ['options' => self::STATUSES])
+            // Several values in one column, stored as JSON: ["kids","adults"]
+            ->fieldType('audience', 'multiselect', ['options' => self::AUDIENCES])
             ->fieldType('description', 'textarea', ['attrs' => ['rows' => 8]])
             ->fieldType('price', 'decimal', ['attrs' => ['min' => 0]])
             ->fieldType('capacity', 'number', ['attrs' => ['min' => 1]])
@@ -86,13 +94,14 @@ class Events extends BaseController
                 $percent = min(100, (int) round($taken * 100 / $row['capacity']));
                 $color   = $percent >= 100 ? 'danger' : ($percent >= 75 ? 'warning' : 'primary');
 
+                // <progress> instead of a Bootstrap bar: no style="" attribute, so it works with a strict CSP
                 return '<div class="small text-nowrap">' . $taken . ' / ' . $row['capacity'] . '</div>'
-                    . '<div class="progress" style="height: 6px; min-width: 80px"><div class="progress-bar bg-' . $color . '" style="width: ' . $percent . '%"></div></div>';
+                    . '<progress class="kpdemo-occupancy kpdemo-' . $color . '" max="100" value="' . $percent . '">' . $percent . '%</progress>';
             })
             // CSV import (matched by id, so an exported file can be edited and imported again)
             ->enableImport()
             ->callbackImport('price', static fn (string $value) => strcasecmp($value, 'free') === 0 ? '0.00' : $value)
-            ->filters(['category_id', 'status', 'starts_at', 'price'])
+            ->filters(['category_id', 'status', 'audience', 'starts_at', 'price'])
             ->searchFields(['title', 'summary', 'location', 'category_id'])
             ->defaultOrder('starts_at', 'desc')
             ->beforeInsert(static function (array $data) use ($me, $checker) {
@@ -101,10 +110,36 @@ class Events extends BaseController
                 return $checker($data) ?? $data;
             })
             ->beforeUpdate(static fn (array $data) => $checker($data))
-            ->addAction('Attendees', 'kpcrudy-demo/admin/attendances?f[event_id]={id}', ['icon' => 'bi bi-people', 'class' => 'btn-outline-info'])
-            ->addAction('Duplicate', 'kpcrudy-demo/admin/events-duplicate/{kp_id}', [
+            // After any write (form, bulk action, import...): shown on the home page
+            ->afterWrite(static function (string $operation, string $id, array $data, ?array $old) use ($me) {
+                session()->set('kpdemo_last_change', [
+                    'text' => ucfirst($operation) . ' of the event "' . ($data['title'] ?? $old['title'] ?? '#' . $id) . '"',
+                    'user' => $me['first_name'],
+                    'at'   => date('H:i:s'),
+                ]);
+            })
+            // Hidden for editors: DemoPermissions does not give them 'attendees'
+            ->addAction('Attendees', 'kpcrudy-demo/admin/attendances?f[event_id]={id}', ['icon' => 'bi bi-people', 'class' => 'btn-outline-info', 'permission' => 'attendees'])
+            // Custom operation on the CRUD's own route (admin/events/duplicate/{masked id}):
+            // kpcrudy checks CSRF, the masked id, permissions and where() before calling it
+            ->addOperation('duplicate', function (string $id, array $event, Crud $crud) use ($me) {
+                $now = date('Y-m-d H:i:s');
+                $db  = db_connect();
+
+                unset($event['id']);
+                $db->table('kpdemo_events')->insert(array_merge($event, [
+                    'title'      => mb_substr($event['title'] . ' (copy)', 0, 150),
+                    'status'     => 'draft',
+                    'poster'     => null,
+                    'created_by' => $me['id'],
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ]));
+
+                return redirect()->to($crud->url('edit', (string) $db->insertID()))
+                    ->with('message', 'A draft copy has been created. Review it and publish it when it is ready.');
+            }, [
                 'icon'    => 'bi bi-copy',
-                'method'  => 'post',
                 'confirm' => 'Create a draft copy of this event?',
             ])
             ->addHeaderAction('Public agenda', 'kpcrudy-demo/agenda', ['icon' => 'bi bi-calendar3', 'class' => 'btn-outline-secondary'])
@@ -115,47 +150,18 @@ class Events extends BaseController
                 'target'  => '_blank',
                 'visible' => static fn (array $row) => $row['status'] === 'published' && $row['starts_at'] >= date('Y-m-d H:i:s'),
             ])
+            // 'permission': $ids only contains the records the user can publish (editors: their own events)
             ->addBulkAction('publish', 'Publish', static function (array $ids) {
                 db_connect()->table('kpdemo_events')->whereIn('id', $ids)->update(['status' => 'published']);
 
                 return count($ids) . ' events published.';
-            })
+            }, ['permission' => 'publish'])
             ->addBulkAction('cancel', 'Cancel', static function (array $ids) {
                 db_connect()->table('kpdemo_events')->whereIn('id', $ids)->update(['status' => 'cancelled']);
 
                 return count($ids) . ' events cancelled.';
-            }, ['confirm' => 'Cancel the selected events?']);
+            }, ['confirm' => 'Cancel the selected events?', 'permission' => 'cancel']);
 
         return $crud->render();
-    }
-
-    /**
-     * Custom functionality reached from a row action: not part of the CRUD.
-     */
-    public function duplicate(string $code)
-    {
-        // The action URL carries the masked id ({kp_id}), like every other demo URL
-        $id    = Demo::unmaskId('kpdemo_events', $code) ?? 0;
-        $db    = db_connect();
-        $event = $db->table('kpdemo_events')->where('id', $id)->where('deleted_at', null)->get()->getRowArray();
-
-        if ($event === null) {
-            return redirect()->to(Demo::url('admin/events'))->with('error', 'The event does not exist.');
-        }
-
-        unset($event['id']);
-        $now = date('Y-m-d H:i:s');
-
-        $db->table('kpdemo_events')->insert(array_merge($event, [
-            'title'      => mb_substr($event['title'] . ' (copy)', 0, 150),
-            'status'     => 'draft',
-            'poster'     => null,
-            'created_by' => $this->user()['id'],
-            'created_at' => $now,
-            'updated_at' => $now,
-        ]));
-
-        return redirect()->to(Demo::url('admin/events/edit/' . Demo::maskId('kpdemo_events', $db->insertID())))
-            ->with('message', 'A draft copy has been created. Review it and publish it when it is ready.');
     }
 }

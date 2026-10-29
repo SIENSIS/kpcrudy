@@ -3,6 +3,7 @@
 namespace Kpcrudy\Demo\Database\Seeds;
 
 use CodeIgniter\Database\Seeder;
+use Kpcrudy\Demo\Controllers\Admin\Events;
 
 /**
  * Fills the demo tables with deterministic sample data and generates
@@ -15,14 +16,41 @@ class DemoSeeder extends Seeder
     private const AVATAR_DIR = FCPATH . 'uploads/kpcrudy-demo/avatars';
     private const POSTER_DIR = FCPATH . 'uploads/kpcrudy-demo/posters';
 
+    /**
+     * name, colour, [locale => [title, description]] (some categories have no
+     * Spanish translation, to show an optional language left empty).
+     */
     private const CATEGORIES = [
-        ['Music', '#6f42c1', 'Concerts, open rehearsals and jam sessions.'],
-        ['Theatre', '#d63384', 'Performing arts: plays, improv and workshops.'],
-        ['Sports', '#198754', 'Sports and outdoor activities.'],
-        ['Technology', '#0d6efd', 'Talks and workshops on software and hardware.'],
-        ['Food', '#fd7e14', 'Tastings, cooking classes and community meals.'],
-        ['Training', '#20c997', 'Short courses on personal and professional skills.'],
+        ['Music', '#6f42c1', [
+            'en' => ['Music', 'Concerts, open rehearsals and jam sessions.'],
+            'ca' => ['Música', 'Concerts, assajos oberts i jam sessions.'],
+            'es' => ['Música', 'Conciertos, ensayos abiertos y jam sessions.'],
+        ]],
+        ['Theatre', '#d63384', [
+            'en' => ['Theatre', 'Performing arts: plays, improv and workshops.'],
+            'ca' => ['Teatre', 'Arts escèniques: obres, improvisació i tallers.'],
+            'es' => ['Teatro', 'Artes escénicas: obras, improvisación y talleres.'],
+        ]],
+        ['Sports', '#198754', [
+            'en' => ['Sports', 'Sports and outdoor activities.'],
+            'ca' => ['Esports', 'Esports i activitats a l\'aire lliure.'],
+        ]],
+        ['Technology', '#0d6efd', [
+            'en' => ['Technology', 'Talks and workshops on software and hardware.'],
+            'ca' => ['Tecnologia', 'Xerrades i tallers de programari i maquinari.'],
+            'es' => ['Tecnología', 'Charlas y talleres de software y hardware.'],
+        ]],
+        ['Food', '#fd7e14', [
+            'en' => ['Food', 'Tastings, cooking classes and community meals.'],
+            'ca' => ['Gastronomia', 'Tasts, classes de cuina i àpats populars.'],
+        ]],
+        ['Training', '#20c997', [
+            'en' => ['Training', 'Short courses on personal and professional skills.'],
+            'ca' => ['Formació', 'Cursos breus de competències personals i professionals.'],
+            'es' => ['Formación', 'Cursos breves de competencias personales y profesionales.'],
+        ]],
     ];
+
 
     private const EVENTS = [
         'Music'      => ['Jazz in the courtyard', 'Spring jam session', 'Sea shanty night', 'Choir open rehearsal', 'Singer-songwriter night', 'Young bands festival'],
@@ -68,16 +96,26 @@ class DemoSeeder extends Seeder
     {
         $result = [];
 
-        foreach (self::CATEGORIES as [$name, $color, $description]) {
+        foreach (self::CATEGORIES as [$name, $color, $texts]) {
             $this->db->table('kpdemo_categories')->insert([
-                'name'        => $name,
-                'color'       => $color,
-                'description' => $description,
-                'created_at'  => $now,
-                'updated_at'  => $now,
+                'name'       => $name,
+                'color'      => $color,
+                'created_at' => $now,
+                'updated_at' => $now,
             ]);
 
-            $result[$name] = ['id' => (int) $this->db->insertID(), 'color' => $color];
+            $id = (int) $this->db->insertID();
+
+            foreach ($texts as $locale => [$title, $description]) {
+                $this->db->table('kpdemo_category_translations')->insert([
+                    'category_id' => $id,
+                    'locale'      => $locale,
+                    'title'       => $title,
+                    'description' => $description,
+                ]);
+            }
+
+            $result[$name] = ['id' => $id, 'color' => $color];
         }
 
         return $result;
@@ -94,6 +132,7 @@ class DemoSeeder extends Seeder
         $people = [
             ['admin', 'Admin', 'Demo', 'admin', $adminHash],
             ['alice', 'Alice', 'Martin', 'user', $userHash],
+            ['eddie', 'Eddie', 'Editor', 'editor', $userHash],
         ];
 
         foreach (self::FIRST_NAMES as $i => $first) {
@@ -183,6 +222,7 @@ class DemoSeeder extends Seeder
                     'location'    => self::LOCATIONS[$i % count(self::LOCATIONS)],
                     'capacity'    => [15, 20, 25, 30, 40, null][$i % 6],
                     'price'       => [0, 0, 5, 10, 12.5, 0, 3][$i % 7],
+                    'audience'    => $i % 5 === 2 ? null : json_encode(array_slice(array_keys(Events::AUDIENCES), $i % 3, 1 + $i % 3)),
                     // Same layout as the CRUD's 'subdir' option: posters/{year}/{month}/file.png
                     'poster'      => $i % 6 === 5 ? null : $this->poster($title, $category, $categories[$category]['color'], $i, date('Y/m', strtotime($startsAt))),
                     'status'      => $status,

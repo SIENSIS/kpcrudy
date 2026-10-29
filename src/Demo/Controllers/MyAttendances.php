@@ -6,7 +6,6 @@ use CodeIgniter\Database\BaseBuilder;
 use Kpcrudy\Crud;
 use Kpcrudy\Demo\Config\CrudConfig;
 use Kpcrudy\Demo\Controllers\Admin\Attendances;
-use Kpcrudy\Demo\Demo;
 
 /**
  * The logged-in user's own registrations.
@@ -45,10 +44,12 @@ class MyAttendances extends BaseController
             ->unsetDelete()
             ->filters(['status'])
             ->defaultOrder('registered_at', 'desc')
-            ->addAction('Cancel', 'kpcrudy-demo/my/cancel/{kp_id}', [
+            // POST my/attendances/cancel/{masked id}: where(user_id) guarantees it is mine
+            ->addOperation('cancel', fn (string $id, array $row, Crud $crud) => $this->cancelFuture([$id]) > 0
+                ? 'Registration cancelled.'
+                : $crud->backToList('danger', 'This registration cannot be cancelled.'), [
                 'icon'    => 'bi bi-x-circle',
                 'class'   => 'btn-outline-danger',
-                'method'  => 'post',
                 'confirm' => 'Cancel this registration?',
                 'visible' => static fn (array $row) => $row['status'] === 'registered' && $isFuture($row),
             ])
@@ -60,16 +61,6 @@ class MyAttendances extends BaseController
             }, ['confirm' => 'Cancel the selected registrations?']);
 
         return $crud->render();
-    }
-
-    public function cancel(string $code)
-    {
-        $id = Demo::unmaskId('kpdemo_attendances', $code) ?? 0;
-        $owned = db_connect()->table('kpdemo_attendances')->where('id', $id)->where('user_id', $this->user()['id'])->countAllResults();
-
-        return $owned > 0 && $this->cancelFuture([$id]) > 0
-            ? redirect()->back()->with('message', 'Registration cancelled.')
-            : redirect()->back()->with('error', 'This registration cannot be cancelled.');
     }
 
     /**

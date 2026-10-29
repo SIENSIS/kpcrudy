@@ -37,6 +37,7 @@ Les rutes (`/kpcrudy-demo/...`) les registra la llibreria mateixa: CodeIgniter d
 ```bash
 php spark kpcrudy:demo status       # què hi ha instal·lat i quants registres té cada taula
 php spark kpcrudy:demo reset        # torna a les dades inicials (també des del botó "Reset data" de la pàgina d'inici, fora de producció)
+                                    # també cal després d'actualitzar kpcrudy si han canviat les taules de la demo
 php spark kpcrudy:demo uninstall    # esborra taules, imatges i marca: el projecte queda com estava
 ```
 
@@ -111,6 +112,7 @@ Obre <http://localhost:8080>: l'arrel redirigeix a `/kpcrudy-demo`. Si fas servi
 Per facilitar les proves, la pàgina d'entrada **no demana contrasenya**: mostra la llista d'usuaris i n'hi ha prou de fer clic en un per entrar amb el seu perfil.
 
 - **Administradors** (`admin`, `john.smith`): accés a totes les pàgines.
+- **Editor** (`eddie`): les pàgines d'esdeveniments i categories amb menys permisos, decidits per un resolutor de permisos central ([Libraries/DemoPermissions.php](../src/Demo/Libraries/DemoPermissions.php)), i les pàgines d'usuari.
 - **Usuaris** (per exemple `alice`): agenda, inscripcions pròpies i perfil.
 
 Els usuaris desactivats o a la paperera no surten a la llista i no poden entrar. N'hi ha dos de cada a les dades de prova.
@@ -128,8 +130,9 @@ kpdemo_categories ──< kpdemo_events ──< kpdemo_attendances >── kpdem
 | Taula | Contingut | Què permet demostrar |
 |---|---|---|
 | `kpdemo_users` | Usuari, contrasenya, nom, cognoms, correu, foto, data de naixement, presentació, rol, actiu | Paperera, imatges, contrasenyes, enum, booleà, regles úniques |
-| `kpdemo_categories` | Nom, color i descripció | Mode model, color, taula sense paperera |
-| `kpdemo_events` | Categoria, títol, descripció curta, descripció llarga, inici, final, lloc, aforament, preu, cartell, estat, creador | Relacions 1-N, data i hora, decimal, imatge, filtres per rang |
+| `kpdemo_categories` | Nom intern i color | Mode model, color, taula sense paperera |
+| `kpdemo_category_translations` | Categoria, idioma (`en`, `ca`, `es`), títol i descripció | Camps traduïts (`setTranslations`) |
+| `kpdemo_events` | Categoria, títol, descripció curta, descripció llarga, inici, final, lloc, aforament, preu, públic, cartell, estat, creador | Relacions 1-N, data i hora, decimal, multiselecció (públic, JSON), imatge, filtres per rang |
 | `kpdemo_attendances` | Usuari, esdeveniment, estat (`registered`, `attended`, `absent`, `cancelled`), data d'inscripció i notes | Taula de lligam amb dades pròpies: té CRUD propi i també serveix de relació N-N |
 | `kpdemo_user_interests` | Usuari i categoria | Relació N-N pura, editable des del formulari |
 
@@ -141,9 +144,11 @@ Les taules es creen amb les **migracions** de [src/Demo/Database/Migrations](../
 
 Totes les URL comencen per `/kpcrudy-demo/`. Els controladors són a [src/Demo/Controllers](../src/Demo/Controllers).
 
-Totes les URL de la demo fan servir **identificadors emmascarats** ([`maskIds`](../docs/functions_CA.md#identificadors-emmascarats) activat a [CrudConfig](../src/Demo/Config/CrudConfig.php)): `admin/events/edit/Xk3f9QaLm2PwE7` en lloc d'`admin/events/edit/5`. Les accions pròpies (*Duplicate*, *Join*, *Cancel*) posen el codi a la URL amb `{kp_id}` i el desfan amb `Demo::unmaskId()`.
+Totes les URL de la demo fan servir **identificadors emmascarats** ([`maskIds`](../docs/functions_CA.md#identificadors-emmascarats) activat a [CrudConfig](../src/Demo/Config/CrudConfig.php)): `admin/events/edit/Xk3f9QaLm2PwE7` en lloc d'`admin/events/edit/5`. Les operacions pròpies (*Duplicate*, *Join*, *Cancel*) es declaren amb [`addOperation()`](../docs/functions_CA.md) i s'executen a la mateixa ruta del CRUD (`admin/events/duplicate/{codi}`), de manera que kpcrudy desfà el codi i comprova el CSRF, el `where()` i els permisos abans de cridar-les: no calen rutes addicionals.
 
-### Administració (rol `admin`)
+La demo també funciona amb una **Content-Security-Policy** estricta (activada a l'[app/Config/App.php](app/Config/App.php) d'aquest projecte): cap vista fa servir gestors d'esdeveniments ni atributs `style` en línia, i els blocs `<script>`/`<style>` porten el nonce de CodeIgniter. Els missatges d'èxit i d'error dels CRUD es mostren als avisos del layout (`flashKeys` a [CrudConfig](../src/Demo/Config/CrudConfig.php)).
+
+### Administració (rol `admin`; esdeveniments i categories també `editor`)
 
 #### Usuaris — `admin/users`
 [Controllers/Admin/Users.php](../src/Demo/Controllers/Admin/Users.php)
@@ -168,6 +173,8 @@ Totes les URL de la demo fan servir **identificadors emmascarats** ([`maskIds`](
 [Controllers/Admin/Categories.php](../src/Demo/Controllers/Admin/Categories.php) · [Models/CategoryModel.php](../src/Demo/Models/CategoryModel.php)
 
 - **Mode model** (`setModel`): fa servir la validació, els missatges i els timestamps del model.
+- **Camps traduïts** (`setTranslations`): títol i descripció en anglès (obligatori), català i castellà, desats a `kpdemo_category_translations`; una pestanya per idioma al formulari i una etiqueta per idioma a la fitxa.
+- **Permisos centralitzats** (`setResource('categories')`): els editors poden consultar i editar, però no afegir ni esborrar.
 - Taula **sense `deleted_at`**: no hi ha paperera i esborrar és definitiu.
 - Camp de tipus **color**.
 - **Hook** `beforeDelete`: no es pot esborrar una categoria que té esdeveniments.
@@ -184,7 +191,12 @@ Totes les URL de la demo fan servir **identificadors emmascarats** ([`maskIds`](
 - **Columna d'ocupació** calculada amb barra de progrés.
 - `callbackColumn` per a l'estat i el preu, i `callbackExport` per al preu al CSV.
 - **Hooks**: `beforeInsert` assigna el creador i valida que el final sigui posterior a l'inici.
-- **Acció POST pròpia** amb confirmació: *Duplicate* (fora del CRUD, a `Events::duplicate`). La URL porta l'id emmascarat (`{kp_id}`), la ruta fa servir `(:segment)` i el mètode el desfà amb `Demo::unmaskId()`.
+- **Operació pròpia** amb confirmació: *Duplicate* (`addOperation('duplicate', ...)`), servida des d'`admin/events/duplicate/{codi}`; obre la còpia amb `$crud->url('edit', $id)`.
+- Camp **multiselecció** (`audience`): diversos valors desats com a JSON en una columna, amb filtre per llista.
+- **Permisos centralitzats** (`setResource('events')` i [DemoPermissions](../src/Demo/Libraries/DemoPermissions.php)): l'editor veu menys botons (sense *Attendees*, *Delete*, *Import* ni *Cancel*) i només pot editar i publicar els esdeveniments que ha creat (duplica'n un per provar-ho).
+- **Opció `permission`** a les accions i accions massives: *Publish* només rep els id que l'usuari pot publicar.
+- **Hook `afterWrite()`**: el darrer canvi (formulari, acció massiva o importació) es mostra a la pàgina d'inici.
+- Barra d'ocupació amb un element `<progress>`, sense atributs `style` (CSP).
 - **Accions massives** pròpies: publicar i cancel·lar.
 - **Botó de capçalera** cap a l'agenda pública.
 - **Enllaços signats** cap a l'[agenda compartida](#agenda-compartida--sharedagenda): el botó de capçalera *Share agenda* i l'acció per fila *Share* (visible només als esdeveniments publicats i futurs) obren, en una pestanya nova, un enllaç vàlid 7 dies que es pot enviar a qualsevol persona.
@@ -214,7 +226,7 @@ Totes les URL de la demo fan servir **identificadors emmascarats** ([`maskIds`](
 
 - **Només consulta** (`readOnly`) sobre la mateixa taula que l'administració.
 - `where()`: només esdeveniments **publicats i futurs**, també a la fitxa i a l'exportació.
-- **Acció POST** *Join*, **visible només** si queden places i no hi estàs inscrit. Com *Duplicate*, porta l'id emmascarat (`{kp_id}`).
+- **Operació pròpia** *Join* (`addOperation`), **visible només** si queden places i no hi estàs inscrit. Funciona en un CRUD de només consulta i només per als esdeveniments que permet el `where()`; els errors tornen amb `$crud->backToList('danger', ...)`.
 - **Columnes calculades** per a l'usuari connectat (places lliures, la meva inscripció). Les dades es calculen un sol cop abans del CRUD, per no fer una consulta per fila.
 
 ![Agenda](../screenshots/12-agenda.png)
@@ -223,7 +235,7 @@ Totes les URL de la demo fan servir **identificadors emmascarats** ([`maskIds`](
 [Controllers/MyAttendances.php](../src/Demo/Controllers/MyAttendances.php)
 
 - `where('user_id', …)`: l'usuari només veu i modifica les seves inscripcions.
-- **Acció per fila condicional**: anul·lar només les inscripcions actives d'esdeveniments futurs.
+- **Operació pròpia condicional** *Cancel*: només les inscripcions actives d'esdeveniments futurs.
 - **Acció massiva segura**: els identificadors que rep ja estan limitats pel `where()` del CRUD.
 
 #### El meu perfil — `profile`
@@ -268,13 +280,15 @@ Tot és a [src/Demo](../src/Demo), amb el namespace `Kpcrudy\Demo`:
 | Layout amb menú i panell de codi | [Views/layouts/main.php](../src/Demo/Views/layouts/main.php) |
 | Panell de codi (fora dels controladors, perquè només continguin el codi del CRUD) | [Config/Showcase.php](../src/Demo/Config/Showcase.php) · [Controllers/BaseController.php](../src/Demo/Controllers/BaseController.php) |
 | Autenticació senzilla per sessió | [Libraries/Auth.php](../src/Demo/Libraries/Auth.php) · [Filters/AuthFilter.php](../src/Demo/Filters/AuthFilter.php) |
+| Permisos centralitzats (admin, editor, user) | [Libraries/DemoPermissions.php](../src/Demo/Libraries/DemoPermissions.php) · [Filters/StaffFilter.php](../src/Demo/Filters/StaffFilter.php) |
+| Content-Security-Policy d'aquest projecte | [app/Config/App.php](app/Config/App.php) · [app/Config/ContentSecurityPolicy.php](app/Config/ContentSecurityPolicy.php) |
 
 Cada controlador crea el CRUD amb `new Crud(new CrudConfig())`, de manera que la demo no depèn de l'`app/Config/Kpcrudy.php` del projecte ni el modifica.
 
 ### Seguretat
 
 - Tots els formularis i accions POST (també sortir) porten el token CSRF. Els filtres de la demo hereten de `CodeIgniter\Filters\CSRF` ([CsrfFilter](../src/Demo/Filters/CsrfFilter.php)): verifiquen el token si el projecte no té el filtre `csrf` global, i no fan res si ja el té (en aquest projecte ho està).
-- Les pàgines públiques (entrar, sortir i l'agenda compartida) fan servir `CsrfFilter`, les d'usuari `AuthFilter` i les d'administració `AdminFilter`, un sol filtre per ruta: com que es fa servir la classe, no cal registrar cap àlies a `app/Config/Filters.php`.
+- Les pàgines públiques (entrar, sortir i l'agenda compartida) fan servir `CsrfFilter`, les d'usuari `AuthFilter`, esdeveniments i categories `StaffFilter` (administradors i editors; què pot fer cadascú a dins ho decideix `DemoPermissions`) i la resta d'administració `AdminFilter`, un sol filtre per ruta: com que es fa servir la classe, no cal registrar cap àlies a `app/Config/Filters.php`.
 - L'usuari es torna a carregar a cada petició (també en mode worker): si un administrador el desactiva o l'envia a la paperera, perd l'accés a l'instant. En sortir, la sessió canvia d'identificador.
 - La sessió de la demo fa servir la seva clau (`kpdemo_user_id`) i no interfereix amb el login del projecte.
 - **Identificadors emmascarats** a totes les URL (`CrudConfig::$maskIds = true`): un codi fals, modificat o un id numèric a la URL es tracten com un registre inexistent. La demo té la seva pròpia clau d'emmascarament, desada al fitxer de marca `writable/kpcrudy-demo.json`, de manera que no fa servir ni crea la del projecte i desinstal·lar-la no deixa res. Per saber a quin registre correspon un codi, o quin codi té un registre, passa la configuració de la demo a les comandes; el context és el nom de la taula:

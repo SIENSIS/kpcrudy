@@ -17,7 +17,7 @@ $button = 'inline-flex items-center gap-1 rounded-md border px-3 py-1.5 text-sm 
     <?= $this->render('partials/assets') ?>
 
     <div class="mb-4 flex flex-wrap items-center justify-between gap-2">
-        <h1 class="text-2xl font-semibold"><?= esc($title) ?></h1>
+        <?php if ($showTitle ?? true): ?><h1 class="text-2xl font-semibold"><?= esc($title) ?></h1><?php endif ?>
         <a href="<?= esc($backUrl, 'attr') ?>" class="<?= $button ?> border-slate-300 bg-white text-slate-700 hover:bg-slate-50"><i class="bi bi-arrow-left"></i> <?= esc(lang('Kpcrudy.backToList')) ?></a>
     </div>
 

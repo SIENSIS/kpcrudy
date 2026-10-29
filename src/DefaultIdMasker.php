@@ -39,7 +39,7 @@ class DefaultIdMasker implements IdMasker
         $cipher = openssl_encrypt($id, self::CIPHER, $encKey, OPENSSL_RAW_DATA, $tag . "\0\0\0\0");
 
         if ($cipher === false) {
-            throw new RuntimeException('Kpcrudy: no s\'ha pogut emmascarar l\'identificador.');
+            throw new RuntimeException(lang('Kpcrudy.exceptions.maskFailed'));
         }
 
         return rtrim(strtr(base64_encode($tag . $cipher), '+/', '-_'), '=');
@@ -83,7 +83,7 @@ class DefaultIdMasker implements IdMasker
     {
         if ($this->encKey === null) {
             if (! extension_loaded('openssl')) {
-                throw new RuntimeException('Kpcrudy: per emmascarar els identificadors cal l\'extensió openssl de PHP.');
+                throw new RuntimeException(lang('Kpcrudy.exceptions.opensslRequired'));
             }
 
             $this->encKey = Secret::key($this->config, 'mask-encrypt');

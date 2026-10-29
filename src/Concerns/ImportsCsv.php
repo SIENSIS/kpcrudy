@@ -522,6 +522,13 @@ trait ImportsCsv
                 continue;
             }
 
+            if ($type === 'multiselect') {
+                $input[$name]       = $value;
+                $row['data'][$name] = $this->encodeMulti($name, $value);
+
+                continue;
+            }
+
             if ($type === 'password') {
                 $input[$name] = (string) $value;
 
@@ -629,7 +636,7 @@ trait ImportsCsv
             $converted = ($this->importCallbacks[$name])($value, $row);
 
             // El valor que retorna el callback també ha de ser una de les opcions permeses
-            if ($type === 'relation_nn') {
+            if (in_array($type, ['relation_nn', 'multiselect'], true)) {
                 $ids = array_map('strval', (array) $converted);
 
                 return array_diff($ids, array_map('strval', array_keys($this->optionsFor($name)))) === []
@@ -647,7 +654,7 @@ trait ImportsCsv
 
         if ($value === '') {
             return match ($type) {
-                'relation_nn' => [[], null],
+                'relation_nn', 'multiselect' => [[], null],
                 'boolean'     => [0, null],
                 'password'    => ['', null],
                 default       => [$this->isNullable($name) ? null : '', null],
@@ -667,6 +674,7 @@ trait ImportsCsv
                 };
 
             case 'relation_nn':
+            case 'multiselect':
                 $ids = [];
 
                 foreach (preg_split('/\s*[,|]\s*/', $value) as $item) {
@@ -928,7 +936,8 @@ trait ImportsCsv
             $type    = $this->typeOf($name);
             $options = $this->types[$name]['options'] ?? [];
 
-            return ! in_array($type, ['upload', 'image', 'virtual', 'readonly'], true)
+            // Les traduccions (setTranslations()) no s'importen: van en una altra taula
+            return ! in_array($type, ['upload', 'image', 'virtual', 'readonly', 'translation'], true)
                 && ! ($type === 'hidden' && array_key_exists('value', $options));
         }));
     }
@@ -943,7 +952,7 @@ trait ImportsCsv
         $dir = WRITEPATH . 'uploads/kpcrudy-import';
 
         if (! is_dir($dir) && ! @mkdir($dir, 0700, true) && ! is_dir($dir)) {
-            throw new RuntimeException("Kpcrudy: no es pot crear el directori '{$dir}'.");
+            throw new RuntimeException(lang('Kpcrudy.exceptions.cannotCreateDir', [$dir]));
         }
 
         return $dir;

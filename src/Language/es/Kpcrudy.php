@@ -125,4 +125,33 @@ return [
     'importInvalidValue'  => 'Valor no válido para {0}: «{1}».',
     'importShortRow'      => 'La fila tiene menos columnas que la cabecera.',
     'importAmbiguous'     => 'El valor "{1}" de {0} coincide con más de un registro.',
+
+    'operationDone'       => 'Operación realizada.',
+    'translations'        => 'Traducciones',
+
+    // Exceptions (programming errors)
+    'exceptions' => [
+        'modelNotFound'       => 'Kpcrudy: no se ha encontrado el modelo "{0}".',
+        'missingSource'       => 'Kpcrudy: hay que llamar a setTable() o setModel() antes de render().',
+        'tableNotFound'       => 'Kpcrudy: la tabla "{0}" no existe.',
+        'missingDeletedField' => 'Kpcrudy: la tabla "{0}" no tiene el campo "{1}".',
+        'themeNotFound'       => 'Kpcrudy: el tema "{0}" no existe.',
+        'templateNotFound'    => 'Kpcrudy: no se ha encontrado la plantilla "{0}".',
+        'noParentTemplate'    => 'Kpcrudy: la plantilla "{0}" no tiene ningún tema padre.',
+        'invalidMasker'       => 'Kpcrudy: la clase "{0}" no implementa Kpcrudy\\IdMasker.',
+        'invalidResolver'     => 'Kpcrudy: la clase "{0}" no implementa Kpcrudy\\PermissionResolver.',
+        'maskFailed'          => 'Kpcrudy: no se ha podido enmascarar el identificador.',
+        'opensslRequired'     => 'Kpcrudy: para enmascarar los identificadores se necesita la extensión openssl de PHP.',
+        'maskKeyTooShort'     => 'Kpcrudy: $maskKey debe tener como mínimo 32 caracteres (p. ej. bin2hex(random_bytes(32))).',
+        'invalidKeyFile'      => 'Kpcrudy: la clave "{0}" no es válida.',
+        'cannotCreateDir'     => 'Kpcrudy: no se puede crear el directorio "{0}".',
+        'routeReplaced'       => 'Kpcrudy: la ruta {0} "{1}/(.*)" se ha definido antes de Crud::routes() y sustituye la del CRUD "{1}". Úsala con otro prefijo.',
+        'crudShadowed'        => 'Kpcrudy: el CRUD "{0}" no se ejecutará nunca: el CRUD "{1}" se define antes y lo captura. Define primero el CRUD con el prefijo más largo.',
+        'routeShadowed'       => 'Kpcrudy: la ruta {0} "{1}" no se ejecutará nunca: la ruta del CRUD "{2}" se define antes y la captura. Úsala con otro prefijo (p. ej. para enlaces públicos con el id enmascarado).',
+        'routeCaptures'       => 'Kpcrudy: la ruta {0} "{1}" captura "{2}", que es una URL del CRUD "{3}". Úsala con otro prefijo.',
+        'invalidOperation'    => 'Kpcrudy: "{0}" no es un nombre de operación válido: usa minúsculas, números, - y _, y no el nombre de una operación propia del CRUD.',
+        'unknownOperation'    => 'Kpcrudy: la operación "{0}" no existe. Operaciones válidas: {1}.',
+        'signAndSignFrom'     => 'Kpcrudy: una operación no puede pedir firma y a la vez repartir enlaces firmados.',
+        'translationsEmpty'   => 'Kpcrudy: setTranslations() necesita como mínimo un campo y un idioma.',
+    ],
 ];

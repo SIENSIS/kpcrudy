@@ -9,7 +9,7 @@
     <?= $this->render('partials/assets') ?>
 
     <div class="w3-cell-row w3-margin-bottom">
-        <h2 class="w3-cell w3-cell-middle" style="margin: 0"><?= esc($title) ?></h2>
+        <?php if ($showTitle ?? true): ?><h2 class="w3-cell w3-cell-middle kp-m0"><?= esc($title) ?></h2><?php endif ?>
         <div class="w3-cell w3-cell-middle w3-right-align">
             <?php if ($backUrl !== ''): ?>
             <a href="<?= esc($backUrl, 'attr') ?>" class="w3-button w3-white w3-border w3-round"><i class="bi bi-arrow-left"></i> <?= esc(lang('Kpcrudy.backToList')) ?></a>
@@ -26,7 +26,7 @@
         <table class="w3-table w3-bordered">
             <?php foreach ($items as $item): ?>
                 <tr>
-                    <th class="w3-text-grey" style="width: 25%"><?= esc($item['label']) ?></th>
+                    <th class="w3-text-grey kp-w25"><?= esc($item['label']) ?></th>
                     <td><?= $item['html'] !== '' ? $item['html'] : '<span class="w3-text-light-grey">—</span>' ?></td>
                 </tr>
             <?php endforeach ?>

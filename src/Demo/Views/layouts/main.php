@@ -12,6 +12,8 @@ use Kpcrudy\Demo\Libraries\Auth;
 
 $user     = Auth::user();
 $isAdmin  = Auth::isAdmin();
+$isStaff  = Auth::isStaff();
+$role     = Auth::role();
 $showcase ??= null;
 $path     = substr(uri_string(), strlen(Demo::PREFIX) + 1);
 $active   = static fn (string $prefix): string => ($prefix === '' ? $path === '' : str_starts_with($path, $prefix)) ? ' active' : '';
@@ -27,11 +29,16 @@ $error    = session()->getFlashdata('error');
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
-    <style>
+    <?php // Nonces: the demo also works in a project with a strict Content-Security-Policy ?>
+    <style<?= ($nonce = csp_style_nonce()) === '' ? '' : ' ' . $nonce ?>>
         .navbar-avatar { width: 28px; height: 28px; object-fit: cover; }
         #showcase { --bs-offcanvas-width: min(760px, 95vw); }
         #showcase pre { font-size: .8rem; max-height: 70vh; }
         main { min-height: calc(100vh - 120px); }
+        .kpdemo-occupancy { display: block; width: 100%; min-width: 80px; height: 6px; }
+        .kpdemo-occupancy.kpdemo-primary { accent-color: var(--bs-primary); }
+        .kpdemo-occupancy.kpdemo-warning { accent-color: var(--bs-warning); }
+        .kpdemo-occupancy.kpdemo-danger { accent-color: var(--bs-danger); }
     </style>
 </head>
 <body class="bg-body-tertiary">
@@ -43,14 +50,18 @@ $error    = session()->getFlashdata('error');
         <div class="collapse navbar-collapse" id="nav">
             <ul class="navbar-nav me-auto">
                 <li class="nav-item"><a class="nav-link<?= $active('') ?>" href="<?= Demo::url() ?>">Home</a></li>
-                <?php if ($isAdmin): ?>
+                <?php if ($isStaff): ?>
                     <li class="nav-item dropdown">
                         <a class="nav-link dropdown-toggle<?= $active('admin') ?>" href="#" data-bs-toggle="dropdown">Administration</a>
                         <ul class="dropdown-menu">
-                            <li><a class="dropdown-item" href="<?= Demo::url('admin/users') ?>"><i class="bi bi-people"></i> Users</a></li>
+                            <?php if ($isAdmin): ?>
+                                <li><a class="dropdown-item" href="<?= Demo::url('admin/users') ?>"><i class="bi bi-people"></i> Users</a></li>
+                            <?php endif ?>
                             <li><a class="dropdown-item" href="<?= Demo::url('admin/categories') ?>"><i class="bi bi-tags"></i> Categories</a></li>
                             <li><a class="dropdown-item" href="<?= Demo::url('admin/events') ?>"><i class="bi bi-calendar-event"></i> Events</a></li>
-                            <li><a class="dropdown-item" href="<?= Demo::url('admin/attendances') ?>"><i class="bi bi-calendar-check"></i> Attendance</a></li>
+                            <?php if ($isAdmin): ?>
+                                <li><a class="dropdown-item" href="<?= Demo::url('admin/attendances') ?>"><i class="bi bi-calendar-check"></i> Attendance</a></li>
+                            <?php endif ?>
                         </ul>
                     </li>
                 <?php endif ?>
@@ -74,7 +85,7 @@ $error    = session()->getFlashdata('error');
                                 <i class="bi bi-person-circle fs-5"></i>
                             <?php endif ?>
                             <?= esc($user['first_name']) ?>
-                            <?php if ($isAdmin): ?><span class="badge text-bg-warning">admin</span><?php endif ?>
+                            <?php if ($isStaff): ?><span class="badge text-bg-<?= $isAdmin ? 'warning' : 'info' ?>"><?= esc($role) ?></span><?php endif ?>
                         </a>
                         <ul class="dropdown-menu dropdown-menu-end">
                             <li><a class="dropdown-item" href="<?= Demo::url('profile') ?>"><i class="bi bi-person"></i> My profile</a></li>
@@ -152,6 +163,21 @@ $error    = session()->getFlashdata('error');
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
-<script>hljs.highlightAll();</script>
+<script<?= ($nonce = csp_script_nonce()) === '' ? '' : ' ' . $nonce ?>>
+    hljs.highlightAll();
+
+    // Colours from the data (category badges): set from JavaScript, without style=""
+    document.querySelectorAll('[data-kpdemo-bg]').forEach(function (el) {
+        el.style.backgroundColor = el.getAttribute('data-kpdemo-bg');
+    });
+
+    // Confirmation of the demo's own buttons (the CRUDs use data-kp-confirm)
+    document.addEventListener('click', function (e) {
+        var el = e.target.closest('[data-kpdemo-confirm]');
+        if (el && !window.confirm(el.getAttribute('data-kpdemo-confirm'))) {
+            e.preventDefault();
+        }
+    });
+</script>
 </body>
 </html>

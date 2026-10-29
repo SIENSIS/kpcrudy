@@ -39,8 +39,11 @@ class Home extends BaseController
         return $this->page('Kpcrudy\Demo\Views\home\index', [
             'me'       => $me,
             'isAdmin'  => Auth::isAdmin(),
+            'role'     => Auth::role(),
             'stats'    => $stats,
             'upcoming' => $upcoming,
+            // Written by the afterWrite() hook of Admin\Events
+            'change'   => session('kpdemo_last_change'),
         ], 'Home');
     }
 

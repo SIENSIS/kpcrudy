@@ -37,6 +37,7 @@ The routes (`/kpcrudy-demo/...`) are registered by the library itself: CodeIgnit
 ```bash
 php spark kpcrudy:demo status       # what is installed and how many records each table has
 php spark kpcrudy:demo reset        # restores the initial data (also from the "Reset data" button on the home page, outside production)
+                                    # also needed after updating kpcrudy if the demo tables changed
 php spark kpcrudy:demo uninstall    # deletes tables, images and marker: the project is left as it was
 ```
 
@@ -111,6 +112,7 @@ Open <http://localhost:8080>: the root redirects to `/kpcrudy-demo`. If you use 
 To make testing easier, the login page **does not ask for a password**: it shows the list of users and you just click one to log in with their profile.
 
 - **Administrators** (`admin`, `john.smith`): access to all pages.
+- **Editor** (`eddie`): the events and categories pages with fewer permissions, decided by a central permission resolver ([Libraries/DemoPermissions.php](../src/Demo/Libraries/DemoPermissions.php)), plus the user pages.
 - **Users** (for example `alice`): agenda, their own registrations and profile.
 
 Deactivated or trashed users are not shown in the list and cannot log in. There are two of each in the sample data.
@@ -128,8 +130,9 @@ kpdemo_categories ──< kpdemo_events ──< kpdemo_attendances >── kpdem
 | Table | Contents | What it demonstrates |
 |---|---|---|
 | `kpdemo_users` | Username, password, first name, last name, email, photo, date of birth, bio, role, active | Trash, images, passwords, enum, boolean, unique rules |
-| `kpdemo_categories` | Name, color and description | Model mode, color, table without trash |
-| `kpdemo_events` | Category, title, short description, long description, start, end, venue, capacity, price, poster, status, creator | 1-N relations, date and time, decimal, image, range filters |
+| `kpdemo_categories` | Internal name and color | Model mode, color, table without trash |
+| `kpdemo_category_translations` | Category, language (`en`, `ca`, `es`), title and description | Translated fields (`setTranslations`) |
+| `kpdemo_events` | Category, title, short description, long description, start, end, venue, capacity, price, audience, poster, status, creator | 1-N relations, date and time, decimal, multiselect (audience, JSON), image, range filters |
 | `kpdemo_attendances` | User, event, status (`registered`, `attended`, `absent`, `cancelled`), registration date and notes | Join table with its own data: it has its own CRUD and also works as an N-N relation |
 | `kpdemo_user_interests` | User and category | Pure N-N relation, editable from the form |
 
@@ -141,9 +144,11 @@ The tables are created with the **migrations** in [src/Demo/Database/Migrations]
 
 All URLs start with `/kpcrudy-demo/`. The controllers are in [src/Demo/Controllers](../src/Demo/Controllers).
 
-Every demo URL uses **masked ids** ([`maskIds`](../docs/functions_EN.md#masked-ids) enabled in [CrudConfig](../src/Demo/Config/CrudConfig.php)): `admin/events/edit/Xk3f9QaLm2PwE7` instead of `admin/events/edit/5`. The custom actions (*Duplicate*, *Join*, *Cancel*) put the code in the URL with `{kp_id}` and decode it with `Demo::unmaskId()`.
+Every demo URL uses **masked ids** ([`maskIds`](../docs/functions_EN.md#masked-ids) enabled in [CrudConfig](../src/Demo/Config/CrudConfig.php)): `admin/events/edit/Xk3f9QaLm2PwE7` instead of `admin/events/edit/5`. The custom operations (*Duplicate*, *Join*, *Cancel*) are declared with [`addOperation()`](../docs/functions_EN.md) and run on the CRUD's own route (`admin/events/duplicate/{code}`), so kpcrudy decodes the code and checks CSRF, `where()` and permissions before calling them: no extra routes are needed.
 
-### Administration (`admin` role)
+The demo also runs with a strict **Content-Security-Policy** (enabled in this project's [app/Config/App.php](app/Config/App.php)): no view uses inline handlers or `style` attributes, and the `<script>`/`<style>` blocks carry CodeIgniter's nonce. Success and error messages of the CRUDs are shown in the layout's alerts (`flashKeys` in [CrudConfig](../src/Demo/Config/CrudConfig.php)).
+
+### Administration (`admin` role; events and categories also `editor`)
 
 #### Users — `admin/users`
 [Controllers/Admin/Users.php](../src/Demo/Controllers/Admin/Users.php)
@@ -168,6 +173,8 @@ Every demo URL uses **masked ids** ([`maskIds`](../docs/functions_EN.md#masked-i
 [Controllers/Admin/Categories.php](../src/Demo/Controllers/Admin/Categories.php) · [Models/CategoryModel.php](../src/Demo/Models/CategoryModel.php)
 
 - **Model mode** (`setModel`): uses the model's validation, messages and timestamps.
+- **Translated fields** (`setTranslations`): title and description in English (required), Catalan and Spanish, stored in `kpdemo_category_translations`; one tab per language in the form and a badge per language on the detail page.
+- **Central permissions** (`setResource('categories')`): editors can view and edit, but not add or delete.
 - Table **without `deleted_at`**: there is no trash and deleting is permanent.
 - **Color** field type.
 - **Hook** `beforeDelete`: a category that has events cannot be deleted.
@@ -184,7 +191,12 @@ Every demo URL uses **masked ids** ([`maskIds`](../docs/functions_EN.md#masked-i
 - Calculated **occupancy column** with a progress bar.
 - `callbackColumn` for the status and the price, and `callbackExport` for the price in the CSV.
 - **Hooks**: `beforeInsert` assigns the creator and checks that the end is after the start.
-- **Custom POST action** with confirmation: *Duplicate* (outside the CRUD, in `Events::duplicate`). The URL carries the masked id (`{kp_id}`), the route uses `(:segment)` and the method decodes it with `Demo::unmaskId()`.
+- **Custom operation** with confirmation: *Duplicate* (`addOperation('duplicate', ...)`), served from `admin/events/duplicate/{code}`; it opens the copy with `$crud->url('edit', $id)`.
+- **Multiselect** field (`audience`): several values stored as JSON in one column, with a list filter.
+- **Central permissions** (`setResource('events')` and [DemoPermissions](../src/Demo/Libraries/DemoPermissions.php)): the editor sees fewer buttons (no *Attendees*, *Delete*, *Import* or *Cancel*) and can only edit and publish the events they created (duplicate one to try it).
+- **`permission` option** on actions and bulk actions: *Publish* only receives the ids the user can publish.
+- **`afterWrite()` hook**: the last change (form, bulk action or import) is shown on the home page.
+- Occupancy bar with a `<progress>` element, without `style` attributes (CSP).
 - Custom **bulk actions**: publish and cancel.
 - **Header button** linking to the public agenda.
 - **Signed links** to the [shared agenda](#shared-agenda--sharedagenda): the *Share agenda* header button and the *Share* row action (visible only on published, upcoming events) open, in a new tab, a link valid for 7 days that can be sent to anyone.
@@ -214,7 +226,7 @@ Every demo URL uses **masked ids** ([`maskIds`](../docs/functions_EN.md#masked-i
 
 - **Read-only** (`readOnly`) on the same table as the administration.
 - `where()`: only **published and upcoming** events, also on the detail page and in the export.
-- **POST action** *Join*, **visible only** if there are places left and you are not registered. Like *Duplicate*, it carries the masked id (`{kp_id}`).
+- **Custom operation** *Join* (`addOperation`), **visible only** if there are places left and you are not registered. It works on a read-only CRUD and only for the events allowed by `where()`; errors go back with `$crud->backToList('danger', ...)`.
 - **Calculated columns** for the logged-in user (free places, my registration). The data is calculated once before the CRUD, to avoid one query per row.
 
 ![Agenda](../screenshots/12-agenda.png)
@@ -223,7 +235,7 @@ Every demo URL uses **masked ids** ([`maskIds`](../docs/functions_EN.md#masked-i
 [Controllers/MyAttendances.php](../src/Demo/Controllers/MyAttendances.php)
 
 - `where('user_id', …)`: users only see and modify their own registrations.
-- **Conditional per-row action**: cancel only active registrations for upcoming events.
+- **Conditional custom operation** *Cancel*: only active registrations for upcoming events.
 - **Safe bulk action**: the identifiers it receives are already limited by the CRUD's `where()`.
 
 #### My profile — `profile`
@@ -268,13 +280,15 @@ Everything is in [src/Demo](../src/Demo), with the `Kpcrudy\Demo` namespace:
 | Layout with menu and code panel | [Views/layouts/main.php](../src/Demo/Views/layouts/main.php) |
 | Code panel (outside the controllers, so they only contain the CRUD code) | [Config/Showcase.php](../src/Demo/Config/Showcase.php) · [Controllers/BaseController.php](../src/Demo/Controllers/BaseController.php) |
 | Simple session-based authentication | [Libraries/Auth.php](../src/Demo/Libraries/Auth.php) · [Filters/AuthFilter.php](../src/Demo/Filters/AuthFilter.php) |
+| Central permissions (admin, editor, user) | [Libraries/DemoPermissions.php](../src/Demo/Libraries/DemoPermissions.php) · [Filters/StaffFilter.php](../src/Demo/Filters/StaffFilter.php) |
+| Content-Security-Policy of this project | [app/Config/App.php](app/Config/App.php) · [app/Config/ContentSecurityPolicy.php](app/Config/ContentSecurityPolicy.php) |
 
 Each controller creates the CRUD with `new Crud(new CrudConfig())`, so the demo neither depends on nor modifies the project's `app/Config/Kpcrudy.php`.
 
 ### Security
 
 - All forms and POST actions (logout included) carry the CSRF token. The demo filters extend `CodeIgniter\Filters\CSRF` ([CsrfFilter](../src/Demo/Filters/CsrfFilter.php)): they verify the token if the project does not have the global `csrf` filter, and do nothing if it does (it is enabled in this project).
-- The public pages (login, logout and the shared agenda) use `CsrfFilter`, the user pages `AuthFilter` and the administration pages `AdminFilter`, one filter per route: since the class is used, there is no need to register any alias in `app/Config/Filters.php`.
+- The public pages (login, logout and the shared agenda) use `CsrfFilter`, the user pages `AuthFilter`, events and categories `StaffFilter` (administrators and editors; what each can do inside is decided by `DemoPermissions`) and the other administration pages `AdminFilter`, one filter per route: since the class is used, there is no need to register any alias in `app/Config/Filters.php`.
 - The user is reloaded on every request (also in worker mode): if an administrator deactivates them or moves them to the trash, they lose access instantly. On logout, the session gets a new id.
 - The demo session uses its own key (`kpdemo_user_id`) and does not interfere with the project's login.
 - **Masked ids** in every URL (`CrudConfig::$maskIds = true`): a forged or altered code, or a numeric id in the URL, is treated as a record that does not exist. The demo has its own masking key, stored in the marker file `writable/kpcrudy-demo.json`, so it neither uses nor creates the project's key and uninstalling it leaves nothing behind. To find which record a code refers to, or which code a record has, pass the demo configuration to the commands; the context is the table name:

@@ -11,8 +11,8 @@ $colors = [
 ];
 ?>
 <?php if (! empty($flash['text'])): ?>
-    <div class="mb-4 flex items-start justify-between gap-4 rounded-lg border px-4 py-3 text-sm <?= $colors[$flash['type'] ?? 'info'] ?? $colors['info'] ?>" role="alert">
+    <div data-kp-alert class="mb-4 flex items-start justify-between gap-4 rounded-lg border px-4 py-3 text-sm <?= $colors[$flash['type'] ?? 'info'] ?? $colors['info'] ?>" role="alert">
         <span><?= esc($flash['text']) ?></span>
-        <button type="button" onclick="this.parentElement.remove()" class="opacity-60 hover:opacity-100" aria-label="<?= esc(lang('Kpcrudy.close'), 'attr') ?>">&times;</button>
+        <button type="button" data-kp-dismiss class="opacity-60 hover:opacity-100" aria-label="<?= esc(lang('Kpcrudy.close'), 'attr') ?>">&times;</button>
     </div>
 <?php endif ?>

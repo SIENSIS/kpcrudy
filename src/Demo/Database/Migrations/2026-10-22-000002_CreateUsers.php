@@ -6,6 +6,8 @@ use CodeIgniter\Database\Migration;
 
 /**
  * Users. deleted_at enables the trash (soft deletes) in the CRUD.
+ * Roles: admin (everything), editor (events and categories, with limits set
+ * by Libraries\DemoPermissions) and user.
  */
 class CreateUsers extends Migration
 {
@@ -21,7 +23,7 @@ class CreateUsers extends Migration
             'avatar'     => ['type' => 'VARCHAR', 'constraint' => 255, 'null' => true],
             'birthdate'  => ['type' => 'DATE', 'null' => true],
             'bio'        => ['type' => 'TEXT', 'null' => true],
-            'role'       => ['type' => 'ENUM', 'constraint' => ['admin', 'user'], 'default' => 'user'],
+            'role'       => ['type' => 'ENUM', 'constraint' => ['admin', 'editor', 'user'], 'default' => 'user'],
             'active'     => ['type' => 'TINYINT', 'constraint' => 1, 'default' => 1],
             'created_at' => ['type' => 'DATETIME', 'null' => true],
             'updated_at' => ['type' => 'DATETIME', 'null' => true],

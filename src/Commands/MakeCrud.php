@@ -19,6 +19,11 @@ use Throwable;
  *     php spark kpcrudy:make                      (pregunta les dades)
  *     php spark kpcrudy:make clients              (amb els valors per defecte)
  *     php spark kpcrudy:make clients --controller Admin/Clients --route admin/clients --filter auth --model
+ *     php spark kpcrudy:make posts --namespace Blog --route admin/posts --as blog-posts
+ *
+ * Per defecte genera al namespace App (app/Controllers, app/Models,
+ * app/Config/Routes.php). Amb --namespace genera dins d'un mòdul o paquet:
+ * <ns>\Controllers, <ns>\Models i <directori del ns>/Config/Routes.php.
  *
  * Els missatges són en anglès, com la resta de comandes de la llibreria.
  */
@@ -32,11 +37,16 @@ class MakeCrud extends BaseCommand
         'table' => 'Database table. If omitted, every value is asked interactively.',
     ];
     protected $options = [
-        '--controller' => 'Controller class, relative to App\Controllers (e.g. Admin/Clients). Created if it does not exist.',
+        '--namespace'  => 'Base namespace of the app or module (default: App). Controllers go to <ns>\Controllers, models to <ns>\Models',
+        '--path'       => 'Directory of the base namespace (default: taken from the autoloader, e.g. app/ for App)',
+        '--routes'     => 'Routes file (default: <path>/Config/Routes.php). Created if it does not exist',
+        '--extends'    => 'Parent class of a new controller (default: <ns>\Controllers\BaseController, App\Controllers\BaseController or CodeIgniter\Controller)',
+        '--controller' => 'Controller class, relative to <ns>\Controllers (e.g. Admin/Clients). Created if it does not exist.',
         '--method'     => 'Controller method (default: index)',
         '--route'      => 'Route path (e.g. admin/clients)',
         '--filter'     => 'Route filter (e.g. auth, session, auth:admin)',
-        '--model'      => 'Also generate a model in App\Models and use setModel()',
+        '--as'         => 'Route name, for route_to() and url_to() (e.g. admin-clients)',
+        '--model'      => 'Also generate a model in <ns>\Models and use setModel()',
         '--dry-run'    => 'Show the generated code without writing any file',
         '--force'      => 'Replace the method (and the model) if they already exist',
     ];
@@ -76,16 +86,44 @@ class MakeCrud extends BaseCommand
             return EXIT_ERROR;
         }
 
-        $controller = $this->value('controller', $interactive, 'Controller (relative to App\Controllers)', $this->className($table));
+        // Namespace i directori de destinació (l'aplicació o un mòdul)
+        $baseNs = trim($this->value('namespace', false, '', 'App'), '\\');
+
+        if (! preg_match('/^[A-Z][A-Za-z0-9_]*(\\\\[A-Z][A-Za-z0-9_]*)*$/', $baseNs)) {
+            CLI::error("Invalid namespace \"{$baseNs}\".");
+
+            return EXIT_ERROR;
+        }
+
+        $basePath = $this->basePath($baseNs);
+
+        if ($basePath === null) {
+            CLI::error("Cannot find the directory of the namespace {$baseNs}. Register it in Config\\Autoload::\$psr4 or use --path.");
+
+            return EXIT_ERROR;
+        }
+
+        $routesFile = $this->value('routes', false, '', '');
+        $routesFile = $routesFile !== '' ? $this->absolute($routesFile) : $basePath . 'Config' . DIRECTORY_SEPARATOR . 'Routes.php';
+        $extends    = ltrim($this->value('extends', false, '', $this->defaultParent($baseNs)), '\\');
+
+        if (! preg_match('/^[A-Za-z_][A-Za-z0-9_]*(\\\\[A-Za-z_][A-Za-z0-9_]*)*$/', $extends)) {
+            CLI::error("Invalid parent class \"{$extends}\".");
+
+            return EXIT_ERROR;
+        }
+
+        $controller = $this->value('controller', $interactive, "Controller (relative to {$baseNs}\\Controllers)", $this->className($table));
         $controller = implode('/', array_map('ucfirst', preg_split('#[/\\\\]+#', trim($controller, '/\\'))));
         $method     = $this->value('method', $interactive, 'Method', 'index');
         $route      = trim($this->value('route', $interactive, 'Route', $this->routeFor($controller, $method)), '/');
         $filter     = $this->value('filter', $interactive, 'Route filter (empty for none)', '');
+        $as         = $this->value('as', $interactive, 'Route name (empty for none)', '');
         $withModel  = $this->flag('model') || ($interactive && CLI::prompt('Generate a model too?', ['n', 'y']) === 'y');
         $dryRun     = $this->flag('dry-run');
         $force      = $this->flag('force');
 
-        if ($error = $this->validate($controller, $method, $route)) {
+        if ($error = $this->validate($controller, $method, $route, $as, $extends)) {
             CLI::error($error);
 
             return EXIT_ERROR;
@@ -94,10 +132,14 @@ class MakeCrud extends BaseCommand
         // 2. Codi (analyze() rebutja les columnes amb noms que no es poden posar al codi)
         $segments   = explode('/', $controller);
         $class      = array_pop($segments);
-        $namespace  = rtrim('App\Controllers\\' . implode('\\', $segments), '\\');
-        $path       = APPPATH . 'Controllers/' . $controller . '.php';
+        $namespace  = rtrim($baseNs . '\\Controllers\\' . implode('\\', $segments), '\\');
+        $path       = $basePath . 'Controllers' . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $controller) . '.php';
+        $modelNs    = $baseNs . '\\Models';
         $modelClass = $this->modelClass($table);
-        $handler    = str_replace('/', '\\', $controller) . '::' . $method;
+        // Fora de App, el handler porta el nom complet: el namespace per defecte de les rutes és App\Controllers
+        $handler = $baseNs === 'App'
+            ? str_replace('/', '\\', $controller) . '::' . $method
+            : '\\' . $namespace . '\\' . $class . '::' . $method;
 
         try {
             $info                = $generator->analyze($table);
@@ -106,7 +148,7 @@ class MakeCrud extends BaseCommand
             // Si el controlador ja importa una altra classe Crud (o el model), s'escriu el nom complet
             $source   = is_file($path) ? (string) file_get_contents($path) : null;
             $crudRef  = $generator->classReference($source, $class, 'Kpcrudy\Crud');
-            $modelRef = $withModel ? $generator->classReference($source, $class, 'App\Models\\' . $modelClass) : null;
+            $modelRef = $withModel ? $generator->classReference($source, $class, $modelNs . '\\' . $modelClass) : null;
             $imports  = [];
 
             if ($crudRef[0] !== '\\') {
@@ -114,7 +156,7 @@ class MakeCrud extends BaseCommand
             }
 
             if ($modelRef !== null && $modelRef[0] !== '\\') {
-                $imports[] = 'App\Models\\' . $modelClass;
+                $imports[] = $modelNs . '\\' . $modelClass;
             }
 
             $methodCode = $generator->methodCode($info, [
@@ -124,8 +166,8 @@ class MakeCrud extends BaseCommand
                 'model'   => $modelRef,
                 'crud'    => $crudRef,
             ]);
-            $routeLine = $generator->routeLine($route, $handler, $filter);
-            $modelCode = $withModel ? $generator->modelCode($info, $modelClass, 'App\Models') : null;
+            $routeLine = $generator->routeLine($route, $handler, $filter, $as);
+            $modelCode = $withModel ? $generator->modelCode($info, $modelClass, $modelNs) : null;
         } catch (Throwable $e) {
             CLI::error($e->getMessage());
 
@@ -138,10 +180,10 @@ class MakeCrud extends BaseCommand
             $this->show('Controller ' . $namespace . '\\' . $class, $methodCode);
 
             if ($modelCode !== null) {
-                $this->show('Model App\Models\\' . $modelClass, $modelCode);
+                $this->show('Model ' . $modelNs . '\\' . $modelClass, $modelCode);
             }
 
-            $this->show('app/Config/Routes.php', $routeLine);
+            $this->show($this->relative($routesFile), $routeLine);
         }
 
         // 3. Comprovacions: tot abans d'escriure cap fitxer, perquè un error no deixi feina a mitges
@@ -150,7 +192,7 @@ class MakeCrud extends BaseCommand
 
         try {
             if ($modelCode !== null) {
-                $modelsDir = APPPATH . 'Models';
+                $modelsDir = $basePath . 'Models';
                 $modelPath = $modelsDir . DIRECTORY_SEPARATOR . $modelClass . '.php';
 
                 if (is_dir($modelsDir) && realpath(dirname($modelPath)) !== realpath($modelsDir)) {
@@ -168,16 +210,15 @@ class MakeCrud extends BaseCommand
                     $messages[] = ["The model {$modelClass} already exists: it has not been changed (use --force to replace it).", 'yellow'];
                 } else {
                     $writes[$modelPath] = $modelCode;
-                    $messages[]         = ['Model:      ' . CLI::color('app/Models/' . $modelClass . '.php', 'green'), null];
+                    $messages[]         = ['Model:      ' . CLI::color($this->relative($modelPath), 'green'), null];
                 }
             }
 
-            [$status, $controllerCode] = $generator->controllerSource($path, $namespace, $class, $method, $methodCode, $imports, $force);
+            [$status, $controllerCode] = $generator->controllerSource($path, $namespace, $class, $method, $methodCode, $imports, $force, $extends);
             $writes[$path]             = $controllerCode;
-            $messages[]                = ['Controller: ' . CLI::color('app/Controllers/' . $controller . '.php', 'green') . " ({$status} {$method}())", null];
+            $messages[]                = ['Controller: ' . CLI::color($this->relative($path), 'green') . " ({$status} {$method}())", null];
 
-            $routesFile = APPPATH . 'Config/Routes.php';
-            $existing   = $this->existingRoute($route);
+            $existing = $this->existingRoute($route);
 
             if ($existing !== null && ! $this->sameHandler($existing, $handler)) {
                 throw new RuntimeException("The route \"{$route}\" already exists and points to {$existing}. Use --route to choose another path.");
@@ -189,7 +230,11 @@ class MakeCrud extends BaseCommand
                 $writes[$routesFile] = $routesCode;
                 $messages[]          = ['Route:      ' . CLI::color($routeLine, 'green'), null];
             } else {
-                $messages[] = ["Route:      \"{$route}\" was already in app/Config/Routes.php", 'yellow'];
+                $messages[] = ["Route:      \"{$route}\" was already in " . $this->relative($routesFile), 'yellow'];
+            }
+
+            if ($routesCode !== null && ! is_file($routesFile) && $baseNs !== 'App') {
+                $messages[] = ['Created ' . $this->relative($routesFile) . ': CodeIgniter loads it if route discovery is enabled (Config\\Modules) or if app/Config/Routes.php includes it.', 'yellow'];
             }
         } catch (Throwable $e) {
             CLI::error($e->getMessage());
@@ -260,7 +305,7 @@ class MakeCrud extends BaseCommand
         return array_key_exists($name, CLI::getOptions());
     }
 
-    private function validate(string $controller, string $method, string $route): ?string
+    private function validate(string $controller, string $method, string $route, string $as, string $extends): ?string
     {
         if (! preg_match('#^[A-Z][A-Za-z0-9_]*(/[A-Z][A-Za-z0-9_]*)*$#', $controller)) {
             return "Invalid controller name \"{$controller}\".";
@@ -270,12 +315,16 @@ class MakeCrud extends BaseCommand
             return 'The controller cannot be BaseController.';
         }
 
+        if ($as !== '' && ! preg_match('/^[A-Za-z0-9][A-Za-z0-9_.\-]*$/', $as)) {
+            return "Invalid route name \"{$as}\": use letters, numbers, -, _ and .";
+        }
+
         // Sense "_" al davant (CodeIgniter no els enruta: _remap...) ni noms de mètodes del controlador base
         if (! preg_match('/^[a-z][A-Za-z0-9_]*$/', $method)) {
             return "Invalid method name \"{$method}\": it must start with a lowercase letter and contain only letters, numbers and _.";
         }
 
-        if (in_array(strtolower($method), $this->reservedMethods(), true)) {
+        if (in_array(strtolower($method), $this->reservedMethods($extends), true)) {
             return "Invalid method name \"{$method}\": the base controller already has a method with that name.";
         }
 
@@ -293,15 +342,15 @@ class MakeCrud extends BaseCommand
     }
 
     /**
-     * Mètodes (en minúscules) de CodeIgniter\Controller i de BaseController.
+     * Mètodes (en minúscules) de CodeIgniter\Controller i de la classe pare del controlador.
      *
      * @return list<string>
      */
-    private function reservedMethods(): array
+    private function reservedMethods(string $extends): array
     {
         $names = [];
 
-        foreach ([Controller::class, 'App\Controllers\BaseController'] as $parent) {
+        foreach ([Controller::class, $extends] as $parent) {
             if (! class_exists($parent)) {
                 continue;
             }
@@ -340,9 +389,84 @@ class MakeCrud extends BaseCommand
     private function sameHandler(string $existing, string $handler): bool
     {
         $existing = strtolower(ltrim($existing, '\\'));
-        $handler  = strtolower($handler);
+        $handler  = strtolower(ltrim($handler, '\\'));
 
         return $existing === $handler || str_ends_with($existing, '\\' . $handler);
+    }
+
+    /**
+     * Directori (amb / final) del namespace base: --path, el de l'autoloader
+     * o, per a App, APPPATH. null si no es troba.
+     */
+    private function basePath(string $namespace): ?string
+    {
+        $path = $this->value('path', false, '', '');
+
+        if ($path === '') {
+            $path = $namespace === 'App' ? APPPATH : '';
+
+            // El namespace registrat més llarg que el conté (Acme\Blog dins d'Acme => src/Blog)
+            try {
+                $registered = service('autoloader')->getNamespace();
+            } catch (Throwable) {
+                $registered = [];
+            }
+
+            $parts = explode('\\', $namespace);
+
+            for ($i = count($parts); $i > 0 && $namespace !== 'App'; $i--) {
+                $prefix = implode('\\', array_slice($parts, 0, $i));
+
+                if (isset($registered[$prefix][0])) {
+                    $path = rtrim($registered[$prefix][0], '/\\') . DIRECTORY_SEPARATOR . implode(DIRECTORY_SEPARATOR, array_slice($parts, $i));
+                    break;
+                }
+            }
+        } else {
+            $path = $this->absolute($path);
+        }
+
+        if ($path === '') {
+            return null;
+        }
+
+        // Sense ../ (els missatges mostren el camí relatiu al projecte)
+        $path = is_dir($path) ? (string) realpath($path) : $path;
+
+        return rtrim($path, '/\\') . DIRECTORY_SEPARATOR;
+    }
+
+    /**
+     * Classe pare per defecte dels controladors nous: el BaseController del
+     * namespace, el de l'aplicació o CodeIgniter\Controller.
+     */
+    private function defaultParent(string $namespace): string
+    {
+        foreach ([$namespace . '\\Controllers\\BaseController', 'App\Controllers\BaseController'] as $class) {
+            if (class_exists($class)) {
+                return $class;
+            }
+        }
+
+        return Controller::class;
+    }
+
+    /**
+     * Camí absolut: els relatius ho són al directori del projecte (ROOTPATH).
+     */
+    private function absolute(string $path): string
+    {
+        return preg_match('#^([A-Za-z]:)?[/\\\\]#', $path) ? $path : ROOTPATH . $path;
+    }
+
+    /**
+     * Camí relatiu al directori del projecte si n'és a dins (per als missatges).
+     */
+    private function relative(string $path): string
+    {
+        $root = rtrim(ROOTPATH, '/\\') . DIRECTORY_SEPARATOR;
+
+        return str_starts_with($path, $root) ? str_replace('\\', '/', substr($path, strlen($root))) : $path;
     }
 
     // ------------------------------------------------------------------

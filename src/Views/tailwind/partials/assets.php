@@ -10,7 +10,7 @@
  * @var \Kpcrudy\Renderer $this
  */
 ?>
-<style>
+<style<?= $this->nonce('style') ?>>
     .kpcrudy td a:not([class]), .kpcrudy dd a:not([class]) { color: #2563eb; text-decoration: underline; }
     .kpcrudy .badge, .kpcrudy .kp-badge { display: inline-block; padding: 1px 8px; border-radius: 9999px; font-size: 12px; font-weight: 600; }
     .kpcrudy .text-bg-primary { background: #2563eb; color: #fff; }

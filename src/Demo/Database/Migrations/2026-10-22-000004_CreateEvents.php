@@ -19,6 +19,8 @@ class CreateEvents extends Migration
             'location'    => ['type' => 'VARCHAR', 'constraint' => 150, 'null' => true],
             'capacity'    => ['type' => 'INT', 'unsigned' => true, 'null' => true],
             'price'       => ['type' => 'DECIMAL', 'constraint' => '8,2', 'default' => 0],
+            // Several values in one column (multiselect field): ["kids","adults"]
+            'audience'    => ['type' => 'VARCHAR', 'constraint' => 100, 'null' => true],
             'poster'      => ['type' => 'VARCHAR', 'constraint' => 255, 'null' => true],
             'status'      => ['type' => 'ENUM', 'constraint' => ['draft', 'published', 'cancelled'], 'default' => 'draft'],
             'created_by'  => ['type' => 'INT', 'unsigned' => true, 'null' => true],

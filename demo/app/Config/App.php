@@ -197,6 +197,11 @@ class App extends BaseConfig
      *
      * @see http://www.html5rocks.com/en/tutorials/security/content-security-policy/
      * @see http://www.w3.org/TR/CSP/
+     *
+     * kpcrudy: enabled in this project to show that the library and the demo
+     * work with a strict policy (no inline handlers or style="" attributes;
+     * the <script> and <style> blocks carry CodeIgniter's nonce). See
+     * Config\ContentSecurityPolicy for the CDNs allowed.
      */
-    public bool $CSPEnabled = false;
+    public bool $CSPEnabled = true;
 }

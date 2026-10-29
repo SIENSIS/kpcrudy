@@ -66,7 +66,7 @@ class Renderer
         $parent = $this->find($view, $current + 1, false);
 
         if ($parent === null) {
-            throw new RuntimeException("Kpcrudy: la plantilla '{$view}' no té cap tema pare.");
+            throw new RuntimeException(lang('Kpcrudy.exceptions.noParentTemplate', [$view]));
         }
 
         return $this->renderFile($view, $parent[0], $parent[1], $data);
@@ -93,7 +93,7 @@ class Renderer
         }
 
         if ($required) {
-            throw new RuntimeException("Kpcrudy: no s'ha trobat la plantilla '{$view}'.");
+            throw new RuntimeException(lang('Kpcrudy.exceptions.templateNotFound', [$view]));
         }
 
         return null;
@@ -144,6 +144,24 @@ class Renderer
         }
 
         return $html;
+    }
+
+    /**
+     * Atribut nonce de la Content-Security-Policy de CodeIgniter per a un
+     * <script> o un <style> (o <link>) de les plantilles, amb un espai al
+     * davant: <script<?= $this->nonce() ?>>. Buit si la CSP no està activa.
+     */
+    public function nonce(string $type = 'script'): string
+    {
+        $function = $type === 'style' ? 'csp_style_nonce' : 'csp_script_nonce';
+
+        if (! function_exists($function)) {
+            return '';
+        }
+
+        $nonce = (string) $function();
+
+        return $nonce === '' ? '' : ' ' . $nonce;
     }
 
     /**

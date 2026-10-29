@@ -14,7 +14,7 @@ class CategoryModel extends Model
     protected $table         = 'kpdemo_categories';
     protected $primaryKey    = 'id';
     protected $returnType    = 'object';
-    protected $allowedFields = ['name', 'color', 'description'];
+    protected $allowedFields = ['name', 'color'];
     protected $useTimestamps = true;
 
     // The primary key needs its own rule to use {id} in the other rules (CodeIgniter 4.5+)

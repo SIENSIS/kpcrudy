@@ -31,7 +31,7 @@ final class Secret
         if ($config->maskKey !== '') {
             // Una clau curta es podria endevinar provant-ne moltes
             if (strlen($config->maskKey) < 32) {
-                throw new RuntimeException('Kpcrudy: $maskKey ha de tenir com a mínim 32 caràcters (p. ex. bin2hex(random_bytes(32))).');
+                throw new RuntimeException(lang('Kpcrudy.exceptions.maskKeyTooShort'));
             }
 
             return $config->maskKey;
@@ -55,7 +55,7 @@ final class Secret
             $dir = dirname($file);
 
             if (! is_dir($dir) && ! @mkdir($dir, 0700, true) && ! is_dir($dir)) {
-                throw new RuntimeException("Kpcrudy: no es pot crear el directori '{$dir}'.");
+                throw new RuntimeException(lang('Kpcrudy.exceptions.cannotCreateDir', [$dir]));
             }
 
             // Mode 'x': si dues peticions la creen alhora, només una l'escriu
@@ -74,7 +74,7 @@ final class Secret
         }
 
         if (strlen($key) !== 64 || ! ctype_xdigit($key)) {
-            throw new RuntimeException("Kpcrudy: la clau '{$file}' no és vàlida.");
+            throw new RuntimeException(lang('Kpcrudy.exceptions.invalidKeyFile', [$file]));
         }
 
         return hex2bin($key);

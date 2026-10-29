@@ -8,7 +8,8 @@ use Kpcrudy\Demo\Libraries\Auth;
 
 /**
  * Requires a logged-in demo user (and verifies the CSRF token, see
- * CsrfFilter). AdminFilter restricts the route to administrators.
+ * CsrfFilter). StaffFilter restricts the route to administrators and
+ * editors, and AdminFilter to administrators.
  *
  * Routes use the class name, so nothing has to be added to the host
  * project's app/Config/Filters.php.

@@ -14,13 +14,13 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title><?= esc($title) ?></title>
-    <link rel="stylesheet" href="<?= esc($config->bootstrapCss, 'attr') ?>">
-    <link rel="stylesheet" href="<?= esc($config->iconsCss, 'attr') ?>">
+    <link rel="stylesheet"<?= $this->nonce('style') ?> href="<?= esc($config->bootstrapCss, 'attr') ?>">
+    <link rel="stylesheet"<?= $this->nonce('style') ?> href="<?= esc($config->iconsCss, 'attr') ?>">
 </head>
 <body class="bg-body-tertiary">
     <main class="container-fluid py-4 px-lg-5">
         <?= $content ?>
     </main>
-    <script src="<?= esc($config->bootstrapJs, 'attr') ?>"></script>
+    <script<?= $this->nonce() ?> src="<?= esc($config->bootstrapJs, 'attr') ?>"></script>
 </body>
 </html>

@@ -6,6 +6,7 @@ namespace Kpcrudy\Demo\Config;
 
 use Kpcrudy\Config\Kpcrudy;
 use Kpcrudy\Demo\Demo;
+use Kpcrudy\Demo\Libraries\DemoPermissions;
 use RuntimeException;
 
 /**
@@ -35,6 +36,18 @@ class CrudConfig extends Kpcrudy
      * Every demo URL uses masked ids (admin/events/edit/Xk3f9... instead of edit/5).
      */
     public bool $maskIds = true;
+
+    /**
+     * Success and error messages of the CRUDs go to the session keys that the
+     * demo layout already shows ('message' and 'error'), together with the
+     * messages of the demo's own pages. Warnings stay inside the CRUD.
+     */
+    public array $flashKeys = ['success' => 'message', 'danger' => 'error'];
+
+    /**
+     * One class decides what each role can do in every demo CRUD.
+     */
+    public ?string $permissionResolver = DemoPermissions::class;
 
     public function __construct()
     {

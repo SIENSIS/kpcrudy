@@ -343,11 +343,23 @@ class CrudGenerator
     }
 
     /**
-     * Línia que s'afegeix a app/Config/Routes.php.
+     * Línia que s'afegeix al fitxer de rutes (app/Config/Routes.php o el del mòdul).
+     *
+     * @param string|null $as Nom de la ruta (route_to(), url_to())
      */
-    public function routeLine(string $route, string $handler, ?string $filter): string
+    public function routeLine(string $route, string $handler, ?string $filter, ?string $as = null): string
     {
-        $options = $filter !== null && $filter !== '' ? ", ['filter' => " . $this->export($filter) . ']' : '';
+        $options = [];
+
+        if ($filter !== null && $filter !== '') {
+            $options[] = "'filter' => " . $this->export($filter);
+        }
+
+        if ($as !== null && $as !== '') {
+            $options[] = "'as' => " . $this->export($as);
+        }
+
+        $options = $options === [] ? '' : ', [' . implode(', ', $options) . ']';
 
         return '\\Kpcrudy\\Crud::routes($routes, ' . $this->export($route) . ', ' . $this->export($handler) . $options . ');';
     }
@@ -393,18 +405,29 @@ class CrudGenerator
      * Codi nou del controlador (creat o amb el mètode afegit o substituït).
      *
      * @param list<string> $imports Classes que el controlador ha d'importar
+     * @param string       $extends Classe pare (FQCN) si s'ha de crear el controlador
      *
      * @return array{0: string, 1: string} [estat ('created', 'added' o 'replaced'), codi]
      */
-    public function controllerSource(string $path, string $namespace, string $class, string $method, string $methodCode, array $imports, bool $force): array
+    public function controllerSource(string $path, string $namespace, string $class, string $method, string $methodCode, array $imports, bool $force, string $extends = 'App\Controllers\BaseController'): array
     {
         if (! is_file($path)) {
-            $uses = array_unique([...($namespace === 'App\Controllers' ? [] : ['App\Controllers\BaseController']), ...$imports]);
+            $extends   = ltrim($extends, '\\');
+            $parentNs  = (string) substr($extends, 0, max(0, (int) strrpos($extends, '\\')));
+            $parentRef = $this->classReference(null, $class, $extends);
+            $uses      = $imports;
+
+            // La classe pare s'importa si és d'un altre namespace i el nom curt no xoca
+            if ($parentRef[0] !== '\\' && strcasecmp($parentNs, $namespace) !== 0) {
+                $uses[] = $extends;
+            }
+
+            $uses = array_unique($uses);
             sort($uses);
 
             $code = "<?php\n\nnamespace {$namespace};\n\n"
                 . implode('', array_map(static fn (string $use): string => "use {$use};\n", $uses))
-                . "\nclass {$class} extends BaseController\n{\n" . $methodCode . "}\n";
+                . "\nclass {$class} extends {$parentRef}\n{\n" . $methodCode . "}\n";
 
             return ['created', $code];
         }
@@ -445,10 +468,16 @@ class CrudGenerator
     }
 
     /**
-     * Codi nou de app/Config/Routes.php amb la ruta, o null si la ruta ja hi era.
+     * Codi nou del fitxer de rutes amb la ruta, o null si la ruta ja hi era.
+     * Si el fitxer no existeix (p. ex. el Config/Routes.php d'un mòdul nou),
+     * es crea amb la ruta.
      */
     public function routesSource(string $routesFile, string $route, string $line): ?string
     {
+        if (! is_file($routesFile)) {
+            return "<?php\n\n/**\n * @var \\CodeIgniter\\Router\\RouteCollection \$routes\n */\n\n" . $line . "\n";
+        }
+
         $source = (string) file_get_contents($routesFile);
 
         if (preg_match('/Crud::routes\(\s*\$routes\s*,\s*[\'"]\/?' . preg_quote($route, '/') . '\/?[\'"]/', $source)) {

@@ -18,6 +18,13 @@ $inputTypes = [
     'password' => 'password', 'date' => 'date', 'datetime' => 'datetime-local', 'time' => 'time', 'color' => 'color',
 ];
 
+// Camps traduïts (setTranslations()): un bloc per idioma
+if ($type === 'translations') {
+    echo $this->render('partials/translations', ['field' => $field]);
+
+    return;
+}
+
 if ($type === 'hidden') {
     echo '<input type="hidden" name="' . esc($name, 'attr') . '" value="' . esc((string) $value, 'attr') . '">';
 
@@ -50,7 +57,7 @@ if ($type === 'hidden') {
                 <?php endforeach ?>
             </select>
 
-        <?php elseif ($type === 'relation_nn'): ?>
+        <?php elseif (in_array($type, ['relation_nn', 'multiselect'], true)): ?>
             <?php $selected = array_map('strval', (array) $value); ?>
             <select<?= $this->attrs(['id' => $id, 'name' => $name . '[]', 'class' => 'w3-select w3-border w3-round' . $border, 'multiple' => true, 'size' => min(8, max(3, count($field['options'])))] + $attrs) ?>>
                 <?php foreach ($field['options'] as $optionValue => $optionLabel): ?>
