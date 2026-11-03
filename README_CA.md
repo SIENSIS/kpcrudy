@@ -48,19 +48,13 @@ La llibreria inclou una aplicació completa de gestió d'esdeveniments que fa se
 
 ## Instal·lació
 
-La llibreria encara no és a Packagist (es recomana publicar-la-hi, amb versions etiquetades: així `composer require siensis/kpcrudy` funcionaria sense l'entrada `repositories`; vegeu [CHANGELOG.md](CHANGELOG.md)). Afegeix el repositori al `composer.json` del projecte:
-
-```json
-"repositories": [
-    { "type": "vcs", "url": "https://github.com/SIENSIS/kpcrudy" }
-]
-```
-
-i instal·la-la:
+La llibreria està publicada a [Packagist](https://packagist.org/packages/siensis/kpcrudy). Instal·la-la amb Composer:
 
 ```bash
-composer require siensis/kpcrudy:dev-main
+composer require siensis/kpcrudy
 ```
+
+Composer afegeix la restricció `^1.0` al `composer.json`; `composer update siensis/kpcrudy` porta les noves versions 1.x (sense canvis incompatibles dins d'una versió principal; vegeu [CHANGELOG.md](CHANGELOG.md)).
 
 Per desenvolupar-la en local pots fer servir un repositori de tipus `path`:
 

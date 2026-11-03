@@ -1,0 +1,4 @@
+# Left out of the Composer package (dist archive); docs/ stays so projects can read it in vendor/
+/demo          export-ignore
+/screenshots   export-ignore
+/.gitattributes export-ignore

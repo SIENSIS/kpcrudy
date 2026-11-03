@@ -5,6 +5,8 @@ Documentation is in English and Catalan: [README_EN.md](README_EN.md) · [README
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-11-03
+
 ### Added
 
 - **Central permissions**: `Kpcrudy\PermissionResolver` interface, `Config\Kpcrudy::$permissionResolver`
@@ -49,8 +51,10 @@ Documentation is in English and Catalan: [README_EN.md](README_EN.md) · [README
 
 ## Publishing
 
-The library is installed from GitHub (`repositories` entry in `composer.json`). Recommended next step:
-tag releases (`v1.0.0`, ...) following semantic versioning and submit the repository to
-[Packagist](https://packagist.org/packages/submit), with the GitHub hook so new tags are published
-automatically. Then projects can `composer require siensis/kpcrudy:^1.0` and get updates with
-`composer update`.
+Published on [Packagist](https://packagist.org/packages/siensis/kpcrudy) from the Git tags
+(`vX.Y.Z`, semantic versioning). Install with `composer require siensis/kpcrudy` (`^1.0`) and update
+with `composer update siensis/kpcrudy`. The Composer package does not include the test application
+(`demo/`) nor the screenshots (`.gitattributes`); the documentation (`docs/`) is included.
+
+[Unreleased]: https://github.com/SIENSIS/kpcrudy/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/SIENSIS/kpcrudy/releases/tag/v1.0.0

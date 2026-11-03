@@ -48,19 +48,13 @@ The library includes a complete event management application that uses all the f
 
 ## Installation
 
-The library is not on Packagist yet (publishing it there, with tagged versions, is recommended: then `composer require siensis/kpcrudy` would work without the `repositories` entry; see [CHANGELOG.md](CHANGELOG.md)). Add the repository to your project's `composer.json`:
-
-```json
-"repositories": [
-    { "type": "vcs", "url": "https://github.com/SIENSIS/kpcrudy" }
-]
-```
-
-and install it:
+The library is published on [Packagist](https://packagist.org/packages/siensis/kpcrudy). Install it with Composer:
 
 ```bash
-composer require siensis/kpcrudy:dev-main
+composer require siensis/kpcrudy
 ```
+
+Composer adds the constraint `^1.0` to your `composer.json`; `composer update siensis/kpcrudy` brings the new 1.x versions (no breaking changes within a major version, see [CHANGELOG.md](CHANGELOG.md)).
 
 To develop it locally you can use a `path` repository:
 
