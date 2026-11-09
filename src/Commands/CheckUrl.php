@@ -17,6 +17,8 @@ use Throwable;
  */
 class CheckUrl extends BaseCommand
 {
+    use ReadsOptions;
+
     protected $group       = 'Kpcrudy';
     protected $name        = 'kpcrudy:checkurl';
     protected $description = 'Checks the signature of a URL and shows when it expires.';
@@ -30,6 +32,7 @@ class CheckUrl extends BaseCommand
 
     public function run(array $params)
     {
+        $this->params = $params;
         $url = $params[0] ?? null;
 
         if (! is_string($url) || $url === '') {
@@ -39,7 +42,7 @@ class CheckUrl extends BaseCommand
         }
 
         try {
-            $config  = MaskId::config(CLI::getOption('config')) ?? config('Kpcrudy');
+            $config  = MaskId::config($this->option('config')) ?? config('Kpcrudy');
             $signer  = new UrlSigner($config);
             // Les URL que signa un CRUD mentre es navega tenen un abast propi ('crud', 'crud-trash')
             $status  = $signer->checkUrl($url, true, ['', 'crud', 'crud-trash']);

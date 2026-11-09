@@ -130,7 +130,16 @@ return [
     'translations'        => 'Traducciones',
 
     // Exceptions (programming errors)
+    'moreActions' => 'Más acciones',
+    'lookupPlaceholder' => 'Escribe al menos {0} caracteres para buscar…',
+    'lookupEmpty' => 'Ningún resultado',
+    'treeCycle' => '{0}: un registro no puede ser su propio padre ni colgar de uno de sus descendientes.',
     'exceptions' => [
+        'invalidFilterKey' => 'La clave del filtro "{0}" debe empezar con una letra minúscula y solo puede tener letras minúsculas, números y "_".',
+        'invalidFilterType' => 'El filtro "{0}" tiene un tipo desconocido "{1}": usa "select" o "text".',
+        'handlerNotFound' => 'El método de controlador "{0}" no existe.',
+        'invalidUploadHandler' => 'El gestor de archivos del campo "{0}" debe implementar Kpcrudy\\Storage\\UploadHandler.',
+        'assetNotFound' => 'El archivo de kpcrudy "{0}" no existe.',
         'modelNotFound'       => 'Kpcrudy: no se ha encontrado el modelo "{0}".',
         'missingSource'       => 'Kpcrudy: hay que llamar a setTable() o setModel() antes de render().',
         'tableNotFound'       => 'Kpcrudy: la tabla "{0}" no existe.',

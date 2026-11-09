@@ -48,6 +48,9 @@ trait ImportsCsv
      *  - 'maxRows' nombre màxim de files (per defecte, Config::$importMaxRows)
      *  - 'maxSize' mida màxima del fitxer en KB (per defecte, Config::$importMaxSize)
      *
+     * Els camps traduïts (setTranslations()) s'importen amb una columna per idioma:
+     * "title:ca" o "Títol (Català)". Si el fitxer no en té cap, no es toquen.
+     *
      * @param array<string, mixed> $options
      */
     public function enableImport(array $options = []): static
@@ -200,7 +203,14 @@ trait ImportsCsv
             fwrite($handle, "\xEF\xBB\xBF");
         }
 
-        fputcsv($handle, array_map($this->label(...), $columns), $this->config->csvDelimiter, '"', '');
+        $headers = array_map($this->label(...), $columns);
+
+        // Una columna per idioma de cada camp traduït
+        foreach ($this->importTranslationColumns() as [, , $label]) {
+            $headers[] = $label;
+        }
+
+        fputcsv($handle, $headers, $this->config->csvDelimiter, '"', '');
         rewind($handle);
         $csv = (string) stream_get_contents($handle);
         fclose($handle);
@@ -258,7 +268,7 @@ trait ImportsCsv
 
         $mapping = $this->mapImportHeader($csv['header']);
 
-        if ($mapping['fields'] === [] && $mapping['key'] === null) {
+        if ($mapping['fields'] === [] && $mapping['key'] === null && $mapping['translations'] === []) {
             return ['error' => lang('Kpcrudy.importNoColumns')];
         }
 
@@ -421,13 +431,22 @@ trait ImportsCsv
             $raw[$field] = $this->importCell($cells[$index] ?? '');
         }
 
+        // Camps traduïts: una columna per idioma ("title:ca" o "Títol (Català)")
+        $posted = [];
+
+        foreach ($mapping['translations'] ?? [] as $index => [$field, $locale]) {
+            $value                    = $this->importCell($cells[$index] ?? '');
+            $raw["{$field}:{$locale}"] = $value;
+            $posted[$locale][$field]  = $value;
+        }
+
         $keyField = $this->importKey();
         $keyValue = $mapping['key'] !== null ? $this->importCell($cells[$mapping['key']] ?? '') : '';
         $record   = null;
-        $row      = ['action' => 'insert', 'id' => null, 'record' => null, 'raw' => $raw, 'data' => [], 'nn' => [], 'errors' => []];
+        $row      = ['action' => 'insert', 'id' => null, 'record' => null, 'raw' => $raw, 'data' => [], 'nn' => [], 'tr' => null, 'trFields' => [], 'errors' => []];
 
         // Si falten columnes, les cel·les buides esborrarien dades sense voler-ho
-        $indexes = array_keys($mapping['fields'] + ($mapping['key'] !== null ? [$mapping['key'] => $keyField] : []));
+        $indexes = array_keys($mapping['fields'] + ($mapping['translations'] ?? []) + ($mapping['key'] !== null ? [$mapping['key'] => $keyField] : []));
 
         if ($indexes !== [] && count($cells) <= max($indexes)) {
             $row['errors'][] = lang('Kpcrudy.importShortRow');
@@ -553,6 +572,28 @@ trait ImportsCsv
 
         $row['data'] = array_merge($row['data'], $scope);
 
+        // Traduccions: les que ja té el registre, amb els valors del fitxer al damunt
+        if ($posted !== []) {
+            $trFields = $this->importTranslationFields();
+            $existing = $id !== null ? ($this->loadTranslations([$id])[$id] ?? []) : [];
+            $values   = [];
+
+            foreach (array_keys($this->translations['locales']) as $locale) {
+                foreach ($trFields as $field) {
+                    $values[$locale][$field] = array_key_exists($field, $posted[$locale] ?? [])
+                        ? $posted[$locale][$field]
+                        : trim((string) ($existing[$locale][$field] ?? ''));
+                }
+            }
+
+            foreach ($this->validateTranslations($values, $trFields) as $key => $error) {
+                $row['errors'][$key] = $error;
+            }
+
+            $row['tr']       = $values;
+            $row['trFields'] = $trFields;
+        }
+
         // El registre, tal com quedaria, ha de continuar sent editable per l'usuari
         if ($row['errors'] === [] && $action === 'update' && ! $this->can('edit', array_merge($record, $row['data']))) {
             $row['errors'][] = lang('Kpcrudy.importRowNotAllowed');
@@ -611,6 +652,11 @@ trait ImportsCsv
         }
 
         $this->syncNN((string) $id, $row['nn']);
+
+        if (($row['tr'] ?? null) !== null) {
+            $this->syncTranslations((string) $id, $row['tr'], $row['trFields']);
+        }
+
         $this->assertInScope((string) $id);
 
         $after[] = $row['action'] === 'insert'
@@ -889,7 +935,18 @@ trait ImportsCsv
             $candidates[$normalize($this->label($field))] ??= $field;
         }
 
-        $map     = ['fields' => [], 'key' => null, 'columns' => []];
+        // Camps traduïts: "camp:idioma", "Etiqueta (Idioma)" o "Etiqueta (CODI)"
+        $translated = [];
+
+        foreach ($this->importTranslationColumns() as $column => [$field, $locale, $label]) {
+            $translated[$column] = [$field, $locale, $label];
+
+            foreach ([$column, $label, $this->label($field) . ' (' . strtoupper($locale) . ')'] as $text) {
+                $candidates[$normalize($text)] ??= $column;
+            }
+        }
+
+        $map     = ['fields' => [], 'key' => null, 'translations' => [], 'columns' => []];
         $used    = [];
 
         foreach ($header as $index => $title) {
@@ -897,6 +954,14 @@ trait ImportsCsv
 
             if ($field !== null && isset($used[$field])) {
                 $field = null;
+            }
+
+            if ($field !== null && isset($translated[$field])) {
+                $used[$field]                = true;
+                $map['translations'][$index] = [$translated[$field][0], $translated[$field][1]];
+                $map['columns'][]            = ['header' => $title, 'field' => $field, 'label' => $translated[$field][2], 'key' => false];
+
+                continue;
             }
 
             if ($field !== null) {
@@ -940,6 +1005,41 @@ trait ImportsCsv
             return ! in_array($type, ['upload', 'image', 'virtual', 'readonly', 'translation'], true)
                 && ! ($type === 'hidden' && array_key_exists('value', $options));
         }));
+    }
+
+    /**
+     * Camps traduïts (setTranslations()) que es poden importar: els de 'fields' o
+     * els del formulari d'alta. Cada un té una columna per idioma.
+     *
+     * @return list<string>
+     */
+    protected function importTranslationFields(): array
+    {
+        if ($this->translations === null) {
+            return [];
+        }
+
+        $fields = $this->withoutHidden($this->import['fields'] ?? $this->addFieldList());
+
+        return array_values(array_filter($fields, fn (string $name): bool => $this->isTranslated($name)));
+    }
+
+    /**
+     * Columnes dels camps traduïts: "camp:idioma" => [camp, idioma, etiqueta "Etiqueta (Idioma)"].
+     *
+     * @return array<string, array{0: string, 1: string, 2: string}>
+     */
+    protected function importTranslationColumns(): array
+    {
+        $columns = [];
+
+        foreach ($this->importTranslationFields() as $field) {
+            foreach ($this->translations['locales'] as $locale => $localeLabel) {
+                $columns["{$field}:{$locale}"] = [$field, (string) $locale, $this->label($field) . ' (' . $localeLabel . ')'];
+            }
+        }
+
+        return $columns;
     }
 
     protected function importKey(): string

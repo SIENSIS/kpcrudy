@@ -130,7 +130,16 @@ return [
     'translations'        => 'Translations',
 
     // Exceptions (programming errors)
+    'moreActions' => 'More actions',
+    'lookupPlaceholder' => 'Type at least {0} characters to search…',
+    'lookupEmpty' => 'No results',
+    'treeCycle' => '{0}: a record cannot be its own parent nor hang from one of its descendants.',
     'exceptions' => [
+        'invalidFilterKey' => 'The filter key "{0}" must start with a lowercase letter and contain only lowercase letters, numbers and "_".',
+        'invalidFilterType' => 'The filter "{0}" has an unknown type "{1}": use "select" or "text".',
+        'handlerNotFound' => 'The controller method "{0}" does not exist.',
+        'invalidUploadHandler' => 'The upload handler of the field "{0}" must implement Kpcrudy\\Storage\\UploadHandler.',
+        'assetNotFound' => 'The kpcrudy asset "{0}" does not exist.',
         'modelNotFound'       => 'Kpcrudy: model "{0}" not found.',
         'missingSource'       => 'Kpcrudy: call setTable() or setModel() before render().',
         'tableNotFound'       => 'Kpcrudy: table "{0}" does not exist.',

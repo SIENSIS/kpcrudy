@@ -21,6 +21,8 @@ use Throwable;
  */
 class MaskId extends BaseCommand
 {
+    use ReadsOptions;
+
     protected $group       = 'Kpcrudy';
     protected $name        = 'kpcrudy:maskid';
     protected $description = 'Shows the masked code of one or more ids, as they appear in the URLs of a CRUD with maskIds().';
@@ -35,6 +37,7 @@ class MaskId extends BaseCommand
 
     public function run(array $params)
     {
+        $this->params = $params;
         return static::convert($params, 'mask');
     }
 
@@ -59,7 +62,7 @@ class MaskId extends BaseCommand
         $error = false;
 
         try {
-            $config = static::config(CLI::getOption('config'));
+            $config = static::config($this->option('config'));
 
             foreach ($values as $value) {
                 $result = $direction === 'mask' ? Crud::maskId($value, $context, $config) : Crud::unmaskId($value, $context, $config);

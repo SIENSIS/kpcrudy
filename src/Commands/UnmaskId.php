@@ -14,6 +14,8 @@ use CodeIgniter\CLI\BaseCommand;
  */
 class UnmaskId extends BaseCommand
 {
+    use ReadsOptions;
+
     protected $group       = 'Kpcrudy';
     protected $name        = 'kpcrudy:unmaskid';
     protected $description = 'Shows the real id of one or more masked codes taken from the URLs of a CRUD with maskIds().';
@@ -28,6 +30,7 @@ class UnmaskId extends BaseCommand
 
     public function run(array $params)
     {
+        $this->params = $params;
         return MaskId::convert($params, 'unmask');
     }
 }

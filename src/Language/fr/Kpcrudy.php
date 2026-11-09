@@ -130,7 +130,16 @@ return [
     'translations'        => 'Traductions',
 
     // Exceptions (programming errors)
+    'moreActions' => 'Plus d\'actions',
+    'lookupPlaceholder' => 'Saisissez au moins {0} caractères pour rechercher…',
+    'lookupEmpty' => 'Aucun résultat',
+    'treeCycle' => '{0} : un enregistrement ne peut pas être son propre parent ni dépendre d\'un de ses descendants.',
     'exceptions' => [
+        'invalidFilterKey' => 'La clé du filtre "{0}" doit commencer par une lettre minuscule et ne contenir que des lettres minuscules, des chiffres et "_".',
+        'invalidFilterType' => 'Le filtre "{0}" a un type inconnu "{1}" : utilisez "select" ou "text".',
+        'handlerNotFound' => 'La méthode de contrôleur "{0}" n\'existe pas.',
+        'invalidUploadHandler' => 'Le gestionnaire de fichiers du champ "{0}" doit implémenter Kpcrudy\\Storage\\UploadHandler.',
+        'assetNotFound' => 'Le fichier kpcrudy "{0}" n\'existe pas.',
         'modelNotFound'       => 'Kpcrudy : modèle "{0}" introuvable.',
         'missingSource'       => 'Kpcrudy : appelez setTable() ou setModel() avant render().',
         'tableNotFound'       => 'Kpcrudy : la table "{0}" n\'existe pas.',

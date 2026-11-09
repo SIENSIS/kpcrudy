@@ -50,6 +50,9 @@ if ($type === 'hidden') {
                 <input<?= $this->attrs(['type' => 'checkbox', 'id' => $id, 'name' => $name, 'value' => '1', 'class' => 'form-check-input' . $invalid, 'checked' => (bool) $value] + $attrs) ?>>
             </div>
 
+        <?php elseif (($field['lookup'] ?? null) !== null): ?>
+            <?= $this->render('partials/lookup', ['id' => $id, 'name' => $name, 'value' => (string) ($value ?? ''), 'lookup' => $field['lookup'], 'inputClass' => 'form-control' . $invalid, 'required' => $field['required']]) ?>
+
         <?php elseif (in_array($type, ['relation', 'enum', 'select'], true)): ?>
             <select<?= $this->attrs(['id' => $id, 'name' => $name, 'class' => 'form-select' . $invalid, 'required' => $field['required']] + $attrs) ?>>
                 <option value=""><?= esc(lang('Kpcrudy.selectOption')) ?></option>
@@ -70,7 +73,9 @@ if ($type === 'hidden') {
         <?php elseif (in_array($type, ['upload', 'image'], true)): ?>
             <?php if ($field['file'] !== null): ?>
                 <div class="mb-2 d-flex align-items-center gap-3">
-                    <?php if ($field['file']['isImage']): ?>
+                    <?php if ($field['file']['url'] === null): ?>
+                        <span><i class="bi bi-paperclip"></i> <?= esc($field['file']['name']) ?></span>
+                    <?php elseif ($field['file']['isImage']): ?>
                         <a href="<?= esc($field['file']['url'], 'attr') ?>" target="_blank"><img src="<?= esc($field['file']['url'], 'attr') ?>" alt="" class="img-thumbnail kp-preview"></a>
                     <?php else: ?>
                         <a href="<?= esc($field['file']['url'], 'attr') ?>" target="_blank"><i class="bi bi-paperclip"></i> <?= esc($field['file']['name']) ?></a>

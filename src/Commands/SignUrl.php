@@ -17,6 +17,8 @@ use Throwable;
  */
 class SignUrl extends BaseCommand
 {
+    use ReadsOptions;
+
     protected $group       = 'Kpcrudy';
     protected $name        = 'kpcrudy:signurl';
     protected $description = 'Signs a URL so that it can be opened without changes (and, optionally, only until it expires).';
@@ -32,8 +34,9 @@ class SignUrl extends BaseCommand
 
     public function run(array $params)
     {
+        $this->params = $params;
         $url = $params[0] ?? null;
-        $ttl = CLI::getOption('ttl') ?? '86400';
+        $ttl = $this->option('ttl') ?? '86400';
 
         if (! is_string($url) || $url === '') {
             CLI::error('Usage: php spark kpcrudy:signurl <url> [--ttl seconds] [--free-query] [--config Class]');
@@ -48,7 +51,7 @@ class SignUrl extends BaseCommand
         }
 
         try {
-            $signed = Crud::signUrl($url, $ttl === '0' ? null : (int) $ttl, CLI::getOption('free-query') === null, MaskId::config(CLI::getOption('config')));
+            $signed = Crud::signUrl($url, $ttl === '0' ? null : (int) $ttl, ! $this->hasOption('free-query'), MaskId::config($this->option('config')));
         } catch (Throwable $e) {
             CLI::error($e->getMessage());
 
@@ -58,7 +61,7 @@ class SignUrl extends BaseCommand
         CLI::write($signed, 'green');
         CLI::write($ttl === '0' ? 'It never expires.' : 'Valid until ' . date('Y-m-d H:i:s', time() + (int) $ttl) . '.');
 
-        if (CLI::getOption('free-query') === null) {
+        if (! $this->hasOption('free-query')) {
             CLI::write('The whole URL is signed: changing any parameter makes it invalid.');
         }
 

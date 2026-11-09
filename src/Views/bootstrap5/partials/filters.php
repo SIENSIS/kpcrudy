@@ -19,7 +19,10 @@
                 <div class="<?= $filter['kind'] === 'range' ? 'col-md-6 col-xl-4' : 'col-md-4 col-xl-3' ?>">
                     <label class="form-label small fw-semibold" for="<?= esc($id, 'attr') ?>"><?= esc($filter['label']) ?></label>
 
-                    <?php if ($filter['kind'] === 'select'): ?>
+                    <?php if (($filter['lookup'] ?? null) !== null): ?>
+                        <?= $this->render('partials/lookup', ['id' => $id, 'name' => 'f[' . $filter['name'] . ']', 'value' => $filter['value'], 'lookup' => $filter['lookup'], 'inputClass' => 'form-control form-control-sm']) ?>
+
+                    <?php elseif ($filter['kind'] === 'select'): ?>
                         <select class="form-select form-select-sm" id="<?= esc($id, 'attr') ?>" name="f[<?= esc($filter['name'], 'attr') ?>]">
                             <option value=""><?= esc(lang('Kpcrudy.all')) ?></option>
                             <?php foreach ($filter['options'] as $value => $label): ?>

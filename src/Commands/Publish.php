@@ -21,23 +21,26 @@ use Throwable;
  *     php spark kpcrudy:publish theme bootstrap5 --as admin
  *     php spark kpcrudy:publish theme w3css --as intranet --only list,partials/pagination
  *     php spark kpcrudy:publish lang ca
+ *     php spark kpcrudy:publish assets            (CSS i JS a Config::$assetsPath)
  *
  * No sobreescriu mai res sense --force, i amb --dry-run només diu què faria.
  */
 class Publish extends BaseCommand
 {
+    use ReadsOptions;
+
     protected $group       = 'Kpcrudy';
     protected $name        = 'kpcrudy:publish';
     protected $description = 'Copies the configuration, a theme or the texts of a language into the project, to adapt them.';
-    protected $usage       = 'kpcrudy:publish [config|theme|lang] [name] [options]';
+    protected $usage       = 'kpcrudy:publish [config|theme|lang|assets] [name] [options]';
     protected $arguments   = [
-        'what' => 'config, theme or lang. If omitted, it is asked.',
+        'what' => 'config, theme, lang or assets. If omitted, it is asked.',
         'name' => 'theme: the theme to copy (bootstrap5, w3css, tailwind or one of $themes). lang: the locale (ca, es, en, fr, pt, de).',
     ];
     protected $options = [
         '--as'      => 'theme: name of the new theme (default: <theme>-custom)',
         '--only'    => 'theme: copy only these templates, separated by commas (e.g. list,partials/pagination); the rest is taken from the original theme',
-        '--path'    => 'theme: destination folder (default: app/Views/kpcrudy/<name>)',
+        '--path'    => 'theme: destination folder (default: app/Views/kpcrudy/<name>). assets: destination folder (default: Config\\Kpcrudy::$assetsPath)',
         '--force'   => 'Overwrite the files that already exist',
         '--dry-run' => 'Show what would be done without writing anything',
     ];
@@ -59,16 +62,18 @@ class Publish extends BaseCommand
 
     public function run(array $params)
     {
-        $this->force  = CLI::getOption('force') !== null;
-        $this->dryRun = CLI::getOption('dry-run') !== null;
-        $what         = $params[0] ?? CLI::prompt('What do you want to publish?', ['config', 'theme', 'lang'], 'required');
+        $this->params = $params;
+        $this->force  = $this->hasOption('force');
+        $this->dryRun = $this->hasOption('dry-run');
+        $what         = $params[0] ?? CLI::prompt('What do you want to publish?', ['config', 'theme', 'lang', 'assets'], 'required');
 
         try {
             $result = match ($what) {
                 'config' => $this->publishConfig(true),
                 'theme'  => $this->publishTheme($params[1] ?? null),
                 'lang'   => $this->publishLang($params[1] ?? null),
-                default  => throw new RuntimeException("Unknown option \"{$what}\": use config, theme or lang."),
+                'assets' => $this->publishAssets(),
+                default  => throw new RuntimeException("Unknown option \"{$what}\": use config, theme, lang or assets."),
             };
         } catch (Throwable $e) {
             CLI::error($e->getMessage());
@@ -81,6 +86,44 @@ class Publish extends BaseCommand
         }
 
         return $result;
+    }
+
+    // ------------------------------------------------------------------
+    // CSS i JavaScript (Config::$assetsMode = 'external')
+    // ------------------------------------------------------------------
+
+    /**
+     * Copia src/Assets/*.css i *.js a Config::$assetsPath (o --path). Els fitxers
+     * existents es reemplacen sempre: han de coincidir amb la versió instal·lada.
+     */
+    protected function publishAssets(): int
+    {
+        $config = config('Kpcrudy');
+        $config = $config instanceof KpcrudyConfig ? $config : new KpcrudyConfig();
+        $target = rtrim((string) ($this->option('path') ?: $config->assetsPath), '/\\');
+
+        foreach (glob(\Kpcrudy\Renderer::assetsDir() . DIRECTORY_SEPARATOR . '*.{css,js}', GLOB_BRACE) ?: [] as $file) {
+            $destination = $target . DIRECTORY_SEPARATOR . basename($file);
+            $this->written[] = $destination;
+
+            if ($this->dryRun) {
+                continue;
+            }
+
+            if (! is_dir($target) && ! mkdir($target, 0755, true) && ! is_dir($target)) {
+                throw new RuntimeException("Cannot create the folder {$target}.");
+            }
+
+            copy($file, $destination);
+        }
+
+        $this->summary(array_map(fn (string $file): string => '  ' . $this->relative($file), $this->written));
+
+        if ($config->assetsMode !== 'external') {
+            CLI::write('Set Config\\Kpcrudy::$assetsMode = \'external\' to use these files.', 'yellow');
+        }
+
+        return EXIT_SUCCESS;
     }
 
     // ------------------------------------------------------------------
@@ -161,7 +204,7 @@ class Publish extends BaseCommand
             throw new RuntimeException("The theme \"{$theme}\" does not exist. Themes: " . implode(', ', array_keys($themes)) . '.');
         }
 
-        $as = (string) (CLI::getOption('as') ?? $theme . '-custom');
+        $as = (string) ($this->option('as') ?? $theme . '-custom');
 
         if (! preg_match('/^[a-z][a-z0-9_-]*$/', $as)) {
             throw new RuntimeException("Invalid theme name \"{$as}\": use lowercase letters, numbers, - and _.");
@@ -173,7 +216,7 @@ class Publish extends BaseCommand
 
         $source = $themes[$theme]['path'];
         $files  = $this->templates($source);
-        $only   = CLI::getOption('only');
+        $only   = $this->option('only');
 
         if (is_string($only) && $only !== '') {
             $wanted = array_map(static fn (string $name): string => preg_replace('/\.php$/', '', trim($name, " /\\")), explode(',', $only));
@@ -187,7 +230,7 @@ class Publish extends BaseCommand
         }
 
         $partial = count($files) < count($this->templates($source));
-        $path    = rtrim((string) (CLI::getOption('path') ?? APPPATH . 'Views/kpcrudy/' . $as), '/\\');
+        $path    = rtrim((string) ($this->option('path') ?? APPPATH . 'Views/kpcrudy/' . $as), '/\\');
 
         // Còpia sencera: el pare és el del tema original (les plantilles que amplien
         // el pare amb renderParent() continuen funcionant igual). Còpia parcial:

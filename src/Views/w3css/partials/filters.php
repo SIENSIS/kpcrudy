@@ -25,7 +25,10 @@
                 <div class="w3-col m6 l4 w3-margin-bottom">
                     <label class="w3-small w3-text-dark-grey" for="<?= esc($id, 'attr') ?>"><b><?= esc($filter['label']) ?></b></label>
 
-                    <?php if ($filter['kind'] === 'select'): ?>
+                    <?php if (($filter['lookup'] ?? null) !== null): ?>
+                        <?= $this->render('partials/lookup', ['id' => $id, 'name' => 'f[' . $filter['name'] . ']', 'value' => $filter['value'], 'lookup' => $filter['lookup'], 'inputClass' => 'w3-input w3-border w3-round']) ?>
+
+                    <?php elseif ($filter['kind'] === 'select'): ?>
                         <select class="w3-select w3-border w3-round" id="<?= esc($id, 'attr') ?>" name="f[<?= esc($filter['name'], 'attr') ?>]">
                             <option value=""><?= esc(lang('Kpcrudy.all')) ?></option>
                             <?php foreach ($filter['options'] as $value => $label): ?>

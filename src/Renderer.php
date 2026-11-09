@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Kpcrudy;
 
+use Kpcrudy\Config\Kpcrudy as KpcrudyConfig;
 use RuntimeException;
 use Throwable;
 
@@ -19,8 +20,54 @@ class Renderer
     /**
      * @param list<string> $paths Directoris de plantilles, del més prioritari al menys
      */
-    public function __construct(protected array $paths)
+    public function __construct(protected array $paths, protected ?KpcrudyConfig $config = null)
     {
+    }
+
+    /**
+     * Directori dels fitxers CSS i JavaScript de la llibreria (kpcrudy:publish assets).
+     */
+    public static function assetsDir(): string
+    {
+        return __DIR__ . DIRECTORY_SEPARATOR . 'Assets';
+    }
+
+    /**
+     * Inclou un fitxer CSS o JavaScript de la llibreria (src/Assets/) segons
+     * Config\Kpcrudy::$assetsMode: 'inline' (per defecte) el posa dins d'un
+     * <style>/<script> amb el nonce de la CSP; 'external' l'enllaça des de
+     * Config::$assetsUrl (copiat amb "php spark kpcrudy:publish assets"), amb
+     * un paràmetre de versió perquè els canvis no quedin a la memòria cau.
+     */
+    public function asset(string $file): string
+    {
+        if (preg_match('/^[a-z0-9_-]+\.(css|js)$/', $file) !== 1) {
+            throw new RuntimeException(lang('Kpcrudy.exceptions.assetNotFound', [$file]));
+        }
+
+        $source = self::assetsDir() . DIRECTORY_SEPARATOR . $file;
+
+        if (! is_file($source)) {
+            throw new RuntimeException(lang('Kpcrudy.exceptions.assetNotFound', [$file]));
+        }
+
+        $css = str_ends_with($file, '.css');
+
+        if (($this->config?->assetsMode ?? 'inline') === 'external') {
+            $base = (string) ($this->config?->assetsUrl ?? 'assets/kpcrudy');
+            $base = preg_match('#^(https?:)?//|^/#', $base) === 1 ? $base : base_url($base);
+            $url  = rtrim($base, '/') . '/' . $file . '?v=' . substr((string) md5_file($source), 0, 10);
+
+            return $css
+                ? '<link rel="stylesheet"' . $this->nonce('style') . ' href="' . esc($url, 'attr') . '">'
+                : '<script' . $this->nonce() . ' src="' . esc($url, 'attr') . '" defer></script>';
+        }
+
+        $content = (string) file_get_contents($source);
+
+        return $css
+            ? '<style' . $this->nonce('style') . ">\n" . $content . '</style>'
+            : '<script' . $this->nonce() . ">\n" . $content . '</script>';
     }
 
     /**

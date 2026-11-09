@@ -175,6 +175,30 @@ class Kpcrudy extends BaseConfig
     public string $uploadUrl  = 'uploads';
 
     /**
+     * Com s'inclouen el CSS i el JavaScript de kpcrudy (src/Assets/):
+     *  - 'inline'   dins de blocs <style>/<script> amb el nonce de la CSP (per defecte);
+     *  - 'external' com a fitxers enllaçats des de $assetsUrl, sense cap codi en línia.
+     *    Copia'ls amb "php spark kpcrudy:publish assets" (a $assetsPath) a cada versió nova.
+     */
+    public string $assetsMode = 'inline';
+
+    /**
+     * URL dels fitxers publicats (relativa a base_url() o absoluta) i directori on
+     * els copia "php spark kpcrudy:publish assets".
+     */
+    public string $assetsUrl  = 'assets/kpcrudy';
+    public string $assetsPath = FCPATH . 'assets/kpcrudy';
+
+    /**
+     * Gestor dels fitxers pujats per a tots els CRUD (Kpcrudy\Storage\UploadHandler):
+     * el nom d'una classe o una instància. null = kpcrudy els desa a $uploadPath.
+     * Un camp en pot fer servir un altre: fieldType('photo', 'image', ['handler' => ...]).
+     *
+     * @var class-string<\Kpcrudy\Storage\UploadHandler>|\Kpcrudy\Storage\UploadHandler|null
+     */
+    public string|object|null $uploadHandler = null;
+
+    /**
      * Mida màxima per defecte dels fitxers pujats, en KB.
      */
     public int $uploadMaxSize = 2048;

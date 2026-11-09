@@ -34,6 +34,8 @@ use Throwable;
  */
 class Demo extends BaseCommand
 {
+    use ReadsOptions;
+
     protected $group       = 'Kpcrudy';
     protected $name        = 'kpcrudy:demo';
     protected $description = 'Installs, resets or removes the kpcrudy demo application.';
@@ -49,6 +51,7 @@ class Demo extends BaseCommand
 
     public function run(array $params)
     {
+        $this->params = $params;
         $action = $params[0] ?? null;
 
         return match ($action) {
@@ -274,7 +277,7 @@ class Demo extends BaseCommand
 
     private function option(string $name): bool
     {
-        return CLI::getOption($name) !== null || array_key_exists($name, CLI::getOptions());
+        return $this->hasOption($name);
     }
 
     private function confirm(string $question): bool

@@ -130,7 +130,16 @@ return [
     'translations'        => 'Traduccions',
 
     // Exceptions (programming errors)
+    'moreActions' => 'Més accions',
+    'lookupPlaceholder' => 'Escriu almenys {0} caràcters per cercar…',
+    'lookupEmpty' => 'Cap resultat',
+    'treeCycle' => '{0}: un registre no pot ser el seu propi pare ni penjar d\'un dels seus descendents.',
     'exceptions' => [
+        'invalidFilterKey' => 'La clau del filtre "{0}" ha de començar amb una lletra minúscula i només pot tenir lletres minúscules, números i "_".',
+        'invalidFilterType' => 'El filtre "{0}" té un tipus desconegut "{1}": fes servir "select" o "text".',
+        'handlerNotFound' => 'El mètode de controlador "{0}" no existeix.',
+        'invalidUploadHandler' => 'El gestor de fitxers del camp "{0}" ha d\'implementar Kpcrudy\\Storage\\UploadHandler.',
+        'assetNotFound' => 'El fitxer de kpcrudy "{0}" no existeix.',
         'modelNotFound'       => 'Kpcrudy: no s\'ha trobat el model "{0}".',
         'missingSource'       => 'Kpcrudy: cal cridar setTable() o setModel() abans de render().',
         'tableNotFound'       => 'Kpcrudy: la taula "{0}" no existeix.',

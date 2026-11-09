@@ -25,7 +25,10 @@ $input = 'block w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 t
                 <div>
                     <label class="mb-1 block text-xs font-semibold text-slate-600" for="<?= esc($id, 'attr') ?>"><?= esc($filter['label']) ?></label>
 
-                    <?php if ($filter['kind'] === 'select'): ?>
+                    <?php if (($filter['lookup'] ?? null) !== null): ?>
+                        <?= $this->render('partials/lookup', ['id' => $id, 'name' => 'f[' . $filter['name'] . ']', 'value' => $filter['value'], 'lookup' => $filter['lookup'], 'inputClass' => $input]) ?>
+
+                    <?php elseif ($filter['kind'] === 'select'): ?>
                         <select class="<?= $input ?>" id="<?= esc($id, 'attr') ?>" name="f[<?= esc($filter['name'], 'attr') ?>]">
                             <option value=""><?= esc(lang('Kpcrudy.all')) ?></option>
                             <?php foreach ($filter['options'] as $value => $label): ?>

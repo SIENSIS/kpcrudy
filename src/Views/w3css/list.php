@@ -53,14 +53,14 @@ $colspan = count($columns) + 1 + ($hasBulk ? 1 : 0);
 
         <div class="w3-card w3-white">
             <div class="w3-responsive">
-                <table class="w3-table w3-striped w3-hoverable w3-bordered">
+                <table class="w3-table w3-striped w3-hoverable w3-bordered<?= ($mobileCards ?? false) ? ' kp-cards' : '' ?>">
                     <thead>
                         <tr class="w3-light-grey">
                             <?php if ($hasBulk): ?>
                                 <th class="kp-check"><input type="checkbox" class="w3-check" data-kp-check-all aria-label="<?= esc(lang('Kpcrudy.selectAll'), 'attr') ?>"></th>
                             <?php endif ?>
                             <?php foreach ($columns as $column): ?>
-                                <th>
+                                <th<?= $this->attrs(['class' => ($column['class'] ?? '') ?: null]) ?>>
                                     <?php if ($column['sortable']): ?>
                                         <a href="<?= esc($column['url'], 'attr') ?>" class="kp-nodeco">
                                             <?= esc($column['label']) ?>
@@ -82,12 +82,16 @@ $colspan = count($columns) + 1 + ($hasBulk ? 1 : 0);
                                     <td><input type="checkbox" class="w3-check" name="ids[]" value="<?= esc($row['id'], 'attr') ?>" aria-label="<?= esc(lang('Kpcrudy.select'), 'attr') ?>"></td>
                                 <?php endif ?>
                                 <?php foreach ($columns as $column): ?>
-                                    <td><?= $row['cells'][$column['name']] ?></td>
+                                    <td<?= $this->attrs(['class' => ($column['class'] ?? '') ?: null, 'data-label' => $column['label']]) ?>><?= $row['cells'][$column['name']] ?></td>
                                 <?php endforeach ?>
                                 <td class="w3-right-align kp-actions">
-                                    <?php foreach ($row['actions'] as $action): ?>
-                                        <?= $this->render('partials/button', ['action' => $action, 'compact' => true]) ?>
-                                    <?php endforeach ?>
+                                    <?php if ($row['menu'] ?? false): ?>
+                                        <?= $this->render('partials/actions_menu', ['actions' => $row['actions']]) ?>
+                                    <?php else: ?>
+                                        <?php foreach ($row['actions'] as $action): ?>
+                                            <?= $this->render('partials/button', ['action' => $action, 'compact' => true]) ?>
+                                        <?php endforeach ?>
+                                    <?php endif ?>
                                 </td>
                             </tr>
                         <?php endforeach ?>

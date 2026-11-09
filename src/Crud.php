@@ -16,6 +16,9 @@ use CodeIgniter\Model;
 use CodeIgniter\Router\RouteCollection;
 use Kpcrudy\Concerns\ImportsCsv;
 use Kpcrudy\Config\Kpcrudy as KpcrudyConfig;
+use Kpcrudy\Exceptions\CrudCapturedException;
+use Kpcrudy\Storage\UploadHandler;
+use Kpcrudy\Storage\UploadRejectedException;
 use RuntimeException;
 use Throwable;
 
@@ -50,7 +53,7 @@ class Crud
     /**
      * Operacions sense identificador: base/{operació}
      */
-    public const OPERATIONS = ['add', 'trash', 'export', 'import', 'bulk', 'emptytrash'];
+    public const OPERATIONS = ['add', 'trash', 'export', 'import', 'bulk', 'emptytrash', 'lookup'];
 
     /**
      * Permisos que en pressuposen d'altres perquè tinguin sentit a la interfície
@@ -102,6 +105,50 @@ class Crud
 
     /** @var list<string>|null */
     protected ?array $filterFields = null;
+
+    /**
+     * Taula en arbre (tree()): camp pare, ordre entre germans, columna sagnada i profunditat màxima.
+     *
+     * @var array{parent: string, order: string|null, label: string|null, maxDepth: int}|null
+     */
+    protected ?array $tree = null;
+
+    /**
+     * Prioritat de les columnes en pantalles petites (columnPriority()): columna => 1..4.
+     *
+     * @var array<string, int>
+     */
+    protected array $columnPriority = [];
+
+    /**
+     * Accions de fila en un menú "⋯" (rowActionsMenu()): null = mai, 0 = sempre,
+     * N = quan n'hi ha més de N.
+     */
+    protected ?int $actionsMenu = null;
+
+    /**
+     * Files com a targetes en pantalles estretes (mobileCards()).
+     */
+    protected bool $mobileCards = false;
+
+    /**
+     * Si l'exportació CSV porta una columna per idioma dels camps traduïts (exportTranslations()).
+     */
+    protected bool $exportAllLocales = false;
+
+    /**
+     * Condicions pròpies del cercador (searchCallback()).
+     *
+     * @var list<Closure>
+     */
+    protected array $searchCallbacks = [];
+
+    /**
+     * Filtres propis (addFilter()): clau => definició.
+     *
+     * @var array<string, array{label: string, type: string, options: array<string, string>|Closure|null, apply: Closure}>
+     */
+    protected array $customFilters = [];
 
     /** @var list<string>|null */
     protected ?array $exportColumns = null;
@@ -275,6 +322,11 @@ class Crud
      * Si ja s'han comprovat les rutes dels CRUD en aquesta petició (checkRoutes()).
      */
     protected static bool $routesChecked = false;
+
+    /**
+     * Si render() ha d'aturar-se i lliurar el CRUD a Crud::capture().
+     */
+    protected static bool $capturing = false;
     protected string $theme;
     protected string|false $layout;
     protected ?string $layoutSection;
@@ -305,7 +357,7 @@ class Crud
         $config ??= config('Kpcrudy');
 
         $this->config         = $config instanceof KpcrudyConfig ? $config : new KpcrudyConfig();
-        $this->request        = service('request');
+        $this->request        = static::webRequest(service('request'));
         $this->perPage        = $this->config->perPage;
         $this->perPageOptions = $this->config->perPageOptions;
         $this->theme          = $this->config->theme;
@@ -315,6 +367,33 @@ class Crud
         $this->maskIds        = $this->config->maskIds;
 
         helper('url');
+    }
+
+    /**
+     * Petició amb què treballa el CRUD (per defecte, la del servei 'request').
+     * Útil en proves o per construir un CRUD des d'una ordre de spark.
+     */
+    public function setRequest(IncomingRequest $request): static
+    {
+        $this->request = $request;
+
+        return $this;
+    }
+
+    /**
+     * La petició web actual, o una petició GET buida quan no n'hi ha (spark, cues,
+     * tasques programades): així un CRUD es pot construir i descriure des de la CLI.
+     */
+    protected static function webRequest(mixed $request): IncomingRequest
+    {
+        if ($request instanceof IncomingRequest) {
+            return $request;
+        }
+
+        $request = \Config\Services::incomingrequest(null, false);
+        $request->setMethod('GET');
+
+        return $request;
     }
 
     // ------------------------------------------------------------------
@@ -490,6 +569,292 @@ class Crud
         $this->filterFields = array_values($fields);
 
         return $this;
+    }
+
+    /**
+     * Taula autoreferenciada (p. ex. pàgines amb pàgina pare): el llistat es mostra
+     * en ordre d'arbre (cada registre sota el seu pare) amb la columna principal
+     * sagnada, mentre no hi hagi cerca, filtres ni ordenació per columna. En desar,
+     * es refusa un pare que crearia un cicle (el mateix registre o un descendent).
+     * Si $parentField és també una relació (setRelation) a la mateixa taula, el
+     * desplegable mostra les opcions en ordre d'arbre.
+     *
+     * Opcions: 'order' (camp que ordena els germans; per defecte la clau primària),
+     * 'label' (columna sagnada; per defecte la primera), 'maxDepth' (per defecte 20).
+     *
+     * @param array<string, mixed> $options
+     */
+    public function tree(string $parentField, array $options = []): static
+    {
+        $this->tree = [
+            'parent'   => $parentField,
+            'order'    => isset($options['order']) ? (string) $options['order'] : null,
+            'label'    => isset($options['label']) ? (string) $options['label'] : null,
+            'maxDepth' => max(1, (int) ($options['maxDepth'] ?? 20)),
+        ];
+
+        return $this;
+    }
+
+    /**
+     * Ordre d'arbre d'un conjunt de registres: [id => nivell], cada fill després del seu
+     * pare i els germans per l'ordre de tree(). Els registres amb un pare que no és al
+     * conjunt (o sense pare) són arrels.
+     *
+     * @param list<array{id: string, parent: string|null}> $nodes Ja ordenats entre germans
+     *
+     * @return array<string, int>
+     */
+    protected function treeOrder(array $nodes): array
+    {
+        $ids      = array_flip(array_column($nodes, 'id'));
+        $children = [];
+        $roots    = [];
+
+        foreach ($nodes as $node) {
+            $parent = $node['parent'];
+
+            if ($parent === null || $parent === '' || ! isset($ids[$parent]) || $parent === $node['id']) {
+                $roots[] = $node['id'];
+            } else {
+                $children[$parent][] = $node['id'];
+            }
+        }
+
+        $order = [];
+        $max   = $this->tree['maxDepth'] ?? 20;
+        $walk  = static function (string $id, int $level) use (&$walk, &$order, $children, $max): void {
+            if (isset($order[$id])) {
+                return;
+            }
+
+            $order[$id] = $level;
+
+            foreach ($children[$id] ?? [] as $child) {
+                $walk($child, min($level + 1, $max));
+            }
+        };
+
+        foreach ($roots as $root) {
+            $walk($root, 0);
+        }
+
+        // Registres en un cicle (dades antigues): al final, com a arrels
+        foreach ($nodes as $node) {
+            $order[$node['id']] ??= 0;
+        }
+
+        return $order;
+    }
+
+    /**
+     * Si el llistat es mostra en ordre d'arbre: tree() sense cerca, filtres ni ordenació.
+     *
+     * @param array<string, mixed> $state
+     */
+    protected function treeActive(array $state): bool
+    {
+        return $this->tree !== null && isset($this->meta[$this->tree['parent']])
+            && $state['q'] === '' && $state['sort'] === '' && $this->cleanFilters($state['f']) === [];
+    }
+
+    /**
+     * Opcions del camp pare en ordre d'arbre, amb "— " per nivell.
+     *
+     * @param array<string, string> $options
+     *
+     * @return array<string, string>
+     */
+    protected function treeOptions(array $options): array
+    {
+        if ($options === []) {
+            return $options;
+        }
+
+        $field = $this->tree['parent'];
+        $rows  = $this->db->table($this->table)->select("{$this->primaryKey} AS kp_id, {$field} AS kp_parent")
+            ->whereIn($this->primaryKey, array_map('strval', array_keys($options)))->get()->getResultArray();
+        $parents = array_column($rows, 'kp_parent', 'kp_id');
+        $nodes   = [];
+
+        foreach (array_keys($options) as $id) {
+            $parent  = $parents[$id] ?? null;
+            $nodes[] = ['id' => (string) $id, 'parent' => $parent === null ? null : (string) $parent];
+        }
+
+        $result = [];
+
+        foreach ($this->treeOrder($nodes) as $id => $level) {
+            $result[(string) $id] = str_repeat('— ', $level) . $options[$id];
+        }
+
+        return $result;
+    }
+
+    /**
+     * Ordre d'arbre de tots els registres del llistat (dins l'abast): [id => nivell].
+     *
+     * @return array<string, int>
+     */
+    protected function treeIds(bool $trash): array
+    {
+        $field   = $this->tree['parent'];
+        $builder = $this->baseBuilder($trash)->select("{$this->table}.{$this->primaryKey} AS kp_id, {$this->table}.{$field} AS kp_parent");
+        $sort    = $this->tree['order'] !== null && isset($this->meta[$this->tree['order']]) ? $this->tree['order'] : $this->primaryKey;
+        $builder->orderBy("{$this->table}.{$sort}", 'asc')->orderBy("{$this->table}.{$this->primaryKey}", 'asc');
+
+        $nodes = array_map(static fn (array $row): array => [
+            'id'     => (string) $row['kp_id'],
+            'parent' => $row['kp_parent'] === null ? null : (string) $row['kp_parent'],
+        ], $builder->get()->getResultArray());
+
+        return $this->treeOrder($nodes);
+    }
+
+    /**
+     * Comprova que $parent no faci un cicle amb $id (el mateix registre o un descendent).
+     */
+    protected function treeCycle(string $id, mixed $parent): bool
+    {
+        if ($parent === null || $parent === '' || ! is_scalar($parent)) {
+            return false;
+        }
+
+        $current = (string) $parent;
+        $field   = $this->tree['parent'];
+
+        for ($i = 0; $i <= $this->tree['maxDepth'] + 1 && $current !== ''; $i++) {
+            if ($current === $id) {
+                return true;
+            }
+
+            $row     = $this->db->table($this->table)->select($field)->where($this->primaryKey, $current)->get(1)->getRowArray();
+            $current = $row === null || $row[$field] === null ? '' : (string) $row[$field];
+        }
+
+        return false;
+    }
+
+    /**
+     * Quines columnes s'amaguen primer en pantalles petites: columna => prioritat.
+     *  1 = sempre visible (per defecte), 2 = s'amaga per sota de 576 px,
+     *  3 = per sota de 768 px, 4 = per sota de 992 px.
+     * Funciona amb tots els temes (classes kp-p2...kp-p4 del CSS de kpcrudy).
+     *
+     * @param array<string, int> $priorities
+     */
+    public function columnPriority(array $priorities): static
+    {
+        foreach ($priorities as $column => $priority) {
+            $this->columnPriority[(string) $column] = max(1, min(4, (int) $priority));
+        }
+
+        return $this;
+    }
+
+    /**
+     * Mostra les accions de cada fila en un menú desplegable "⋯" (sense JavaScript,
+     * amb <details>): true = sempre, un número = només quan n'hi ha més d'aquests,
+     * false = mai (per defecte). La fitxa continua mostrant els botons.
+     */
+    public function rowActionsMenu(bool|int $when = true): static
+    {
+        $this->actionsMenu = $when === false ? null : ($when === true ? 0 : max(0, $when));
+
+        return $this;
+    }
+
+    /**
+     * En pantalles estretes (< 576 px), cada fila del llistat es mostra com una
+     * targeta amb "Etiqueta: valor" en lloc d'una taula que cal desplaçar.
+     */
+    public function mobileCards(bool $enabled = true): static
+    {
+        $this->mobileCards = $enabled;
+
+        return $this;
+    }
+
+    /**
+     * Exporta els camps traduïts (setTranslations()) amb una columna per idioma,
+     * "Títol (Català)", "Títol (English)"..., en lloc de només l'idioma del llistat.
+     * Amb la importació activada, el fitxer exportat es pot tornar a importar tal qual.
+     */
+    public function exportTranslations(bool $allLocales = true): static
+    {
+        $this->exportAllLocales = $allLocales;
+
+        return $this;
+    }
+
+    /**
+     * Afegeix condicions pròpies al cercador general, dins el mateix grup OR que
+     * els camps de searchFields(): fn (BaseBuilder $builder, string $text, Crud $crud): void.
+     * Serveix per cercar en altres taules amb una subconsulta, per exemple:
+     *
+     *     $crud->searchCallback(fn (BaseBuilder $b, string $text) => $b->orWhereIn('users.id',
+     *         fn (BaseBuilder $q) => $q->select('user_id')->from('auth_identities')->like('secret', $text)));
+     *
+     * Els valors s'han de passar al Query Builder (mai concatenats a l'SQL).
+     */
+    public function searchCallback(Closure $callback): static
+    {
+        $this->searchCallbacks[] = $callback;
+
+        return $this;
+    }
+
+    /**
+     * Filtre propi al panell de filtres: fn (BaseBuilder $builder, string $value, Crud $crud): void
+     * aplica la condició (llistat, exportació...). Opcions:
+     * - 'options': [valor => etiqueta] (o una Closure que les retorna) per a un desplegable;
+     *   només s'accepten aquests valors.
+     * - 'type': 'select' (per defecte si hi ha opcions) o 'text'.
+     */
+    public function addFilter(string $key, string $label, Closure $apply, array $options = []): static
+    {
+        if (preg_match('/^[a-z][a-z0-9_]*$/', $key) !== 1) {
+            throw new RuntimeException(lang('Kpcrudy.exceptions.invalidFilterKey', [$key]));
+        }
+
+        $choices = $options['options'] ?? null;
+        $type    = $options['type'] ?? ($choices !== null ? 'select' : 'text');
+
+        if (! in_array($type, ['select', 'text'], true)) {
+            throw new RuntimeException(lang('Kpcrudy.exceptions.invalidFilterType', [$key, (string) $type]));
+        }
+
+        $this->customFilters[$key] = [
+            'label'   => $label,
+            'type'    => $type,
+            'options' => is_array($choices) || $choices instanceof Closure ? $choices : null,
+            'apply'   => $apply,
+        ];
+
+        return $this;
+    }
+
+    /**
+     * Opcions d'un filtre propi de tipus desplegable.
+     *
+     * @return array<string, string>
+     */
+    protected function customFilterOptions(string $key): array
+    {
+        $options = $this->customFilters[$key]['options'] ?? null;
+
+        if ($options instanceof Closure) {
+            $options = $options($this);
+            $this->customFilters[$key]['options'] = is_array($options) ? $options : [];
+        }
+
+        $result = [];
+
+        foreach (is_array($options) ? $options : [] as $value => $label) {
+            $result[(string) $value] = (string) $label;
+        }
+
+        return $result;
     }
 
     /**
@@ -673,6 +1038,10 @@ class Crud
             'pk'      => $options['pk'] ?? 'id',
             'where'   => $options['where'] ?? [],
             'order'   => $options['order'] ?? null,
+            // Cerca AJAX en lloc d'un desplegable amb tots els registres
+            'ajax'     => (bool) ($options['ajax'] ?? false),
+            'minChars' => max(0, (int) ($options['minChars'] ?? 2)),
+            'limit'    => max(1, min(100, (int) ($options['limit'] ?? 20))),
         ];
         unset($this->optionsCache[$field]);
 
@@ -730,7 +1099,10 @@ class Crud
      * @param array<string, mixed>              $options     'required' (idiomes obligatoris; per defecte el primer),
      *                                                       'rules' (camp => regles), 'types' (camp => 'text'|'textarea'),
      *                                                       'listLocale' (idioma del llistat, la cerca i l'exportació;
-     *                                                       per defecte el de la petició si hi és, si no el primer)
+     *                                                       per defecte el de la petició si hi és, si no el primer),
+     *                                                       'fallbacks' (idiomes de reserva quan un registre no té
+     *                                                       traducció a l'idioma del llistat: ['ca'] per a tots, o
+     *                                                       ['es' => ['ca'], 'en' => ['es', 'ca'], '*' => ['ca']])
      */
     public function setTranslations(string $table, string $foreignKey, string $localeField, array $fields, array $locales, array $options = []): static
     {
@@ -754,6 +1126,7 @@ class Crud
             'rules'      => (array) ($options['rules'] ?? []),
             'types'      => (array) ($options['types'] ?? []),
             'listLocale' => $options['listLocale'] ?? null,
+            'fallbacks'  => (array) ($options['fallbacks'] ?? []),
             'meta'       => null,
         ];
 
@@ -1140,6 +1513,152 @@ class Crud
         }
 
         return array_values(array_unique([...$builtin, ...$custom]));
+    }
+
+    /**
+     * Executa $build (p. ex. l'acció d'un controlador que construeix un CRUD i en
+     * crida render()) i retorna el CRUD construït sense executar cap operació:
+     * render() s'atura abans de llegir la URL, de comprovar el CSRF o de tocar dades.
+     * Retorna null si $build acaba sense cridar render().
+     *
+     *     $crud = Crud::capture(fn () => (new \App\Controllers\Clients())->index());
+     *     $crud?->describe();
+     *
+     * Serveix per a eines (comprovar catàlegs de permisos, generar documentació,
+     * proves) i funciona també des de spark (vegeu captureController()).
+     */
+    public static function capture(Closure $build): ?self
+    {
+        $previous          = static::$capturing;
+        static::$capturing = true;
+
+        try {
+            $build();
+        } catch (CrudCapturedException $e) {
+            return $e->crud;
+        } finally {
+            static::$capturing = $previous;
+        }
+
+        return null;
+    }
+
+    /**
+     * Com capture(), però a partir d'un handler de ruta ('\App\Controllers\Clients::index'
+     * o 'Clients::index' amb $arguments): crea el controlador, en crida initController()
+     * amb una petició web (una GET buida des de la CLI) i executa el mètode.
+     *
+     * @param list<mixed> $arguments
+     */
+    public static function captureController(string $handler, array $arguments = [], ?IncomingRequest $request = null): ?self
+    {
+        [$class, $method] = array_pad(explode('::', ltrim($handler, '\\'), 2), 2, 'index');
+
+        if (! class_exists($class) || ! method_exists($class, $method)) {
+            throw new RuntimeException(lang('Kpcrudy.exceptions.handlerNotFound', [$handler]));
+        }
+
+        $request ??= static::webRequest(service('request'));
+        $previous = service('request');
+        \Config\Services::injectMock('request', $request);
+
+        try {
+            return static::capture(static function () use ($class, $method, $arguments, $request): void {
+                $controller = new $class();
+
+                if (method_exists($controller, 'initController')) {
+                    $controller->initController($request, service('response'), service('logger'));
+                }
+
+                $controller->{$method}(...$arguments);
+            });
+        } finally {
+            \Config\Services::injectMock('request', $previous);
+        }
+    }
+
+    /**
+     * Descripció del CRUD tal com està configurat, sense executar cap operació
+     * ni llegir la URL: recurs, taula, operacions i permisos, camps, columnes,
+     * cerca, filtres, relacions, traduccions, accions... (vegeu la documentació).
+     *
+     * @return array<string, mixed>
+     */
+    public function describe(): array
+    {
+        $this->boot();
+
+        $operations = [];
+
+        foreach ($this->operations as $key => $operation) {
+            $operations[$key] = [
+                'row'        => (bool) $operation['row'],
+                'method'     => (string) $operation['method'],
+                'permission' => (string) $operation['permission'],
+                'label'      => (string) ($operation['label'] ?? $key),
+            ];
+        }
+
+        $builtin = array_values(array_filter(
+            ['list', 'show', 'add', 'edit', 'delete', 'export', 'search', 'filters', 'bulk', ...($this->softDeletes ? ['trash', 'restore', 'purge'] : []), ...($this->import !== null ? ['import'] : [])],
+            fn (string $operation): bool => ($this->permissions[$operation] ?? null) !== false,
+        ));
+
+        $relations = [];
+
+        foreach ($this->relations as $field => $relation) {
+            $relations[$field] = ['type' => '1-N', 'table' => $relation['table'], 'display' => $relation['display'] ?? null, 'ajax' => (bool) ($relation['ajax'] ?? false)];
+        }
+
+        foreach ($this->relationsNN as $name => $relation) {
+            $relations[$name] = ['type' => 'N-N', 'table' => $relation['table'], 'display' => $relation['display'], 'junction' => $relation['junction']];
+        }
+
+        return [
+            'resource'         => $this->getResource(),
+            'table'            => $this->table,
+            'primaryKey'       => $this->primaryKey,
+            'subject'          => $this->subject,
+            'subjectPlural'    => $this->subjectPlural,
+            'softDeletes'      => (bool) $this->softDeletes,
+            'maskIds'          => $this->maskIds,
+            'operations'       => $builtin,
+            'customOperations' => $operations,
+            'permissions'      => $this->permissionCatalogue(),
+            'columns'          => $this->columnList(),
+            'addFields'        => $this->addFieldList(),
+            'editFields'       => $this->editFieldList(),
+            'showFields'       => $this->showFieldList(),
+            'searchFields'     => $this->searchFieldList(),
+            'searchCallbacks'  => count($this->searchCallbacks),
+            'filters'          => [...$this->filterFieldList(), ...array_keys($this->customFilters)],
+            'exportColumns'    => $this->exportColumns ?? $this->columnList(),
+            'hiddenFields'     => $this->hidden,
+            'types'            => $this->describeTypes(),
+            'relations'        => $relations,
+            'translations'     => $this->translations === null ? null : ['table' => $this->translations['table'], 'fields' => $this->translations['fields'], 'locales' => $this->translations['locales']],
+            'tree'             => $this->tree,
+            'actions'          => array_map(static fn (array $a): array => ['label' => $a['label'], 'method' => $a['method'], 'permission' => $a['permission']], $this->actions),
+            'bulkActions'      => array_map(static fn (array $a): array => ['label' => $a['label'] ?? '', 'permission' => $a['permission'] ?? null], $this->bulkActions),
+            'signedOperations' => $this->signAll ? ['*'] : $this->signedOperations,
+        ];
+    }
+
+    /**
+     * Tipus de cada camp de la taula i dels camps virtuals que surten a llistes o formularis.
+     *
+     * @return array<string, string>
+     */
+    protected function describeTypes(): array
+    {
+        $names = array_unique([...array_keys($this->meta), ...$this->columnList(), ...$this->addFieldList(), ...$this->editFieldList()]);
+        $types = [];
+
+        foreach ($names as $name) {
+            $types[$name] = $this->typeOf($name);
+        }
+
+        return $types;
     }
 
     /**
@@ -1761,6 +2280,11 @@ class Crud
      */
     public function render(): ResponseInterface|string
     {
+        if (static::$capturing) {
+            // Crud::capture(): es lliura el CRUD sense executar cap operació
+            throw new CrudCapturedException($this);
+        }
+
         if (ENVIRONMENT === 'development' && $this->config->checkRoutes) {
             static::checkRoutes();
         }
@@ -1793,6 +2317,7 @@ class Crud
             'restore'    => $this->restoreOperation($id),
             'purge'      => $this->purgeOperation($id),
             'emptytrash' => $this->emptyTrashOperation(),
+            'lookup'     => $this->lookupOperation(),
             'export'     => $this->exportOperation(),
             'import'     => $this->importOperation(),
             'bulk'       => $this->bulkOperation(),
@@ -2030,6 +2555,8 @@ class Crud
         }
 
         $state   = $this->readState();
+        // L'ordre d'arbre es calcula abans de construir la consulta del llistat
+        $tree    = $this->treeActive($state) ? $this->treeIds($trash) : null;
         $builder = $this->selectBuilder($trash);
         $this->applySearchAndFilters($builder, $state);
 
@@ -2041,8 +2568,31 @@ class Crud
         // Es recorda l'estat per tornar-hi després d'editar, esborrar...
         session()->set($this->stateKey(), ['query' => $this->stateQuery($state), 'trash' => $trash]);
 
-        $this->applyOrder($builder, $state);
-        $rows = $this->attachNN($builder->limit($state['per_page'], $offset)->get()->getResultArray());
+        if ($tree !== null) {
+            // Ordre d'arbre: calculat sobre tots els registres (només id i pare); es pagina en PHP
+            $order = $tree;
+            $pageIds = array_map('strval', array_slice(array_keys($order), $offset, $state['per_page']));
+            $rows    = [];
+
+            if ($pageIds !== []) {
+                $found = [];
+
+                foreach ($builder->whereIn("{$this->table}.{$this->primaryKey}", $pageIds)->get()->getResultArray() as $row) {
+                    $found[(string) $row[$this->primaryKey]] = $row + ['__kp_level' => $order[(string) $row[$this->primaryKey]]];
+                }
+
+                foreach ($pageIds as $id) {
+                    if (isset($found[$id])) {
+                        $rows[] = $found[$id];
+                    }
+                }
+            }
+
+            $rows = $this->attachNN($rows);
+        } else {
+            $this->applyOrder($builder, $state);
+            $rows = $this->attachNN($builder->limit($state['per_page'], $offset)->get()->getResultArray());
+        }
 
         $sortable = $this->sortableColumns();
         $columns  = [];
@@ -2052,6 +2602,8 @@ class Crud
             $columns[] = [
                 'name'     => $name,
                 'label'    => $this->label($name),
+                // Classe de prioritat (columnPriority()): kp-p2...kp-p4 s'amaguen en pantalles petites
+                'class'    => ($this->columnPriority[$name] ?? 1) > 1 ? 'kp-p' . $this->columnPriority[$name] : '',
                 'sortable' => in_array($name, $sortable, true),
                 'sorted'   => $sorted,
                 'url'      => $this->listUrl($trash, $this->stateQuery($state, [
@@ -2071,10 +2623,21 @@ class Crud
                 $cells[$name] = $this->renderValue($name, $row, 'list');
             }
 
+            // Arbre: la columna principal es sagna segons el nivell
+            if (($row['__kp_level'] ?? 0) > 0) {
+                $label         = $this->tree['label'] ?? ($this->columnList()[0] ?? null);
+                $cells[$label] = str_repeat('<span class="kp-tree-pad"></span>', (int) $row['__kp_level'])
+                    . '<i class="bi bi-arrow-return-right kp-tree-mark" aria-hidden="true"></i> ' . ($cells[$label] ?? '');
+            }
+
+            $actions = $this->rowActions($row, $trash, 'list');
             $items[] = [
                 'id'      => $this->encodeId((string) $row[$this->primaryKey]),
                 'cells'   => $cells,
-                'actions' => $this->rowActions($row, $trash, 'list'),
+                'actions' => $actions,
+                // Accions en un menú "⋯" (rowActionsMenu())
+                'menu'    => $this->actionsMenu !== null && count($actions) > $this->actionsMenu,
+                'level'   => $row['__kp_level'] ?? 0,
             ];
         }
 
@@ -2083,6 +2646,7 @@ class Crud
 
         return $this->output('list', [
             'trash'          => $trash,
+            'mobileCards'    => $this->mobileCards,
             'columns'        => $columns,
             'rows'           => $items,
             'state'          => $state,
@@ -2094,7 +2658,7 @@ class Crud
             'filters'        => $this->can('filters') ? $this->filterData($state) : [],
             'filtersActive'  => count($this->stateQuery($state)['f'] ?? []),
             'filtersReset'   => $this->listUrl($trash, $this->stateQuery($state, ['f' => [], 'page' => 1])),
-            'canSearch'      => $this->can('search') && $this->searchFieldList() !== [],
+            'canSearch'      => $this->can('search') && ($this->searchFieldList() !== [] || $this->searchCallbacks !== []),
             'perPageOptions' => $this->perPageOptions,
             'headerActions'  => $this->headerActionList($trash, $state, $trashCount),
             'bulkActions'    => $this->bulkActionList($trash),
@@ -2428,6 +2992,115 @@ class Crud
      * Torna al llistat (o a setBackUrl()) amb un missatge: success, danger,
      * warning o info. Per a les operacions pròpies que acaben amb un error.
      */
+    /**
+     * Cerca AJAX d'una relació amb 'ajax' => true (GET base/lookup?field=camp&q=text):
+     * JSON {"results": [{"id": ..., "text": ...}]}. Només per a qui pot fer servir
+     * el camp: al formulari d'alta (add), d'edició (edit) o als filtres (filters).
+     * Aplica el 'where' de la relació i la limita a 'limit' resultats.
+     */
+    protected function lookupOperation(): ResponseInterface
+    {
+        $field = (string) ($this->request->getGet('field') ?? '');
+        $query = trim((string) ($this->request->getGet('q') ?? ''));
+
+        if ($this->isPost() || ! $this->isLookup($field) || ! $this->canUseLookup($field)) {
+            throw PageNotFoundException::forPageNotFound(lang('Kpcrudy.notAllowed'));
+        }
+
+        $relation = $this->relations[$field];
+
+        if (mb_strlen($query) < $relation['minChars']) {
+            return service('response')->setJSON(['results' => []]);
+        }
+
+        $builder = $this->relationBuilder($field);
+        $builder->groupStart();
+
+        foreach ($relation['fields'] as $column) {
+            $builder->orLike($column, $this->escapeLike($query), 'both', true, true);
+        }
+
+        $builder->groupEnd();
+
+        $results = [];
+
+        foreach ($builder->limit($relation['limit'])->get()->getResultArray() as $row) {
+            $results[] = ['id' => (string) $row['kp_value'], 'text' => $this->formatTemplate($relation['display'], $row)];
+        }
+
+        return service('response')->setJSON(['results' => $results]);
+    }
+
+    /**
+     * Si un camp és una relació 1-N amb cerca AJAX (setRelation(..., ['ajax' => true])).
+     */
+    protected function isLookup(string $name): bool
+    {
+        return isset($this->relations[$name]) && $this->relations[$name]['ajax'] && isset($this->meta[$name]);
+    }
+
+    /**
+     * Si l'usuari pot fer servir la cerca d'un camp: és al formulari que pot obrir o als filtres.
+     */
+    protected function canUseLookup(string $name): bool
+    {
+        if (in_array($name, $this->hidden, true)) {
+            return false;
+        }
+
+        return (in_array($name, $this->addFieldList(), true) && $this->can('add'))
+            || (in_array($name, $this->editFieldList(), true) && $this->can('edit'))
+            || (in_array($name, $this->filterFieldList(), true) && $this->can('list') && $this->can('filters'));
+    }
+
+    /**
+     * Consulta de la taula d'una relació 1-N amb el seu 'where' i ordre.
+     */
+    protected function relationBuilder(string $name): BaseBuilder
+    {
+        $relation = $this->relations[$name];
+        $builder  = $this->db->table($relation['table'])->select($relation['pk'] . ' AS kp_value');
+
+        foreach ($relation['fields'] as $column) {
+            $builder->select($column);
+        }
+
+        if ($relation['where'] !== []) {
+            $builder->where($relation['where']);
+        }
+
+        return $builder->orderBy($relation['order'] ?? $relation['fields'][0]);
+    }
+
+    /**
+     * Text d'un valor d'una relació 1-N, o null si no existeix o queda fora del 'where'
+     * de la relació (serveix també per validar els valors de les relacions AJAX).
+     */
+    protected function relationText(string $name, mixed $value): ?string
+    {
+        if ($value === null || $value === '' || ! is_scalar($value)) {
+            return null;
+        }
+
+        $row = $this->relationBuilder($name)->where($this->relations[$name]['pk'], (string) $value)->get(1)->getRowArray();
+
+        return $row === null ? null : $this->formatTemplate($this->relations[$name]['display'], $row);
+    }
+
+    /**
+     * Dades del giny de cerca d'un camp AJAX (formulari o filtre).
+     *
+     * @return array{url: string, minChars: int, text: string}
+     */
+    protected function lookupData(string $name, mixed $value): array
+    {
+        return [
+            'url'      => $this->withQuery($this->url('lookup'), ['field' => $name]),
+            'minChars' => $this->relations[$name]['minChars'],
+            'text'     => (string) $this->relationText($name, $value),
+        ];
+    }
+
     public function backToList(string $type, string $text): ResponseInterface
     {
         return $this->redirectToList($type, $text);
@@ -2562,9 +3235,15 @@ class Crud
             $type = $this->typeOf($name);
 
             if (! isset($errors[$name]) && in_array($type, ['relation', 'enum', 'select'], true) && $value !== '' && $value !== null
-                && ! array_key_exists((string) $value, $this->optionsFor($name))) {
+                && ($this->isLookup($name) ? $this->relationText($name, $value) === null : ! array_key_exists((string) $value, $this->optionsFor($name)))) {
                 $errors[$name] = lang('Kpcrudy.invalidOption', [$this->label($name)]);
             }
+        }
+
+        // Arbre: el pare no pot ser el mateix registre ni un dels seus descendents
+        if ($this->tree !== null && $mode === 'edit' && $id !== null && array_key_exists($this->tree['parent'], $data)
+            && ! isset($errors[$this->tree['parent']]) && $this->treeCycle((string) $id, $data[$this->tree['parent']])) {
+            $errors[$this->tree['parent']] = lang('Kpcrudy.treeCycle', [$this->label($this->tree['parent'])]);
         }
 
         foreach ($files as $name => $file) {
@@ -2613,14 +3292,29 @@ class Crud
 
         try {
             foreach ($files as $name => $file) {
-                $dir = $this->uploadDir($name);
+                $dir     = $this->uploadDir($name);
+                $handler = $this->uploadHandler($name);
 
                 if ($file !== null && $file->isValid() && ! $file->hasMoved()) {
-                    // El camp desa la ruta relativa al directori base: "subcarpeta/nom.ext"
-                    $relative = ltrim($this->uploadSubdir($name, $data, $record) . '/' . $file->getRandomName(), '/');
-                    $file->move(dirname($dir . '/' . $relative), basename($relative));
-                    $moved[]     = $dir . DIRECTORY_SEPARATOR . $relative;
-                    $data[$name] = $relative;
+                    if ($handler !== null) {
+                        // Un gestor propi decideix on va el fitxer i què es desa a la columna
+                        try {
+                            $stored = $handler->store($file, $name, $this->uploadContext($name, $mode, $data, $record));
+                        } catch (UploadRejectedException $e) {
+                            $this->deleteFiles($moved);
+
+                            return [$values, [$name => $e->getMessage()], lang('Kpcrudy.validationErrors')];
+                        }
+
+                        $moved[]     = [$name, $stored];
+                        $data[$name] = $stored;
+                    } else {
+                        // El camp desa la ruta relativa al directori base: "subcarpeta/nom.ext"
+                        $relative = ltrim($this->uploadSubdir($name, $data, $record) . '/' . $file->getRandomName(), '/');
+                        $file->move(dirname($dir . '/' . $relative), basename($relative));
+                        $moved[]     = $dir . DIRECTORY_SEPARATOR . $relative;
+                        $data[$name] = $relative;
+                    }
                 } elseif ($this->request->getPost($name . '__remove')) {
                     $data[$name] = null;
                 } else {
@@ -2628,7 +3322,7 @@ class Crud
                 }
 
                 if (! empty($record[$name])) {
-                    $obsolete[] = $this->uploadFilePath($name, (string) $record[$name]);
+                    $obsolete[] = $handler !== null ? [$name, (string) $record[$name]] : $this->uploadFilePath($name, (string) $record[$name]);
                 }
             }
 
@@ -2767,7 +3461,7 @@ class Crud
         if ($hard) {
             foreach (array_keys($this->types) as $name) {
                 if ($this->isUpload($name) && ! empty($record[$name]) && ($this->types[$name]['options']['deleteFiles'] ?? true)) {
-                    $this->deleteFiles([$this->uploadFilePath($name, (string) $record[$name])]);
+                    $this->deleteFiles([$this->uploadHandler($name) !== null ? [$name, (string) $record[$name]] : $this->uploadFilePath($name, (string) $record[$name])]);
                 }
             }
         }
@@ -2883,8 +3577,14 @@ class Crud
         return rtrim($path, '/\\');
     }
 
-    protected function uploadUrl(string $name, string $file): string
+    protected function uploadUrl(string $name, string $file, string $operation = 'show'): ?string
     {
+        $handler = $this->uploadHandler($name);
+
+        if ($handler !== null) {
+            return $handler->url($file, $name, $this->uploadContext($name, $operation, [], null));
+        }
+
         $url = $this->types[$name]['options']['url'] ?? base_url(trim($this->config->uploadUrl, '/') . '/' . $this->table);
 
         return rtrim($url, '/') . '/' . implode('/', array_map('rawurlencode', explode('/', $file)));
@@ -2978,15 +3678,77 @@ class Crud
     }
 
     /**
-     * @param list<string|null> $files
+     * Esborra fitxers: rutes absolutes (sense gestor) o parells [camp, valor desat]
+     * que esborra l'UploadHandler del camp.
+     *
+     * @param list<string|array{0: string, 1: string}|null> $files
      */
     protected function deleteFiles(array $files): void
     {
         foreach ($files as $file) {
+            if (is_array($file)) {
+                [$name, $stored] = $file;
+                $this->uploadHandler($name)?->delete($stored, $name, $this->uploadContext($name, 'delete', [], null));
+
+                continue;
+            }
+
             if ($file !== null && is_file($file)) {
                 @unlink($file);
             }
         }
+    }
+
+    /**
+     * Gestor dels fitxers d'un camp: l'opció 'handler' del camp o Config::$uploadHandler.
+     */
+    protected function uploadHandler(string $name): ?UploadHandler
+    {
+        $handler = $this->types[$name]['options']['handler'] ?? $this->config->uploadHandler;
+
+        if ($handler === null || $handler === '') {
+            return null;
+        }
+
+        if (is_string($handler)) {
+            $handler = new $handler();
+            // Una sola instància per camp i CRUD
+            if (isset($this->types[$name])) {
+                $this->types[$name]['options']['handler'] = $handler;
+            }
+        }
+
+        if (! $handler instanceof UploadHandler) {
+            throw new RuntimeException(lang('Kpcrudy.exceptions.invalidUploadHandler', [$name]));
+        }
+
+        return $handler;
+    }
+
+    /**
+     * Context que reben els mètodes de l'UploadHandler.
+     *
+     * @param array<string, mixed>      $data
+     * @param array<string, mixed>|null $record
+     *
+     * @return array<string, mixed>
+     */
+    protected function uploadContext(string $name, string $operation, array $data, ?array $record): array
+    {
+        $options = $this->types[$name]['options'] ?? [];
+        unset($options['handler']);
+
+        return [
+            'crud'      => $this,
+            'resource'  => $this->getResource(),
+            'table'     => $this->table,
+            'field'     => $name,
+            'type'      => $this->typeOf($name),
+            'options'   => $options,
+            'operation' => $operation,
+            'data'      => $data,
+            'record'    => $record,
+        ];
     }
 
     // ------------------------------------------------------------------
@@ -3089,17 +3851,24 @@ class Crud
             }
         }
 
-        // Traduccions de l'idioma del llistat (alias kt)
+        // Traduccions de l'idioma del llistat (alias kt) i dels idiomes de reserva (kt1, kt2...)
         if ($this->translations !== null) {
-            $tr = $this->translations;
-            $builder->join(
-                "{$tr['table']} kt",
-                "kt.{$tr['fk']} = {$this->table}.{$this->primaryKey} AND kt.{$tr['locale']} = " . $this->db->escape($this->listLocale()),
-                'left',
-            );
+            $tr      = $this->translations;
+            $aliases = $this->translationAliases();
+
+            foreach ($this->localeChain() as $i => $locale) {
+                $alias = $aliases[$i];
+                $builder->join(
+                    "{$tr['table']} {$alias}",
+                    "{$alias}.{$tr['fk']} = {$this->table}.{$this->primaryKey} AND {$alias}.{$tr['locale']} = " . $this->db->escape($locale),
+                    'left',
+                );
+            }
 
             foreach ($tr['fields'] as $field) {
-                $builder->select("kt.{$field} AS kt__{$field}");
+                count($aliases) === 1
+                    ? $builder->select("kt.{$field} AS kt__{$field}")
+                    : $builder->select($this->translatedExpression($field) . " AS kt__{$field}", false);
             }
         }
 
@@ -3187,17 +3956,24 @@ class Crud
                         $targets[] = "kr_{$name}.{$relatedField}";
                     }
                 } elseif ($this->isTranslated($name)) {
-                    $targets[] = "kt.{$name}";
+                    $targets[] = ['translated' => $name];
                 } elseif (isset($this->meta[$name])) {
                     $targets[] = "{$table}.{$name}";
                 }
             }
 
-            if ($targets !== []) {
+            if ($targets !== [] || $this->searchCallbacks !== []) {
                 $builder->groupStart();
 
                 foreach ($targets as $target) {
-                    $builder->orLike($target, $this->escapeLike($state['q']), 'both', true);
+                    is_array($target)
+                        ? $this->likeTranslated($builder, $target['translated'], $this->escapeLike($state['q']), true)
+                        : $builder->orLike($target, $this->escapeLike($state['q']), 'both', true);
+                }
+
+                // Condicions pròpies (searchCallback()): dins el mateix grup OR
+                foreach ($this->searchCallbacks as $callback) {
+                    $callback($builder, $state['q'], $this);
                 }
 
                 $builder->groupEnd();
@@ -3209,6 +3985,25 @@ class Crud
         }
 
         foreach ($state['f'] as $name => $value) {
+            if (isset($this->customFilters[$name])) {
+                $filter = $this->customFilters[$name];
+
+                if (! is_scalar($value) || trim((string) $value) === '') {
+                    continue;
+                }
+
+                $value = trim((string) $value);
+
+                // Els desplegables propis només admeten les seves opcions (validades a readState())
+                if ($filter['type'] === 'select' && ! array_key_exists($value, $this->customFilterOptions($name))) {
+                    continue;
+                }
+
+                $filter['apply']($builder, $value, $this);
+
+                continue;
+            }
+
             $kind   = $this->filterKind($name);
             $column = $this->isTranslated($name) ? "kt.{$name}" : "{$table}.{$name}";
 
@@ -3242,7 +4037,8 @@ class Crud
             }
 
             // Els desplegables només admeten les seves opcions
-            if ($kind === 'select' && ! array_key_exists((string) $value, $this->optionsFor($name))) {
+            // Els desplegables només admeten les seves opcions (les relacions AJAX ja s'han validat a readState())
+            if ($kind === 'select' && ! $this->isLookup($name) && ! array_key_exists((string) $value, $this->optionsFor($name))) {
                 continue;
             }
 
@@ -3258,6 +4054,8 @@ class Crud
                 $this->whereMultiContains($builder, $name, $column, (string) $value);
             } elseif ($kind === 'select') {
                 $builder->where($column, $value);
+            } elseif ($this->isTranslated($name)) {
+                $this->likeTranslated($builder, $name, $this->escapeLike((string) $value), false);
             } else {
                 $builder->like($column, $this->escapeLike((string) $value), 'both', true);
             }
@@ -3276,7 +4074,7 @@ class Crud
         if (isset($this->relations[$sort])) {
             $builder->orderBy("kr_{$sort}.{$this->relations[$sort]['fields'][0]}", $dir);
         } elseif ($this->isTranslated($sort)) {
-            $builder->orderBy("kt.{$sort}", $dir);
+            $builder->orderBy($this->translatedExpression($sort), $dir, false);
         } elseif (isset($this->meta[$sort])) {
             $builder->orderBy("{$this->table}.{$sort}", $dir);
         }
@@ -3379,6 +4177,11 @@ class Crud
             foreach ($builder->get()->getResultArray() as $row) {
                 $options[(string) $row['kp_value']] = $this->formatTemplate($relation['display'], $row);
             }
+
+            // Arbre: el camp pare a la mateixa taula mostra les opcions en ordre d'arbre
+            if ($this->tree !== null && $name === $this->tree['parent'] && $relation['table'] === $this->table && $type === 'relation') {
+                $options = $this->treeOptions($options);
+            }
         } elseif ($type === 'boolean') {
             $options = ['1' => lang('Kpcrudy.yes'), '0' => lang('Kpcrudy.no')];
         } elseif (in_array($type, ['enum', 'select', 'multiselect'], true)) {
@@ -3421,6 +4224,91 @@ class Crud
         $current = $this->request->getLocale();
 
         return isset($locales[$current]) ? $current : (string) array_key_first($locales);
+    }
+
+    /**
+     * Idiomes que es consulten, per ordre, per mostrar un camp traduït al llistat:
+     * l'idioma del llistat i els seus idiomes de reserva (opció 'fallbacks').
+     *
+     * @return list<string>
+     */
+    protected function localeChain(): array
+    {
+        $locales   = $this->translations['locales'] ?? [];
+        $fallbacks = $this->translations['fallbacks'] ?? [];
+        $first     = $this->listLocale();
+
+        if (array_is_list($fallbacks)) {
+            $extra = $fallbacks;
+        } else {
+            $extra = (array) ($fallbacks[$first] ?? ($fallbacks['*'] ?? []));
+        }
+
+        $chain = [$first];
+
+        foreach ($extra as $locale) {
+            if (is_string($locale) && isset($locales[$locale]) && ! in_array($locale, $chain, true)) {
+                $chain[] = $locale;
+            }
+        }
+
+        return $chain;
+    }
+
+    /**
+     * Àlies de la taula de traduccions de cada idioma de localeChain(): kt, kt1, kt2...
+     *
+     * @return list<string>
+     */
+    protected function translationAliases(): array
+    {
+        return array_map(static fn (int $i): string => $i === 0 ? 'kt' : 'kt' . $i, array_keys($this->localeChain()));
+    }
+
+    /**
+     * Expressió SQL del valor d'un camp traduït al llistat: el de l'idioma del
+     * llistat o, si és buit, el del primer idioma de reserva que en tingui.
+     * Els noms surten de la configuració (no de la petició).
+     */
+    protected function translatedExpression(string $field): string
+    {
+        $aliases = $this->translationAliases();
+
+        if (count($aliases) === 1) {
+            return "kt.{$field}";
+        }
+
+        return 'COALESCE(' . implode(', ', array_map(static fn (string $a): string => "NULLIF({$a}.{$field}, '')", $aliases)) . ')';
+    }
+
+    /**
+     * Condició LIKE sobre un camp traduït respectant els idiomes de reserva: coincideix
+     * el valor de l'idioma del llistat o, si és buit, el del primer idioma que en tingui.
+     */
+    protected function likeTranslated(BaseBuilder $builder, string $field, string $match, bool $or): void
+    {
+        $aliases = $this->translationAliases();
+
+        if (count($aliases) === 1) {
+            $or ? $builder->orLike("kt.{$field}", $match, 'both', true) : $builder->like("kt.{$field}", $match, 'both', true);
+
+            return;
+        }
+
+        $or ? $builder->orGroupStart() : $builder->groupStart();
+
+        foreach ($aliases as $i => $alias) {
+            $builder->orGroupStart();
+
+            // Els idiomes anteriors de la cadena no tenen valor
+            foreach (array_slice($aliases, 0, $i) as $previous) {
+                $builder->groupStart()->where("{$previous}.{$field}", null)->orWhere("{$previous}.{$field}", '')->groupEnd();
+            }
+
+            $builder->like("{$alias}.{$field}", $match, 'both', true)->groupEnd();
+        }
+
+        $builder->groupEnd();
     }
 
     /**
@@ -4147,12 +5035,22 @@ class Crud
                     : '<span class="kp-badge kp-no badge text-bg-secondary">' . esc($text) . '</span>';
 
             case 'image':
-                $url = esc($this->uploadUrl($name, (string) $value), 'attr');
+                $url = $this->uploadUrl($name, (string) $value, $context);
+
+                if ($url === null) {
+                    return esc(basename($text));
+                }
+
+                $url = esc($url, 'attr');
 
                 return '<a href="' . $url . '" target="_blank"><img src="' . $url . '" alt="" class="img-thumbnail kp-thumb"></a>';
 
             case 'upload':
-                return '<a href="' . esc($this->uploadUrl($name, (string) $value), 'attr') . '" target="_blank"><i class="bi bi-paperclip"></i> ' . esc(basename($text)) . '</a>';
+                $url = $this->uploadUrl($name, (string) $value, $context);
+
+                return $url === null
+                    ? '<i class="bi bi-paperclip"></i> ' . esc(basename($text))
+                    : '<a href="' . esc($url, 'attr') . '" target="_blank"><i class="bi bi-paperclip"></i> ' . esc(basename($text)) . '</a>';
 
             case 'url':
                 // Només es fa enllaç d'adreces http(s): mai javascript:, data:...
@@ -4211,7 +5109,20 @@ class Crud
                 return implode(', ', $row['__nn'][$name] ?? []);
 
             case 'translation':
-                return (string) ($row['kt__' . $name] ?? ($row['__tr'][$this->listLocale()][$name] ?? ''));
+                if (isset($row['kt__' . $name])) {
+                    return (string) $row['kt__' . $name];
+                }
+
+                // Fitxa: traduccions carregades; la primera de la cadena que tingui valor
+                foreach ($this->localeChain() as $locale) {
+                    $text = (string) ($row['__tr'][$locale][$name] ?? '');
+
+                    if ($text !== '') {
+                        return $text;
+                    }
+                }
+
+                return '';
 
             case 'multiselect':
                 $options = $this->optionsFor($name);
@@ -4378,7 +5289,9 @@ class Crud
                 'label'     => $this->label($name),
                 'type'      => $readonly ? 'readonly' : $type,
                 'value'     => $this->formValue($type, $value),
-                'options'   => in_array($type, self::SELECT_TYPES, true) ? $this->optionsFor($name) : [],
+                'options'   => in_array($type, self::SELECT_TYPES, true) && ! $this->isLookup($name) ? $this->optionsFor($name) : [],
+                // Relacions AJAX: un camp de cerca en lloc d'un desplegable
+                'lookup'    => $this->isLookup($name) && ! $readonly ? $this->lookupData($name, $value) : null,
                 'required'  => in_array('required', $this->fieldRules($name, $mode, null), true),
                 'error'     => $errors[$name] ?? null,
                 'help'      => $this->help[$name] ?? ($type === 'password' && $mode === 'edit' ? lang('Kpcrudy.passwordKeep') : null),
@@ -4400,7 +5313,7 @@ class Crud
             if (in_array($type, ['upload', 'image'], true) && is_string($value) && $value !== '') {
                 $item['file'] = [
                     'name'    => basename($value),
-                    'url'     => $this->uploadUrl($name, $value),
+                    'url'     => $this->uploadUrl($name, $value, 'form'),
                     'isImage' => $type === 'image',
                 ];
             }
@@ -4458,10 +5371,24 @@ class Crud
                     'number', 'decimal' => 'number',
                     default => 'text',
                 },
-                'options' => $kind === 'select' ? $this->optionsFor($name) : [],
+                'options' => $kind === 'select' && ! $this->isLookup($name) ? $this->optionsFor($name) : [],
+                'lookup'  => $this->isLookup($name) ? $this->lookupData($name, $state['f'][$name] ?? null) : null,
                 'value'   => $kind === 'range'
                     ? ['from' => is_scalar($value['from'] ?? null) ? (string) $value['from'] : '', 'to' => is_scalar($value['to'] ?? null) ? (string) $value['to'] : '']
                     : (is_array($value) ? '' : (string) $value),
+            ];
+        }
+
+        foreach ($this->customFilters as $key => $filter) {
+            $value = $state['f'][$key] ?? '';
+
+            $filters[] = [
+                'name'    => $key,
+                'label'   => $filter['label'],
+                'kind'    => $filter['type'],
+                'input'   => 'text',
+                'options' => $filter['type'] === 'select' ? $this->customFilterOptions($key) : [],
+                'value'   => is_scalar($value) ? (string) $value : '',
             ];
         }
 
@@ -4768,8 +5695,35 @@ class Crud
             'q'        => is_string($get['q'] ?? null) ? trim($get['q']) : '',
             'sort'     => in_array($sort, $this->sortableColumns(), true) ? $sort : '',
             'dir'      => ($get['dir'] ?? '') === 'desc' ? 'desc' : 'asc',
-            'f'        => array_intersect_key($filters, array_flip($this->filterFieldList())),
+            'f'        => $this->validFilters(array_intersect_key($filters, array_flip([...$this->filterFieldList(), ...array_keys($this->customFilters)]))),
         ];
+    }
+
+    /**
+     * Treu els valors dels filtres que necessiten una consulta per validar-se (relacions
+     * AJAX, filtres propis amb opcions d'una Closure). Es fa aquí, abans de construir la
+     * consulta del llistat: una altra consulta a mig construir-la en perdria els àlies.
+     *
+     * @param array<string, mixed> $filters
+     *
+     * @return array<string, mixed>
+     */
+    protected function validFilters(array $filters): array
+    {
+        foreach ($filters as $name => $value) {
+            if (! is_scalar($value) || (string) $value === '') {
+                continue;
+            }
+
+            if (isset($this->customFilters[$name]) && $this->customFilters[$name]['type'] === 'select'
+                && ! array_key_exists(trim((string) $value), $this->customFilterOptions($name))) {
+                unset($filters[$name]);
+            } elseif ($this->isLookup($name) && $this->relationText($name, $value) === null) {
+                unset($filters[$name]);
+            }
+        }
+
+        return $filters;
     }
 
     /**
@@ -5062,19 +6016,49 @@ class Crud
             fwrite($handle, "\xEF\xBB\xBF");
         }
 
-        fputcsv($handle, array_map($this->label(...), $columns), $delimiter, '"', '');
+        // Amb exportTranslations(), cada camp traduït es converteix en una columna per idioma
+        $allLocales = $this->exportAllLocales && $this->translations !== null;
+        $headers    = [];
 
-        // Es llegeix per blocs per no tenir tot el resultat a la memòria
+        foreach ($columns as $name) {
+            if ($allLocales && $this->isTranslated($name)) {
+                foreach ($this->translations['locales'] as $localeLabel) {
+                    $headers[] = $this->label($name) . ' (' . $localeLabel . ')';
+                }
+            } else {
+                $headers[] = $this->label($name);
+            }
+        }
+
+        fputcsv($handle, $headers, $delimiter, '"', '');
+
+        // Es llegeix per blocs per no tenir tot el resultat a la memòria. Les consultes de
+        // cada bloc (N-N, traduccions) esborren els àlies de la connexió: es restauren
+        // abans de llegir el bloc següent (bases de dades amb prefix de taules)
+        $aliases = (array) $this->db->aliasedTables;
+
         for ($offset = 0; ($chunk = $builder->get(500, $offset, false)->getResultArray()) !== []; $offset += 500) {
-            foreach ($this->attachNN($chunk) as $row) {
+            $chunk = $this->attachNN($chunk);
+
+            foreach ($allLocales ? $this->attachTranslations($chunk) : $chunk as $row) {
                 $line = [];
 
                 foreach ($columns as $name) {
+                    if ($allLocales && $this->isTranslated($name)) {
+                        foreach (array_keys($this->translations['locales']) as $locale) {
+                            $line[] = $this->csvSafe((string) ($row['__tr'][$locale][$name] ?? ''));
+                        }
+
+                        continue;
+                    }
+
                     $line[] = $this->csvSafe($this->renderValue($name, $row, 'export'));
                 }
 
                 fputcsv($handle, $line, $delimiter, '"', '');
             }
+
+            $this->db->setAliasedTables($aliases);
         }
 
         rewind($handle);
@@ -5133,7 +6117,7 @@ class Crud
 
         $paths[] = $themes['bootstrap5'];
 
-        return new Renderer(array_values(array_unique($paths)));
+        return new Renderer(array_values(array_unique($paths)), $this->config);
     }
 
     /**

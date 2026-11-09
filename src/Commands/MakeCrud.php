@@ -29,6 +29,8 @@ use Throwable;
  */
 class MakeCrud extends BaseCommand
 {
+    use ReadsOptions;
+
     protected $group       = 'Kpcrudy';
     protected $name        = 'kpcrudy:make';
     protected $description = 'Generates the controller method and route of a CRUD from a database table.';
@@ -53,6 +55,7 @@ class MakeCrud extends BaseCommand
 
     public function run(array $params)
     {
+        $this->params = $params;
         $generator   = new CrudGenerator(db_connect());
         $interactive = ! isset($params[0]) || $params[0] === '';
 
@@ -291,7 +294,8 @@ class MakeCrud extends BaseCommand
 
     private function value(string $option, bool $interactive, string $question, string $default): string
     {
-        $value = CLI::getOption($option);
+        // Primer les opcions de $params (command()), després les de la línia d'ordres
+        $value = $this->option($option);
 
         if (is_string($value) && $value !== '') {
             return $value;
@@ -302,7 +306,7 @@ class MakeCrud extends BaseCommand
 
     private function flag(string $name): bool
     {
-        return array_key_exists($name, CLI::getOptions());
+        return $this->hasOption($name);
     }
 
     private function validate(string $controller, string $method, string $route, string $as, string $extends): ?string

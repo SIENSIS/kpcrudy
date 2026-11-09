@@ -52,14 +52,14 @@ $input   = 'rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm focu
 
         <div class="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
             <div class="overflow-x-auto">
-                <table class="min-w-full divide-y divide-slate-200 text-sm">
+                <table class="min-w-full divide-y divide-slate-200 text-sm<?= ($mobileCards ?? false) ? ' kp-cards' : '' ?>">
                     <thead class="bg-slate-50 text-left text-slate-600">
                         <tr>
                             <?php if ($hasBulk): ?>
                                 <th class="w-px px-3 py-2"><input type="checkbox" class="accent-blue-600" data-kp-check-all aria-label="<?= esc(lang('Kpcrudy.selectAll'), 'attr') ?>"></th>
                             <?php endif ?>
                             <?php foreach ($columns as $column): ?>
-                                <th class="whitespace-nowrap px-3 py-2 font-semibold">
+                                <th class="whitespace-nowrap px-3 py-2 font-semibold <?= esc($column['class'] ?? '', 'attr') ?>">
                                     <?php if ($column['sortable']): ?>
                                         <a href="<?= esc($column['url'], 'attr') ?>" class="hover:underline">
                                             <?= esc($column['label']) ?>
@@ -81,14 +81,18 @@ $input   = 'rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm focu
                                     <td class="px-3 py-2"><input type="checkbox" class="accent-blue-600" name="ids[]" value="<?= esc($row['id'], 'attr') ?>" aria-label="<?= esc(lang('Kpcrudy.select'), 'attr') ?>"></td>
                                 <?php endif ?>
                                 <?php foreach ($columns as $column): ?>
-                                    <td class="px-3 py-2"><?= $row['cells'][$column['name']] ?></td>
+                                    <td class="px-3 py-2 <?= esc($column['class'] ?? '', 'attr') ?>" data-label="<?= esc($column['label'], 'attr') ?>"><?= $row['cells'][$column['name']] ?></td>
                                 <?php endforeach ?>
-                                <td class="whitespace-nowrap px-3 py-2 text-right">
-                                    <div class="inline-flex gap-1">
-                                        <?php foreach ($row['actions'] as $action): ?>
-                                            <?= $this->render('partials/button', ['action' => $action, 'compact' => true]) ?>
-                                        <?php endforeach ?>
-                                    </div>
+                                <td class="whitespace-nowrap px-3 py-2 text-right kp-actions">
+                                    <?php if ($row['menu'] ?? false): ?>
+                                        <?= $this->render('partials/actions_menu', ['actions' => $row['actions']]) ?>
+                                    <?php else: ?>
+                                        <div class="inline-flex gap-1">
+                                            <?php foreach ($row['actions'] as $action): ?>
+                                                <?= $this->render('partials/button', ['action' => $action, 'compact' => true]) ?>
+                                            <?php endforeach ?>
+                                        </div>
+                                    <?php endif ?>
                                 </td>
                             </tr>
                         <?php endforeach ?>
