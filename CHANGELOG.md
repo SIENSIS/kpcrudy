@@ -5,6 +5,8 @@ Documentation is in English and Catalan: [README_EN.md](README_EN.md) · [README
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-11-09
+
 ### Added
 
 - **Upload handlers**: `Kpcrudy\Storage\UploadHandler` (`store()`, `delete()`, `url()`) stores the files of `upload`/`image`
@@ -97,5 +99,6 @@ Published on [Packagist](https://packagist.org/packages/siensis/kpcrudy) from th
 with `composer update siensis/kpcrudy`. The Composer package does not include the test application
 (`demo/`) nor the screenshots (`.gitattributes`); the documentation (`docs/`) is included.
 
-[Unreleased]: https://github.com/SIENSIS/kpcrudy/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/SIENSIS/kpcrudy/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/SIENSIS/kpcrudy/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/SIENSIS/kpcrudy/releases/tag/v1.0.0
