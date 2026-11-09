@@ -39,7 +39,7 @@ La descripció de les funcions equivalents (`maskIds()`, `Crud::maskId()`, `requ
 | `kpcrudy:unmaskid <context> <codi>...` | Mostra l'id real d'un o més codis emmascarats | `php spark kpcrudy:unmaskid invoices aNiPDZ8eyg3JeFxXeA` |
 | `kpcrudy:signurl <url>` | Signa una URL, amb caducitat o sense | `php spark kpcrudy:signurl shared/agenda --ttl 604800 --free-query` |
 | `kpcrudy:checkurl <url>` | Diu si una URL signada és vàlida, si ha caducat o si s'ha modificat | `php spark kpcrudy:checkurl "http://.../shared/agenda?kp_exp=...&kp_sig=..."` |
-| `kpcrudy:publish <config\|theme\|lang> [nom]` | Copia al projecte la configuració (`app/Config/Kpcrudy.php`), un tema (`app/Views/kpcrudy/...`) o els textos d'un idioma (`app/Language/...`), per adaptar-los sense tocar la llibreria | `php spark kpcrudy:publish theme w3css --as intranet` |
+| `kpcrudy:publish <config\|theme\|lang\|assets> [nom]` | Copia al projecte la configuració (`app/Config/Kpcrudy.php`), un tema (`app/Views/kpcrudy/...`), els textos d'un idioma (`app/Language/...`) o, des de la 1.1, els fitxers CSS i JavaScript (`assets`) | `php spark kpcrudy:publish theme w3css --as intranet` |
 
 | Opció | Comandes | Descripció |
 |---|---|---|
@@ -775,6 +775,7 @@ Copia al projecte una part de la llibreria per adaptar-la sense tocar `vendor/` 
   - **Còpia sencera**: el pare del tema nou és el pare del tema original (`bootstrap5`), de manera que les plantilles que amplien el pare amb `renderParent()` continuen funcionant igual.
   - **Còpia parcial** (`--only`): el pare és el tema original, que dona les plantilles que no s'han copiat. Una plantilla que amplia el seu pare amb `renderParent()` (com `partials/assets` de `w3css` i `tailwind`) no es duplica: s'hi escriu una ampliació (`renderParent()` i un `<style>` buit) on afegir només el que vulguis.
   - Després, fes-lo servir en un CRUD amb `->setTheme('<nou>')` o en tots amb `$theme = '<nou>'` a `app/Config/Kpcrudy.php`. Com es fa un tema, a [new_theme_CA.md](new_theme_CA.md).
+- **`assets`** (des de la 1.1): copia el CSS i el JavaScript de kpcrudy (`src/Assets/*.css`, `*.js`) a `Config\Kpcrudy::$assetsPath` (per defecte `public/assets/kpcrudy`) o a `--path`, per a `$assetsMode = 'external'` (sense cap codi en línia). Els fitxers existents se substitueixen sempre: executa-la després de cada actualització de la llibreria.
 - **`lang <idioma>`**: copia `src/Language/<idioma>/Kpcrudy.php` de la llibreria a `app/Language/<idioma>/Kpcrudy.php`, amb un comentari al principi. CodeIgniter combina els dos fitxers: els textos del projecte tenen preferència i els que hi faltin surten de la llibreria. Per tant, pots esborrar les línies que no canviïs (i els textos nous de versions futures continuaran apareixent).
 
 No sobreescriu mai cap fitxer sense `--force`. L'única excepció és `app/Config/Kpcrudy.php` quan s'hi registra un tema: s'actualitza afegint-hi una línia a `$themes`. Amb `--dry-run` només mostra què faria. Els fitxers s'escriuen de manera atòmica (es desen a part i es reanomenen): un error no deixa cap fitxer a mitges.
@@ -785,6 +786,7 @@ No sobreescriu mai cap fitxer sense `--force`. L'única excepció és `app/Confi
 php spark kpcrudy:publish config [--force] [--dry-run]
 php spark kpcrudy:publish theme <tema> [--as nom] [--only plantilla,plantilla...] [--path carpeta] [--force] [--dry-run]
 php spark kpcrudy:publish lang <idioma> [--force] [--dry-run]
+php spark kpcrudy:publish assets [--path carpeta] [--dry-run]
 ```
 
 Sense arguments, pregunta què es vol publicar (`config`, `theme` o `lang`) i, si cal, el tema o l'idioma.
@@ -793,7 +795,7 @@ Sense arguments, pregunta què es vol publicar (`config`, `theme` o `lang`) i, s
 
 | Argument / opció | Descripció | Per defecte |
 |---|---|---|
-| `config` / `theme` / `lang` | Què es copia: la configuració, un tema o els textos d'un idioma | Es pregunta |
+| `config` / `theme` / `lang` / `assets` | Què es copia: la configuració, un tema, els textos d'un idioma o els fitxers CSS/JS | Es pregunta |
 | `tema` (amb `theme`) | Tema que es copia: `bootstrap5`, `w3css`, `tailwind` o un dels registrats a `$themes` | Es pregunta |
 | `idioma` (amb `lang`) | Idioma que es copia: `ca`, `es`, `en`, `fr`, `pt` o `de` | Es pregunta |
 | `--as` | `theme`: nom del tema nou. Minúscules, números, `-` i `_`; no pot ser `bootstrap5`, `w3css` ni `tailwind` | `<tema>-custom` |

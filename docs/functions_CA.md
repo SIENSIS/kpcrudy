@@ -21,24 +21,26 @@ Per a receptes completes de casos habituals, vegeu [howto_CA.md](howto_CA.md).
 
 - [Creació i execució](#creació-i-execució): `__construct`, `render`, `routes`
 - [Origen de dades](#origen-de-dades): `setTable`, `setModel`, `setDatabase`, `setPrimaryKey`, `setSubject`, `softDeletes`, `where`
-- [Columnes i camps](#columnes-i-camps): `columns`, `fields`, `addFields`, `editFields`, `showFields`, `searchFields`, `filters`, `exportColumns`, `unsortable`, `displayAs`
+- [Columnes i camps](#columnes-i-camps): `columns`, `fields`, `addFields`, `editFields`, `showFields`, `searchFields`, `searchCallback`, `filters`, `addFilter`, `exportColumns`, `unsortable`, `displayAs`
 - [Tipus de camp i validació](#tipus-de-camp-i-validació): `fieldType`, `setRules`, `requiredFields`, `readonlyFields`, `hideFields`, `setDefault`, `setHelp`
-- [Relacions](#relacions): `setRelation`, `setRelationNN`
-- [Traduccions](#traduccions): `setTranslations`, `postedTranslations`
+- [Relacions](#relacions): `setRelation` (`ajax`), `setRelationNN`
+- [Traduccions](#traduccions): `setTranslations` (`fallbacks`), `exportTranslations`, `postedTranslations`
 - [Callbacks de presentació](#callbacks-de-presentació): `callbackColumn`, `callbackField`, `callbackExport`
 - [Hooks](#hooks): `beforeInsert`, `afterInsert`, `beforeUpdate`, `afterUpdate`, `beforeDelete`, `afterDelete`, `afterRestore`, `afterWrite`
+- [Gestors de fitxers](#gestors-de-fitxers): `UploadHandler`, `UploadRejectedException`, opció `handler` del camp
 - [Accions](#accions): `addAction`, `addHeaderAction`, `addBulkAction`
 - [Operacions pròpies](#operacions-pròpies): `addOperation`, `backToList`, `page`
 - [Importació CSV](#importació-csv): `enableImport`, `callbackImport`
 - [Permisos](#permisos): `setPermission`, `unsetAdd`, `unsetEdit`, `unsetDelete`, `unsetShow`, `unsetExport`, `unsetTrash`, `unsetPurge`, `unsetSearch`, `unsetFilters`, `unsetBulk`, `readOnly`, `setResource`, `getResource`, `setPermissionResolver`, `isAllowed`, `permissionCatalogue`, `impliedPermissions`, `PermissionResolver`, només els registres propis
-- [Presentació i navegació](#presentació-i-navegació): `setPerPage`, `defaultOrder`, `setBaseUrl`, `setBackUrl`, `setTheme`, `setLayout`, `setLayoutData`, `showTitle`, `getTitle`
+- [Presentació i navegació](#presentació-i-navegació): `columnPriority`, `rowActionsMenu`, `mobileCards`, `tree`, `setPerPage`, `defaultOrder`, `setBaseUrl`, `setBackUrl`, `setTheme`, `setLayout`, `setLayoutData`, `showTitle`, `getTitle`
 - [Accés des dels callbacks](#accés-des-dels-callbacks): `getModel`, `getTable`, `getPrimaryKey`, `getBaseUrl`, `url`
 - [Identificadors emmascarats](#identificadors-emmascarats): `maskIds`, `encodeId`, `decodeId`, `maskId`, `unmaskId`, `idFromUrl`, `idForUrl`, `IdMasker`, `checkRoutes`
 - [URL signades](#url-signades): `requireSignature`, `signedUrl`, `signUrl`, `checkSignature`, `hasValidSignature`
 - [Constants](#constants): `ID_OPERATIONS`, `OPERATIONS`, `IMPLIED_PERMISSIONS`
+- [Descriure i capturar un CRUD](#descriure-i-capturar-un-crud): `capture`, `captureController`, `describe`, `setRequest`
 - [Comandes de spark](#comandes-de-spark): `kpcrudy:make`, `kpcrudy:demo`, `kpcrudy:maskid`, `kpcrudy:unmaskid`, `kpcrudy:signurl`, `kpcrudy:checkurl`
 - [Configuració global](#configuració-global): propietats de `Config\Kpcrudy`, idiomes
-- [Plantilles](#plantilles): `Renderer::render`, `Renderer::renderParent`, `Renderer::locate`, `Renderer::hidden`, `Renderer::attrs`, `Renderer::nonce`, Content-Security-Policy, esdeveniment `kpcrudy:confirm`
+- [Plantilles](#plantilles): `Renderer::render`, `Renderer::renderParent`, `Renderer::locate`, `Renderer::hidden`, `Renderer::attrs`, `Renderer::asset`, `Renderer::nonce`, Content-Security-Policy, esdeveniment `kpcrudy:confirm`
 
 ---
 
@@ -265,6 +267,44 @@ Amb un array buit no hi ha filtres. Els valors de filtre no vàlids (un rang que
 $crud->filters(['city_id', 'status', 'active', 'tags', 'created_at', 'price']);
 ```
 
+### `searchCallback(Closure $callback): static`
+
+*Des de la 1.1.* Afegeix condicions pròpies al cercador general, dins el mateix grup `OR` que els camps de [`searchFields()`](#searchfieldsarray-fields-static): `fn (BaseBuilder $builder, string $text, Crud $crud): void`. Serveix per cercar valors que no són columnes de la taula del CRUD (el correu d'un usuari en una altra taula, les notes d'un registre...), normalment amb una subconsulta. Només es crida quan hi ha text de cerca i l'usuari pot cercar; s'aplica al llistat i a l'exportació CSV.
+
+- Afegeix les condicions amb `orWhere...`/`orLike`/`orWhereIn` (s'uneixen amb `OR` als altres camps de cerca).
+- Passa el text al Query Builder (que l'escapa); no el concatenis mai a l'SQL.
+- Si no hi ha `searchFields()` però sí un callback, el cercador continua sortint.
+
+```php
+// Llistat d'usuaris (taula users): trobar-los també pel correu desat a auth_identities
+$crud->searchFields(['username'])
+     ->searchCallback(fn (BaseBuilder $b, string $text) => $b->orWhereIn('users.id',
+         fn (BaseBuilder $q) => $q->select('user_id')->from('auth_identities')
+             ->where('type', 'email_password')->like('secret', $text)));
+```
+
+### `addFilter(string $key, string $label, Closure $apply, array $options = []): static`
+
+*Des de la 1.1.* Un filtre propi al panell de filtres, per a condicions que no són una columna de la taula: `fn (BaseBuilder $builder, string $value, Crud $crud): void` l'aplica al llistat i a l'exportació. El valor viatja a la URL com la resta de filtres (`?f[clau]=valor`).
+
+| Opció | Per defecte | Descripció |
+|---|---|---|
+| `options` | cap | `[valor => etiqueta]`, o una `Closure` (`fn (Crud $crud): array`) que les retorna (es crida un cop, només si cal). Amb opcions, només s'accepten aquests valors: qualsevol altre s'ignora |
+| `type` | `'select'` amb `options`, si no `'text'` | `'select'` (desplegable) o `'text'` (quadre de text lliure) |
+
+`$key` ha de començar amb una lletra minúscula i només pot tenir lletres minúscules, números i `_`; no hauria de ser el nom d'un camp que ja té filtre.
+
+```php
+// Usuaris d'un grup (auth_groups_users desa el nom del grup)
+$crud->addFilter('group', 'Grup', fn (BaseBuilder $b, string $group) => $b->whereIn('users.id',
+    fn (BaseBuilder $q) => $q->select('user_id')->from('auth_groups_users')->where('group', $group)),
+    ['options' => fn () => array_column(db_connect()->table('groups')->get()->getResultArray(), 'title', 'name')]);
+
+// Text lliure: registres amb una nota que conté el text
+$crud->addFilter('note', 'Nota', fn (BaseBuilder $b, string $text) => $b->whereIn('orders.id',
+    fn (BaseBuilder $q) => $q->select('order_id')->from('order_notes')->like('text', $text)));
+```
+
 ### `exportColumns(array $columns): static`
 
 Columnes del CSV, si han de ser diferents de les del llistat.
@@ -341,6 +381,7 @@ Opcions:
 | `allowed` | `upload`, `image` | Extensions permeses (array o text separat per comes) |
 | `maxSize` | `upload`, `image` | Mida màxima en KB |
 | `deleteFiles` | `upload`, `image` | `true` (per defecte): esborra el fitxer en esborrar definitivament el registre. Només s'esborren fitxers que siguin dins del directori del camp (`path`) |
+| `handler` | `upload`, `image` | *Des de la 1.1.* [Gestor de fitxers](#gestors-de-fitxers) d'aquest camp: un nom de classe o una instància de `Kpcrudy\Storage\UploadHandler`. Per defecte, `Config::$uploadHandler` (cap: kpcrudy desa el fitxer a `path`) |
 | `attrs` | tots | Atributs HTML de l'input: `['placeholder' => ..., 'min' => 0]` |
 
 ```php
@@ -451,8 +492,21 @@ Relació **1-N**: el camp `$field` és una clau forana cap a `$table`. Al formul
 | `pk` | `'id'` | Clau primària de la taula relacionada |
 | `where` | `[]` | Condicions per a les opcions del desplegable |
 | `order` | primer camp de `$display` | Ordre de les opcions |
+| `ajax` | `false` | *Des de la 1.1.* Quadre de cerca amb suggeriments AJAX en lloc d'un desplegable amb tots els registres (formularis i filtres) |
+| `minChars` | `2` | *Des de la 1.1.* Amb `ajax`: caràcters que cal escriure abans de cercar |
+| `limit` | `20` | *Des de la 1.1.* Amb `ajax`: nombre màxim de suggeriments (1-100) |
 
 Els valors que arriben del formulari es validen contra les opcions permeses (incloent-hi el `where`).
+
+**Cerca AJAX** (`'ajax' => true`, des de la 1.1): per a taules amb massa registres per a un desplegable (usuaris, productes, poblacions). El formulari i el panell de filtres mostren un quadre de text; després de `minChars` caràcters, el script de kpcrudy consulta `base/lookup?field=<camp>&q=<text>` (una operació GET del CRUD, JSON `{"results": [{"id": "...", "text": "..."}]}`) i mostra fins a `limit` suggeriments que coincideixen amb qualsevol camp de `$display`, aplicant el `where` i l'`order` de la relació. En triar-ne un, el seu id es desa en un camp ocult. Només obtenen respostes els usuaris que poden fer servir el camp: ha de ser al formulari d'alta (amb `add`), al d'edició (amb `edit`) o als filtres (amb `list` i `filters`); si no, la consulta respon 404. El valor desat es continua comprovant al servidor: ha d'existir a la taula relacionada i complir el `where`. La importació CSV continua relacionant els valors per id o pel text amb tots els registres.
+
+```php
+$crud->setRelation('customer_id', 'customers', '{name} ({tax_id})', [
+    'ajax'     => true,
+    'minChars' => 3,
+    'where'    => ['active' => 1],
+]);
+```
 
 ```php
 $crud->setRelation('city_id', 'cities', 'name');
@@ -504,6 +558,7 @@ Camps traduïbles desats en una taula filla, **una fila per idioma**. Per exempl
 | `rules` | deduïdes de la taula de traduccions | `[camp => regles]`, com a `setRules()` |
 | `types` | deduïts (`TEXT` => `textarea`; si no, `text`) | `[camp => 'text' \| 'textarea']` |
 | `listLocale` | l'idioma de la petició si és un dels de `$locales`; si no, el primer | Idioma del llistat, la cerca, l'ordenació, els filtres i l'exportació |
+| `fallbacks` | cap | *Des de la 1.1.* Idiomes que es fan servir, per ordre, quan un registre no té traducció (o és buida) a l'idioma del llistat: `['ca']` per a tots els idiomes, o per idioma `['es' => ['ca'], 'en' => ['es', 'ca'], '*' => ['ca']]` (`*` = qualsevol altre). S'aplica al llistat, la cerca, l'ordenació, els filtres, l'exportació i la fitxa |
 
 Els camps traduïts es fan servir com qualsevol altre camp a `columns()`, `fields()`, `showFields()`, `searchFields()`, `filters()`, `displayAs()`...:
 
@@ -513,7 +568,7 @@ Els camps traduïts es fan servir com qualsevol altre camp a `columns()`, `field
 - **Validació**: les regles s'apliquen per idioma; les claus dels errors són `kp_tr.{locale}.{camp}` (p. ex. `kp_tr.en.title`). La regla `required` només s'aplica als **idiomes obligatoris**: un idioma opcional que es deixa del tot buit no es valida, i si s'ha omplert només es valida el que s'hi ha escrit.
 - **Desar**: s'escriu (o s'actualitza) una fila per cada idioma omplert, a la mateixa transacció que el registre. Un idioma opcional que es deixa buit **s'esborra** de la taula de traduccions. Un esborrat definitiu (o una taula sense paperera) també n'esborra les traduccions; enviar-lo a la paperera les conserva.
 - Funcionen amb `setTable()` i amb `setModel()`: els camps traduïts no són columnes de la taula principal, així que **no** van als `allowedFields` del model.
-- No entren a la [importació CSV](#importació-csv).
+- **Importació CSV** (des de la 1.1): una columna per idioma, `title:ca` o `Títol (Català)`; vegeu [Importació CSV](#importació-csv). **Exportació**: només l'idioma del llistat, o una columna per idioma amb [`exportTranslations()`](#exporttranslationsbool-alllocales--true-static).
 
 ```php
 $crud->setTable('news')
@@ -523,6 +578,16 @@ $crud->setTable('news')
      ->columns(['title', 'published_at'])
      ->fields(['published_at', 'title', 'body'])
      ->searchFields(['title']);
+```
+
+### `exportTranslations(bool $allLocales = true): static`
+
+*Des de la 1.1.* L'exportació CSV escriu els camps traduïts amb **una columna per idioma** (`Títol (Català)`, `Títol (English)`...) en lloc de només l'idioma del llistat. Amb la importació activada, el fitxer exportat es pot tornar a importar tal qual.
+
+```php
+$crud->setTranslations('news_translations', 'news_id', 'locale', ['title'], ['ca' => 'Català', 'en' => 'English'])
+     ->enableImport()
+     ->exportTranslations();
 ```
 
 ### `postedTranslations(): array`
@@ -700,6 +765,44 @@ $crud->afterWrite(function (string $operation, string $id, array $data, ?array $
     cache()->delete('clients_count');
 });
 ```
+
+---
+
+## Gestors de fitxers
+
+*Des de la 1.1.* Per defecte kpcrudy mou els fitxers dels camps `upload` i `image` a [`$uploadPath`](#configuració-global) i els serveix des de `$uploadUrl`. Un **gestor de fitxers** se n'encarrega en lloc seu: on es desa el fitxer (un altre disc, una carpeta privada, S3, el servei d'emmagatzematge del projecte...), què es guarda a la columna, com s'esborra i quina URL té. kpcrudy continua validant el fitxer abans (extensions, tipus MIME de les imatges, mida: les opcions `allowed` i `maxSize` del camp).
+
+```php
+// Per a tots els CRUD (app/Config/Kpcrudy.php)
+public string|object|null $uploadHandler = \App\Libraries\StorageUploads::class;
+
+// O per a un camp (un nom de classe o una instància)
+$crud->fieldType('contract', 'upload', ['handler' => new PrivateUploads('contracts')]);
+```
+
+### Interfície `Kpcrudy\Storage\UploadHandler`
+
+| Mètode | Quan | Retorna |
+|---|---|---|
+| `store(UploadedFile $file, string $field, array $context): string` | Es desa un fitxer nou (formulari d'alta o d'edició) | El valor que es desa a la columna (un camí, una clau, un id...) |
+| `delete(string $stored, string $field, array $context): void` | Se substitueix, es treu (casella "treure") o s'esborra definitivament el registre (opció `deleteFiles` del camp, per defecte `true`), o el desament falla després de desar-lo | — |
+| `url(string $stored, string $field, array $context): ?string` | El llistat, la fitxa i el formulari mostren el fitxer | La URL del fitxer o de la imatge, o `null`: només es mostra el nom (fitxers privats sense enllaç públic) |
+
+Per refusar un fitxer amb un missatge per a l'usuari (surt com a error del camp i no es desa res), llança `Kpcrudy\Storage\UploadRejectedException` des de `store()`.
+
+`$context` conté:
+
+| Clau | Valor |
+|---|---|
+| `crud` | La instància de `Kpcrudy\Crud` |
+| `resource`, `table` | `getResource()` i la taula |
+| `field`, `type` | El camp i el seu tipus (`upload` o `image`) |
+| `options` | Les opcions del camp (`fieldType()`), incloses les teves (p. ex. `'disk' => 'private'`) |
+| `operation` | `add`, `edit` (store), `delete` (delete), `list`, `show` o `form` (url) |
+| `data` | (store) Els valors que s'estan desant |
+| `record` | (store) El registre actual en editar, o `null` |
+
+Un nom de classe s'instancia un cop per camp i CRUD (`new $class()`); passa una instància si necessita arguments. Vegeu la recepta [Desar els fitxers amb el teu servei d'emmagatzematge](howto_CA.md#desar-els-fitxers-amb-el-teu-servei-demmagatzematge).
 
 ---
 
@@ -964,6 +1067,8 @@ Si un text coincideix amb més d'una opció (dues ciutats amb el mateix nom), la
 Mentre es mostra la previsualització, el fitxer es guarda a `writable/uploads/kpcrudy-import/` amb un nom aleatori, permisos privats (`0600`) i lligat a la sessió de l'usuari. S'esborra en importar, en pujar-ne un altre, en tornar a la pàgina de pujada o, si s'abandona, al cap d'una hora. A la previsualització, els valors dels [camps secrets](#columnes-i-camps) surten emmascarats.
 
 En importar, s'executen els **hooks** (`beforeInsert`, `afterInsert`, `beforeUpdate`, `afterUpdate`) com si es desés el formulari, i es reescriuen les relacions N-N que hi hagi al fitxer. Els hooks posteriors (`afterInsert`, `afterUpdate`) s'executen només quan la transacció s'ha confirmat; amb *no importar res* si hi ha errors, només si tota la importació ha anat bé. La previsualització no executa els hooks ni detecta duplicats dins del mateix fitxer (dues files amb el mateix email): aquests errors surten en importar.
+
+**Camps traduïts** (des de la 1.1): els camps de [`setTranslations()`](#traduccions) del formulari d'alta (o de `fields`) s'importen amb **una columna per idioma**, amb el nom `camp:idioma` (`title:ca`), `Etiqueta (Idioma)` (`Títol (Català)`) o `Etiqueta (CODI)` (`Títol (CA)`). Es validen com al formulari (idiomes obligatoris, `rules`) i es desen a la mateixa transacció que la fila; en una actualització, els idiomes i camps que no són al fitxer conserven el valor. Si el fitxer no té cap columna de traducció, no es toquen. La plantilla (`base/import?template=1`) inclou aquestes columnes.
 
 ### `callbackImport(string $field, Closure $callback): static`
 
@@ -1366,6 +1471,52 @@ if ($output instanceof ResponseInterface) {
 }
 
 return view('admin/page', ['content' => $output, 'title' => $crud->getTitle()]);
+```
+
+---
+
+### `columnPriority(array $priorities): static`
+
+*Des de la 1.1.* Quines columnes desapareixen primer en pantalles petites: `columna => prioritat`. `1` = sempre visible (per defecte), `2` = s'amaga per sota de 576 px, `3` = per sota de 768 px, `4` = per sota de 992 px. Funciona amb tots els temes (classes `kp-p2`...`kp-p4` del CSS de kpcrudy).
+
+```php
+$crud->columns(['name', 'email', 'city_id', 'created_at'])
+     ->columnPriority(['created_at' => 4, 'city_id' => 3]);
+```
+
+### `rowActionsMenu(bool|int $when = true): static`
+
+*Des de la 1.1.* Mostra les accions de cada fila en un menú "⋯" en lloc d'una filera de botons: `true` = sempre, un número = només quan la fila té més accions que aquest número, `false` = mai (per defecte). El menú és un element HTML `<details>`: no necessita JavaScript i funciona amb tots els temes (el script de kpcrudy el tanca en fer clic fora). La fitxa continua mostrant els botons.
+
+```php
+$crud->rowActionsMenu(3);   // veure, editar i esborrar com a botons; amb operacions pròpies, un menú
+```
+
+### `mobileCards(bool $enabled = true): static`
+
+*Des de la 1.1.* En pantalles estretes (< 576 px) cada fila del llistat es converteix en una targeta amb línies "Etiqueta: valor" en lloc d'una taula que cal desplaçar de costat. Cada cel·la porta `data-label` amb l'etiqueta de la columna.
+
+```php
+$crud->mobileCards()->columnPriority(['notes' => 2]);
+```
+
+### `tree(string $parentField, array $options = []): static`
+
+*Des de la 1.1.* Per a taules autoreferenciades (pàgines amb pàgina pare, categories amb subcategories): el llistat mostra cada registre sota el seu pare, amb la columna principal sagnada, mentre no hi hagi cerca, filtres ni ordenació per columna (llavors és un llistat pla). En desar, es refusa un pare que crearia un cicle (el mateix registre o un dels seus descendents). Si `$parentField` també és un [`setRelation()`](#setrelationstring-field-string-table-string-display-array-options---static) a la mateixa taula, el desplegable mostra les opcions en ordre d'arbre ("— — Fill").
+
+| Opció | Per defecte | Descripció |
+|---|---|---|
+| `order` | la clau primària | Camp que ordena els germans (p. ex. `position`) |
+| `label` | la primera columna | Columna que se sagna |
+| `maxDepth` | `20` | Profunditat màxima (els registres més profunds es mostren en aquest nivell) |
+
+L'ordre d'arbre es calcula amb una consulta de l'id i el pare de tots els registres de l'abast: és pensat per a taules de fins a uns quants milers de registres.
+
+```php
+$crud->setTable('pages')
+     ->columns(['title', 'slug', 'status'])
+     ->setRelation('parent_id', 'pages', 'title')
+     ->tree('parent_id', ['order' => 'position']);
 ```
 
 ---
@@ -1840,6 +1991,56 @@ Vegeu també les receptes d'[Enllaços signats](howto_CA.md#compartir-un-llistat
 
 ---
 
+## Descriure i capturar un CRUD
+
+*Des de la 1.1.* Les eines que necessiten saber com està configurat un CRUD (un comprovador del catàleg de permisos, generadors de documentació, proves) el poden construir i aturar-lo abans que s'executi res.
+
+### `Crud::capture(Closure $build): ?Crud` (estàtica)
+
+Executa `$build` (normalment l'acció d'un controlador que construeix un CRUD i en crida `render()`) i retorna el CRUD construït **sense executar cap operació**: `render()` s'atura abans de llegir la URL, de comprovar el CSRF o de tocar dades. Retorna `null` si `$build` acaba sense cridar `render()`. Les captures es poden niar; després `render()` torna a funcionar amb normalitat.
+
+```php
+$crud = Crud::capture(fn () => (new \App\Controllers\Admin\Clients())->index());
+$crud?->permissionCatalogue();
+```
+
+### `Crud::captureController(string $handler, array $arguments = [], ?IncomingRequest $request = null): ?Crud` (estàtica)
+
+Com `capture()`, a partir d'un handler de ruta (`'\App\Controllers\Admin\Clients::index'`): crea el controlador, en crida `initController()` amb una petició web (una GET buida si s'executa des de `spark`) i executa el mètode amb `$arguments`. Llança una `RuntimeException` si la classe o el mètode no existeixen.
+
+```php
+// Una ordre de spark que comprova totes les rutes de CRUD
+foreach ($cruds as $route => $handler) {
+    $crud = Crud::captureController($handler);
+    $missing = array_diff($crud?->permissionCatalogue() ?? [], $declared[$crud->getResource()] ?? []);
+}
+```
+
+### `describe(): array`
+
+La configuració del CRUD com un array, sense executar cap operació ni llegir la URL:
+
+| Clau | Valor |
+|---|---|
+| `resource`, `table`, `primaryKey`, `subject`, `subjectPlural` | Identitat del CRUD |
+| `softDeletes`, `maskIds` | Si té paperera i identificadors emmascarats |
+| `operations` | Operacions pròpies del CRUD actives (`list`, `add`, `edit`... sense les desactivades) |
+| `customOperations` | `clau => ['row', 'method', 'permission', 'label']` de `addOperation()` |
+| `permissions` | [`permissionCatalogue()`](#permissioncatalogue-array) |
+| `columns`, `addFields`, `editFields`, `showFields`, `searchFields`, `filters`, `exportColumns`, `hiddenFields` | Les llistes tal com es fan servir (amb els valors per defecte; `filters` inclou les claus d'`addFilter()`) |
+| `searchCallbacks` | Nombre de `searchCallback()` |
+| `types` | `camp => tipus` (`text`, `relation`, `translation`, `virtual`...) |
+| `relations` | `nom => ['type' => '1-N'|'N-N', 'table', 'display', ...]` |
+| `translations` | `['table', 'fields', 'locales']` o `null` |
+| `tree` | Les opcions de `tree()` o `null` |
+| `actions`, `bulkActions`, `signedOperations` | Accions amb el seu permís, i les operacions que necessiten una URL signada |
+
+### `setRequest(IncomingRequest $request): static`
+
+La petició amb què treballa el CRUD (per defecte, el servei `request`). Ara un CRUD es pot construir **des de la CLI** (ordres de `spark`, cues, tasques programades): quan el servei `request` no és una petició web, el CRUD fa servir una petició GET buida, de manera que `permissionCatalogue()`, `describe()` i `capture()` hi funcionen.
+
+---
+
 ## Comandes de spark
 
 ### `php spark kpcrudy:make [taula] [opcions]`
@@ -1913,9 +2114,9 @@ Vegeu la recepta [Saber a quin registre correspon un codi](howto_CA.md#saber-a-q
 
 Creen i comproven [URL signades](#url-signades) des de la línia de comandes: per enviar un enllaç a mà o per saber per què un enllaç no funciona (vàlid, caducat, modificat, i quan caduca). Totes les opcions, a [commands_CA.md](commands_CA.md).
 
-### `php spark kpcrudy:publish <config|theme|lang> [nom]`
+### `php spark kpcrudy:publish <config|theme|lang|assets> [nom]`
 
-Copia al projecte la configuració (`app/Config/Kpcrudy.php`, amb totes les opcions), un tema (`theme w3css --as intranet`, opcionalment només algunes plantilles amb `--only`) o els textos d'un idioma (`lang ca`), per adaptar-los sense tocar la llibreria. No sobreescriu res sense `--force`, i amb `--dry-run` només mostra què faria. Vegeu [kpcrudy:publish](commands_CA.md#kpcrudypublish).
+`assets` (des de la 1.1) copia els fitxers CSS i JavaScript de kpcrudy (`src/Assets/`) a `Config::$assetsPath` (o `--path`) per a [`$assetsMode = 'external'`](#content-security-policy); torna-ho a fer a cada actualització de la llibreria. La resta: Copia al projecte la configuració (`app/Config/Kpcrudy.php`, amb totes les opcions), un tema (`theme w3css --as intranet`, opcionalment només algunes plantilles amb `--only`) o els textos d'un idioma (`lang ca`), per adaptar-los sense tocar la llibreria. No sobreescriu res sense `--force`, i amb `--dry-run` només mostra què faria. Vegeu [kpcrudy:publish](commands_CA.md#kpcrudypublish).
 
 ---
 
@@ -1923,7 +2124,7 @@ Copia al projecte la configuració (`app/Config/Kpcrudy.php`, amb totes les opci
 
 ### `Crud::ID_OPERATIONS` · `Crud::OPERATIONS`
 
-Paraules de la URL que el CRUD interpreta com a operació: `ID_OPERATIONS` porten un id al darrere (`edit`, `show`, `delete`, `restore`, `purge`); `OPERATIONS`, no (`add`, `trash`, `export`, `import`, `bulk`, `emptytrash`).
+Paraules de la URL que el CRUD interpreta com a operació: `ID_OPERATIONS` porten un id al darrere (`edit`, `show`, `delete`, `restore`, `purge`); `OPERATIONS`, no (`add`, `trash`, `export`, `import`, `bulk`, `emptytrash` i, des de la 1.1, `lookup`: la cerca AJAX de les [relacions](#setrelationstring-field-string-table-string-display-array-options---static)). Una ruta pròpia no pot acabar amb aquestes paraules.
 
 ```php
 // Saber si estem al llistat principal
@@ -1984,6 +2185,10 @@ class Kpcrudy extends \Kpcrudy\Config\Kpcrudy
 | `int $importMaxSize` | `2048` | Mida màxima d'un fitxer d'importació, en KB |
 | `string $uploadPath` | `FCPATH . 'uploads'` | Directori base dels fitxers pujats |
 | `string $uploadUrl` | `'uploads'` | URL base dels fitxers, relativa a `base_url()` |
+| `string\|object\|null $uploadHandler` | `null` | *Des de la 1.1.* [Gestor de fitxers](#gestors-de-fitxers) per a tots els CRUD (nom de classe o instància de `Kpcrudy\Storage\UploadHandler`); `null` = kpcrudy desa els fitxers a `$uploadPath` |
+| `string $assetsMode` | `'inline'` | *Des de la 1.1.* Com s'inclouen el CSS i el JavaScript de kpcrudy: `'inline'` (blocs `<style>`/`<script>` amb el nonce de la CSP) o `'external'` (fitxers enllaçats des de `$assetsUrl`, sense codi en línia; copia'ls amb `php spark kpcrudy:publish assets`) |
+| `string $assetsUrl` | `'assets/kpcrudy'` | *Des de la 1.1.* URL dels fitxers publicats: relativa a `base_url()`, absoluta o començada per `/` |
+| `string $assetsPath` | `FCPATH . 'assets/kpcrudy'` | *Des de la 1.1.* Carpeta on els copia `kpcrudy:publish assets` |
 | `int $uploadMaxSize` | `2048` | Mida màxima per defecte, en KB |
 | `array $uploadAllowed` | imatges, PDF, ofimàtica, `txt`, `csv`, `zip` | Extensions permeses per defecte als camps `upload` |
 | `array $imageAllowed` | `jpg`, `jpeg`, `png`, `gif`, `webp` | Extensions permeses per defecte als camps `image` |
@@ -2080,6 +2285,15 @@ Genera atributs HTML escapats. `true` posa l'atribut sense valor, i `false` o `n
 <!-- <input type="text" name="q" required> -->
 ```
 
+### `Renderer::asset(string $file): string`
+
+*Des de la 1.1.* Inclou un dels fitxers CSS o JavaScript de kpcrudy (`src/Assets/`: `kpcrudy.css`, `kpcrudy.js`, `kpcrudy-tailwind.css`, `kpcrudy-w3css.css`) segons [`$assetsMode`](#configuració-global): en línia amb el nonce, o com un `<link>`/`<script src defer>` a `$assetsUrl` amb `?v=` i un hash del fitxer, perquè els navegadors no en guardin mai una versió antiga. El fan servir els `partials/assets` dels temes; un tema propi que amplia aquest parcial (`renderParent()`) continua funcionant en tots dos modes.
+
+```php
+<?= $this->asset('kpcrudy.css') ?>
+<?= $this->asset('kpcrudy.js') ?>
+```
+
 ### `Renderer::nonce(string $type = 'script'): string`
 
 Atribut `nonce` de la Content-Security-Policy de CodeIgniter per a un bloc `<script>` (`'script'`) o `<style>` (`'style'`), amb un espai al davant. Buit si la CSP no està activa.
@@ -2096,6 +2310,8 @@ Atribut `nonce` de la Content-Security-Policy de CodeIgniter per a un bloc `<scr
 ### Content-Security-Policy
 
 Els temes inclosos funcionen amb una **CSP estricta** (`Config\App::$CSPEnabled = true`, sense `'unsafe-inline'`): els blocs `<script>` i `<style>` porten el nonce, i les plantilles **no** fan servir gestors en línia (`onclick=""`, `onchange=""`...) ni atributs `style=""`. El comportament va en atributs `data-kp-*`, que gestiona el JavaScript de `partials/assets`. Un tema propi hauria de seguir les mateixes regles:
+
+**Sense cap codi en línia** (des de la 1.1): amb `public string $assetsMode = 'external';` i els fitxers copiats amb `php spark kpcrudy:publish assets`, kpcrudy no imprimeix cap bloc `<style>` ni `<script>`: enllaça `kpcrudy.css` i `kpcrudy.js` des de `$assetsUrl`. Llavors n'hi ha prou amb una CSP amb `script-src 'self'` i `style-src 'self'` (kpcrudy no necessita nonces).
 
 | Atribut | Comportament |
 |---|---|

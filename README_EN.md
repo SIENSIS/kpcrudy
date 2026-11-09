@@ -26,7 +26,12 @@ Features:
 - **Masked ids** in the URLs (`edit/Xk3f9...` instead of `edit/5`), optional, per CRUD or for the whole project
 - **Signed URLs with an expiry** to share read-only pages without logging in (`requireSignature()`): the visitor can search and browse, but cannot change the path or extend the expiry
 - **Swappable templates** (Bootstrap 5 theme by default) and configurable layout, also as a section of the project's layout
-- Works with a strict **Content-Security-Policy** (CodeIgniter nonces, no inline handlers or `style` attributes)
+- Works with a strict **Content-Security-Policy** (CodeIgniter nonces, no inline handlers or `style` attributes), or **without any inline code** (`$assetsMode = 'external'`)
+- **Upload handlers**: store files through your own storage (private disks, S3, your project's service) with `UploadHandler`
+- **Search and filters of your own** (`searchCallback()`, `addFilter()`) for values in other tables
+- **AJAX search** for relations with thousands of records, **trees** for self-referencing tables, **lists for phones** (column priorities, actions menu, cards)
+- **Translation fallbacks** and translated fields in **CSV import/export**
+- **`Crud::capture()` / `describe()`**: inspect a CRUD's configuration without running it (also from `spark`)
 - Texts in **Catalan, Spanish, English, French, Portuguese and German**
 
 ---

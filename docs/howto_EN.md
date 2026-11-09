@@ -87,6 +87,19 @@ In the examples, `$crud` is an instance of `Kpcrudy\Crud` inside a controller me
 - [Different configuration for one CRUD](#different-configuration-for-one-crud)
 - [Change a text or add a language](#change-a-text-or-add-a-language)
 
+**New in 1.1**
+- [Store uploads through your own storage service](#store-uploads-through-your-own-storage-service)
+- [No inline code: external CSS and JavaScript](#no-inline-code-external-css-and-javascript)
+- [Translations with a fallback language](#translations-with-a-fallback-language)
+- [Import and export translated fields](#import-and-export-translated-fields)
+- [Lists that work on phones](#lists-that-work-on-phones)
+- [Relation with thousands of records (AJAX search)](#relation-with-thousands-of-records-ajax-search)
+- [A tree of pages](#a-tree-of-pages)
+- [Search in another table](#search-in-another-table)
+- [Filters of your own](#filters-of-your-own)
+- [Check every CRUD without opening it](#check-every-crud-without-opening-it)
+- [Run kpcrudy commands from your code](#run-kpcrudy-commands-from-your-code)
+
 ---
 
 ## Getting started
@@ -1801,3 +1814,233 @@ return [
 To add a language, copy [src/Language/en/Kpcrudy.php](../src/Language/en/Kpcrudy.php) to `app/Language/{code}/Kpcrudy.php` and translate its values, keeping the `{0}`, `{1}`... parameters. The language is the request's (`app.defaultLocale` or the one negotiated by CodeIgniter). kpcrudy includes English, Catalan, Spanish, French, Portuguese and German; for any other language (or a missing key), CodeIgniter first tries the language without the region (`pt-BR` → `pt`) and then English, so the CRUD never shows the bare keys.
 
 Validation messages come from CodeIgniter. To have them translated, install `composer require codeigniter4/translations` (it includes Spanish, French, Portuguese, German and many others, but **not Catalan**). For Catalan, create `app/Language/ca/Validation.php` with the translations; you can start from the package's Spanish file.
+
+---
+
+## New in 1.1
+
+### Store uploads through your own storage service
+
+By default the files of `upload` and `image` fields go to `uploadPath`. To send them through your project's storage (another disk, private files served by a controller, S3...), write an [upload handler](functions_EN.md#upload-handlers). kpcrudy still checks extensions, image types and size before calling it.
+
+```php
+// app/Libraries/StorageUploads.php
+namespace App\Libraries;
+
+use CodeIgniter\HTTP\Files\UploadedFile;
+use Kpcrudy\Storage\UploadHandler;
+use Kpcrudy\Storage\UploadRejectedException;
+
+final class StorageUploads implements UploadHandler
+{
+    public function store(UploadedFile $file, string $field, array $context): string
+    {
+        // Your own checks: e.g. a quota per user
+        if ($file->getSizeByUnit('mb') > 5 && ($context['options']['disk'] ?? 'public') === 'private') {
+            throw new UploadRejectedException('Private files cannot be larger than 5 MB.');
+        }
+
+        // Your service decides the folder and the name; the column keeps its key
+        return service('storage')->store($file, [
+            'disk'   => $context['options']['disk'] ?? 'public',
+            'folder' => $context['table'] . '/' . $field,
+        ]);
+    }
+
+    public function delete(string $stored, string $field, array $context): void
+    {
+        service('storage')->delete($stored);
+    }
+
+    public function url(string $stored, string $field, array $context): ?string
+    {
+        // Private files: a controller that checks permissions; public ones: a direct URL
+        return ($context['options']['disk'] ?? 'public') === 'private'
+            ? site_url('files/private/' . rawurlencode($stored))
+            : service('storage')->url($stored);
+    }
+}
+```
+
+```php
+// app/Config/Kpcrudy.php: for every CRUD
+public string|object|null $uploadHandler = \App\Libraries\StorageUploads::class;
+
+// In a CRUD: your own options reach the handler in $context['options']
+$crud->fieldType('photo', 'image', ['maxSize' => 2048])
+     ->fieldType('contract', 'upload', ['allowed' => ['pdf'], 'disk' => 'private']);
+```
+
+What happens: `store()` when a file is uploaded (its return value is saved in the column), `delete()` when the file is replaced, removed with the "remove" checkbox, the record is permanently deleted, or the save fails; `url()` every time the file is shown (return `null` to show just the name).
+
+### No inline code: external CSS and JavaScript
+
+kpcrudy prints its CSS and JavaScript in `<style>`/`<script>` blocks with the CSP nonce. If your policy does not allow any inline code, serve them as files:
+
+```php
+// app/Config/Kpcrudy.php
+public string $assetsMode = 'external';
+public string $assetsUrl  = 'assets/kpcrudy';          // or '/static/kpcrudy', 'https://cdn.example.com/kpcrudy'
+public string $assetsPath = FCPATH . 'assets/kpcrudy'; // where the command copies them
+```
+
+```bash
+php spark kpcrudy:publish assets
+```
+
+Run the command again after every `composer update` of kpcrudy (add it to your deploy script). The links carry `?v=` with a hash of the library's file, so browsers download the new version as soon as the library changes.
+
+### Translations with a fallback language
+
+When a record is not translated into the list language, the list shows the cell empty. With `fallbacks` it shows the first language that has a value:
+
+```php
+$crud->setTranslations('news_translations', 'news_id', 'locale', ['title', 'summary'],
+    ['ca' => 'Català', 'es' => 'Español', 'en' => 'English'],
+    [
+        'required'  => ['ca'],
+        // English and Spanish lists fall back to Catalan; Spanish tries English first
+        'fallbacks' => ['es' => ['en', 'ca'], '*' => ['ca']],
+    ]);
+```
+
+The fallback is used everywhere the list language is: list, search (a fallback value is only found when the list language has no value), sorting, filters, export and detail view. The form always shows every language as it is stored.
+
+### Import and export translated fields
+
+With the import enabled, every translated field gets one column per language. The file can name them `title:ca`, `Title (Català)` or `Title (CA)`:
+
+```csv
+name;title:ca;title:en
+Opening;Inauguració;Opening
+```
+
+```php
+$crud->setTranslations('events_translations', 'event_id', 'locale', ['title'], ['ca' => 'Català', 'en' => 'English'])
+     ->enableImport(['key' => 'name'])
+     ->exportTranslations();   // the export writes the same columns: export, edit, import again
+```
+
+When updating, the languages that are not in the file keep their text. A file without translation columns does not touch them.
+
+### Lists that work on phones
+
+```php
+$crud->columns(['name', 'email', 'city_id', 'created_at', 'notes'])
+     ->columnPriority(['notes' => 2, 'created_at' => 3, 'city_id' => 4])  // hidden first on small screens
+     ->rowActionsMenu(3)                                                  // more than 3 actions: a "⋯" menu
+     ->mobileCards();                                                     // < 576 px: one card per row
+```
+
+- `columnPriority()`: `2` hides the column below 576 px, `3` below 768 px, `4` below 992 px.
+- `rowActionsMenu()`: `true` always, a number only when there are more actions; it works without JavaScript.
+- `mobileCards()`: the table becomes cards with "Label: value" on phones.
+
+The filters panel is already collapsible (it opens when a filter is active).
+
+### Relation with thousands of records (AJAX search)
+
+A dropdown with every user or product is slow and useless. With `'ajax' => true` the field becomes a search box with suggestions:
+
+```php
+$crud->setRelation('customer_id', 'customers', '{name} ({tax_id})', [
+    'ajax'     => true,
+    'minChars' => 3,                  // start searching after 3 characters
+    'limit'    => 15,                 // at most 15 suggestions
+    'where'    => ['active' => 1],    // only active customers can be chosen
+    'order'    => 'name',
+])->filters(['customer_id']);         // the filter is a search box too
+```
+
+More examples:
+
+```php
+// Search by any field of the template: "Garcia", "Anna" or the email find the user
+$crud->setRelation('user_id', 'users', '{last_name}, {first_name} <{email}>', ['ajax' => true]);
+
+// Each user only chooses among their own projects (the where is also checked when saving)
+$crud->setRelation('project_id', 'projects', 'title', ['ajax' => true, 'where' => ['owner_id' => auth()->id()]]);
+
+// Read-only for editors: the value is shown as text, no search box
+$crud->setRelation('author_id', 'users', 'username', ['ajax' => true])->readonlyFields(['author_id']);
+```
+
+The suggestions come from `base/lookup?field=customer_id&q=...` (a GET operation of the CRUD itself, JSON). It only answers users who can use the field (add or edit form, or filters), and the saved value is always checked on the server against the related table and its `where`.
+
+### A tree of pages
+
+```php
+$crud->setTable('pages')
+     ->columns(['title', 'slug', 'status'])
+     ->fields(['title', 'slug', 'parent_id', 'position', 'status'])
+     ->setRelation('parent_id', 'pages', 'title')          // the dropdown also shows the tree
+     ->tree('parent_id', ['order' => 'position']);
+```
+
+The list shows each page under its parent, indented. Searching, filtering or sorting by a column shows a flat list. A page cannot be moved under itself or under one of its children.
+
+### Search in another table
+
+The user's email lives in `auth_identities`, the notes of an order in `order_notes`... `searchCallback()` adds a condition to the search box with a subquery:
+
+```php
+use CodeIgniter\Database\BaseBuilder;
+
+$crud->setTable('users')
+     ->searchFields(['username'])
+     ->searchCallback(fn (BaseBuilder $b, string $text) => $b->orWhereIn('users.id',
+         fn (BaseBuilder $q) => $q->select('user_id')->from('auth_identities')
+             ->where('type', 'email_password')->like('secret', $text)));
+```
+
+Use `orWhere...` (the search is an `OR` of every field) and let the Query Builder bind the text.
+
+### Filters of your own
+
+```php
+use CodeIgniter\Database\BaseBuilder;
+
+// Dropdown: users of a group
+$crud->addFilter('group', 'Group', fn (BaseBuilder $b, string $group) => $b->whereIn('users.id',
+    fn (BaseBuilder $q) => $q->select('user_id')->from('auth_groups_users')->where('group', $group)),
+    ['options' => fn () => array_column(db_connect()->table('groups')->get()->getResultArray(), 'title', 'name')]); // read only when needed
+
+// Dropdown whose options are conditions, not values
+$crud->addFilter('two_factor', 'Two-factor', fn (BaseBuilder $b, string $value) => $value === 'on'
+    ? $b->whereIn('users.id', fn (BaseBuilder $q) => $q->select('user_id')->from('user_two_factor'))
+    : $b->whereNotIn('users.id', fn (BaseBuilder $q) => $q->select('user_id')->from('user_two_factor')),
+    ['options' => ['on' => 'On', 'off' => 'Off']]);
+
+// Free text
+$crud->addFilter('note', 'Note contains', fn (BaseBuilder $b, string $text) => $b->whereIn('orders.id',
+    fn (BaseBuilder $q) => $q->select('order_id')->from('order_notes')->like('text', $text)), ['type' => 'text']);
+```
+
+A dropdown only accepts its options (`?f[group]=anything` is ignored). Links can open the list already filtered: `admin/users?f[group]=editor`.
+
+### Check every CRUD without opening it
+
+To check permission catalogues, generate documentation or test configurations, build each CRUD and stop before it runs:
+
+```php
+use Kpcrudy\Crud;
+
+// From a controller action (also from a spark command: the CRUD gets an empty GET request)
+$crud = Crud::captureController('\App\Controllers\Admin\Clients::index');
+
+$description = $crud?->describe();
+// ['resource' => 'clients', 'permissions' => ['list', 'show', 'add', ...], 'columns' => [...], ...]
+
+$missing = array_diff($crud->permissionCatalogue(), $declaredPermissions);
+```
+
+`Crud::capture(fn () => ...)` does the same with any code that calls `render()`. Nothing runs: no operation, no CSRF check, no query of the list.
+
+### Run kpcrudy commands from your code
+
+Every kpcrudy command accepts its options from `command()` as well as from the command line, so other commands or installers can call them:
+
+```php
+command('kpcrudy:make news --route admin/news --controller Admin/News --as admin-news --dry-run');
+command('kpcrudy:publish assets --path ' . FCPATH . 'static/kpcrudy');
+```

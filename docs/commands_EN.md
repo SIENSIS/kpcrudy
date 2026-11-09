@@ -39,7 +39,7 @@ The equivalent functions (`maskIds()`, `Crud::maskId()`, `requireSignature()`, `
 | `kpcrudy:unmaskid <context> <code>...` | Shows the real id of one or more masked codes | `php spark kpcrudy:unmaskid invoices aNiPDZ8eyg3JeFxXeA` |
 | `kpcrudy:signurl <url>` | Signs a URL, with or without an expiry | `php spark kpcrudy:signurl shared/agenda --ttl 604800 --free-query` |
 | `kpcrudy:checkurl <url>` | Tells whether a signed URL is valid, has expired or has been modified | `php spark kpcrudy:checkurl "http://.../shared/agenda?kp_exp=...&kp_sig=..."` |
-| `kpcrudy:publish <config\|theme\|lang> [name]` | Copies the configuration (`app/Config/Kpcrudy.php`), a theme (`app/Views/kpcrudy/...`) or the texts of a language (`app/Language/...`) into the project, to adapt them without touching the library | `php spark kpcrudy:publish theme w3css --as intranet` |
+| `kpcrudy:publish <config\|theme\|lang\|assets> [name]` | Copies the configuration (`app/Config/Kpcrudy.php`), a theme (`app/Views/kpcrudy/...`), the texts of a language (`app/Language/...`) or, since 1.1, the CSS and JavaScript files (`assets`) into the project | `php spark kpcrudy:publish theme w3css --as intranet` |
 
 | Option | Commands | Description |
 |---|---|---|
@@ -775,6 +775,7 @@ Copies part of the library into the project so that you can adapt it without tou
   - **Full copy**: the new theme's parent is the original theme's parent (`bootstrap5`), so the templates that extend the parent with `renderParent()` keep working the same way.
   - **Partial copy** (`--only`): the parent is the original theme, which provides the templates that were not copied. A template that extends its parent with `renderParent()` (such as `partials/assets` of `w3css` and `tailwind`) is not duplicated: an extension (`renderParent()` and an empty `<style>`) is written instead, where you add only what you want.
   - Then use it in one CRUD with `->setTheme('<new>')` or in all of them with `$theme = '<new>'` in `app/Config/Kpcrudy.php`. How to build a theme: [new_theme_EN.md](new_theme_EN.md).
+- **`assets`** (since 1.1): copies kpcrudy's CSS and JavaScript (`src/Assets/*.css`, `*.js`) to `Config\Kpcrudy::$assetsPath` (default `public/assets/kpcrudy`) or `--path`, for `$assetsMode = 'external'` (no inline code at all). Existing files are always replaced: run it after every update of the library.
 - **`lang <locale>`**: copies the library's `src/Language/<locale>/Kpcrudy.php` to `app/Language/<locale>/Kpcrudy.php`, with a comment at the top. CodeIgniter merges both files: the project's texts take precedence and the missing ones come from the library. So you can delete the lines you do not change (and new texts from future versions will keep appearing).
 
 It never overwrites a file without `--force`. The only exception is `app/Config/Kpcrudy.php` when a theme is registered in it: it is updated by adding one line to `$themes`. With `--dry-run` it only shows what it would do. Files are written atomically (saved aside and then renamed): an error never leaves a half-written file.
@@ -785,6 +786,7 @@ It never overwrites a file without `--force`. The only exception is `app/Config/
 php spark kpcrudy:publish config [--force] [--dry-run]
 php spark kpcrudy:publish theme <theme> [--as name] [--only template,template...] [--path folder] [--force] [--dry-run]
 php spark kpcrudy:publish lang <locale> [--force] [--dry-run]
+php spark kpcrudy:publish assets [--path folder] [--dry-run]
 ```
 
 Without arguments, it asks what to publish (`config`, `theme` or `lang`) and, if needed, the theme or the locale.
@@ -793,7 +795,7 @@ Without arguments, it asks what to publish (`config`, `theme` or `lang`) and, if
 
 | Argument / option | Description | Default |
 |---|---|---|
-| `config` / `theme` / `lang` | What is copied: the configuration, a theme or the texts of a language | Asked |
+| `config` / `theme` / `lang` / `assets` | What is copied: the configuration, a theme, the texts of a language or the CSS/JS files | Asked |
 | `theme` (with `theme`) | Theme to copy: `bootstrap5`, `w3css`, `tailwind` or one registered in `$themes` | Asked |
 | `locale` (with `lang`) | Language to copy: `ca`, `es`, `en`, `fr`, `pt` or `de` | Asked |
 | `--as` | `theme`: name of the new theme. Lowercase letters, numbers, `-` and `_`; it cannot be `bootstrap5`, `w3css` or `tailwind` | `<theme>-custom` |

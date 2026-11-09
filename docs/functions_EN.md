@@ -21,24 +21,26 @@ For complete recipes for common cases, see [howto_EN.md](howto_EN.md).
 
 - [Creating and running](#creating-and-running): `__construct`, `render`, `routes`
 - [Data source](#data-source): `setTable`, `setModel`, `setDatabase`, `setPrimaryKey`, `setSubject`, `softDeletes`, `where`
-- [Columns and fields](#columns-and-fields): `columns`, `fields`, `addFields`, `editFields`, `showFields`, `searchFields`, `filters`, `exportColumns`, `unsortable`, `displayAs`
+- [Columns and fields](#columns-and-fields): `columns`, `fields`, `addFields`, `editFields`, `showFields`, `searchFields`, `searchCallback`, `filters`, `addFilter`, `exportColumns`, `unsortable`, `displayAs`
 - [Field types and validation](#field-types-and-validation): `fieldType`, `setRules`, `requiredFields`, `readonlyFields`, `hideFields`, `setDefault`, `setHelp`
-- [Relations](#relations): `setRelation`, `setRelationNN`
-- [Translations](#translations): `setTranslations`, `postedTranslations`
+- [Relations](#relations): `setRelation` (`ajax`), `setRelationNN`
+- [Translations](#translations): `setTranslations` (`fallbacks`), `exportTranslations`, `postedTranslations`
 - [Display callbacks](#display-callbacks): `callbackColumn`, `callbackField`, `callbackExport`
 - [Hooks](#hooks): `beforeInsert`, `afterInsert`, `beforeUpdate`, `afterUpdate`, `beforeDelete`, `afterDelete`, `afterRestore`, `afterWrite`
+- [Upload handlers](#upload-handlers): `UploadHandler`, `UploadRejectedException`, field option `handler`
 - [Actions](#actions): `addAction`, `addHeaderAction`, `addBulkAction`
 - [Custom operations](#custom-operations): `addOperation`, `backToList`, `page`
 - [CSV import](#csv-import): `enableImport`, `callbackImport`
 - [Permissions](#permissions): `setPermission`, `unsetAdd`, `unsetEdit`, `unsetDelete`, `unsetShow`, `unsetExport`, `unsetTrash`, `unsetPurge`, `unsetSearch`, `unsetFilters`, `unsetBulk`, `readOnly`, `setResource`, `getResource`, `setPermissionResolver`, `isAllowed`, `permissionCatalogue`, `impliedPermissions`, `PermissionResolver`, only own records
-- [Display and navigation](#display-and-navigation): `setPerPage`, `defaultOrder`, `setBaseUrl`, `setBackUrl`, `setTheme`, `setLayout`, `setLayoutData`, `showTitle`, `getTitle`
+- [Display and navigation](#display-and-navigation): `columnPriority`, `rowActionsMenu`, `mobileCards`, `tree`, `setPerPage`, `defaultOrder`, `setBaseUrl`, `setBackUrl`, `setTheme`, `setLayout`, `setLayoutData`, `showTitle`, `getTitle`
 - [Access from callbacks](#access-from-callbacks): `getModel`, `getTable`, `getPrimaryKey`, `getBaseUrl`, `url`
 - [Masked ids](#masked-ids): `maskIds`, `encodeId`, `decodeId`, `maskId`, `unmaskId`, `idFromUrl`, `idForUrl`, `IdMasker`, `checkRoutes`
 - [Signed URLs](#signed-urls): `requireSignature`, `signedUrl`, `signUrl`, `checkSignature`, `hasValidSignature`
 - [Constants](#constants): `ID_OPERATIONS`, `OPERATIONS`, `IMPLIED_PERMISSIONS`
+- [Describing and capturing a CRUD](#describing-and-capturing-a-crud): `capture`, `captureController`, `describe`, `setRequest`
 - [Spark commands](#spark-commands): `kpcrudy:make`, `kpcrudy:demo`, `kpcrudy:maskid`, `kpcrudy:unmaskid`, `kpcrudy:signurl`, `kpcrudy:checkurl`
 - [Global configuration](#global-configuration): properties of `Config\Kpcrudy`, languages
-- [Templates](#templates): `Renderer::render`, `Renderer::renderParent`, `Renderer::locate`, `Renderer::hidden`, `Renderer::attrs`, `Renderer::nonce`, Content-Security-Policy, `kpcrudy:confirm` event
+- [Templates](#templates): `Renderer::render`, `Renderer::renderParent`, `Renderer::locate`, `Renderer::hidden`, `Renderer::attrs`, `Renderer::asset`, `Renderer::nonce`, Content-Security-Policy, `kpcrudy:confirm` event
 
 ---
 
@@ -265,6 +267,44 @@ With an empty array there are no filters. Invalid filter values (a non-numeric r
 $crud->filters(['city_id', 'status', 'active', 'tags', 'created_at', 'price']);
 ```
 
+### `searchCallback(Closure $callback): static`
+
+*Since 1.1.* Adds conditions of your own to the general search box, inside the same `OR` group as the [`searchFields()`](#searchfieldsarray-fields-static): `fn (BaseBuilder $builder, string $text, Crud $crud): void`. Use it to search values that are not columns of the CRUD's table (the email of a user in another table, the notes of a record...), usually with a subquery. The callback is called only when there is a search text and the user can search; it applies to the list and to the CSV export.
+
+- Add conditions with `orWhere...`/`orLike`/`orWhereIn` (they are joined to the other search fields with `OR`).
+- Pass the text to the Query Builder (it binds it); never concatenate it into SQL.
+- If there are no `searchFields()` but there is a callback, the search box is still shown.
+
+```php
+// Users list (table users): also find them by the email stored in auth_identities
+$crud->searchFields(['username'])
+     ->searchCallback(fn (BaseBuilder $b, string $text) => $b->orWhereIn('users.id',
+         fn (BaseBuilder $q) => $q->select('user_id')->from('auth_identities')
+             ->where('type', 'email_password')->like('secret', $text)));
+```
+
+### `addFilter(string $key, string $label, Closure $apply, array $options = []): static`
+
+*Since 1.1.* A filter of your own in the filters panel, for conditions that are not a column of the table: `fn (BaseBuilder $builder, string $value, Crud $crud): void` applies it to the list and to the export. The value travels in the URL like the other filters (`?f[key]=value`).
+
+| Option | Default | Description |
+|---|---|---|
+| `options` | none | `[value => label]`, or a `Closure` (`fn (Crud $crud): array`) that returns them (called once, only when needed). With options, only those values are accepted: any other value is ignored |
+| `type` | `'select'` with `options`, otherwise `'text'` | `'select'` (dropdown) or `'text'` (free text box) |
+
+`$key` must start with a lowercase letter and contain only lowercase letters, numbers and `_`; it should not be the name of a field that already has a filter.
+
+```php
+// Users with a group (auth_groups_users stores the group name)
+$crud->addFilter('group', 'Group', fn (BaseBuilder $b, string $group) => $b->whereIn('users.id',
+    fn (BaseBuilder $q) => $q->select('user_id')->from('auth_groups_users')->where('group', $group)),
+    ['options' => fn () => array_column(db_connect()->table('groups')->get()->getResultArray(), 'title', 'name')]);
+
+// Free text: records with a note that contains the text
+$crud->addFilter('note', 'Note', fn (BaseBuilder $b, string $text) => $b->whereIn('orders.id',
+    fn (BaseBuilder $q) => $q->select('order_id')->from('order_notes')->like('text', $text)));
+```
+
 ### `exportColumns(array $columns): static`
 
 CSV columns, if they must differ from the list columns.
@@ -341,6 +381,7 @@ Options:
 | `allowed` | `upload`, `image` | Allowed extensions (array or comma-separated text) |
 | `maxSize` | `upload`, `image` | Maximum size in KB |
 | `deleteFiles` | `upload`, `image` | `true` (default): deletes the file when the record is permanently deleted. Only files inside the field's directory (`path`) are deleted |
+| `handler` | `upload`, `image` | *Since 1.1.* [Upload handler](#upload-handlers) of this field: a class name or an instance of `Kpcrudy\Storage\UploadHandler`. By default, `Config::$uploadHandler` (none: kpcrudy stores the file in `path`) |
 | `attrs` | all | HTML attributes of the input: `['placeholder' => ..., 'min' => 0]` |
 
 ```php
@@ -451,8 +492,21 @@ $crud->setHelp('capacity', 'Leave it blank if there is no limit on places.');
 | `pk` | `'id'` | Primary key of the related table |
 | `where` | `[]` | Conditions for the dropdown options |
 | `order` | first field of `$display` | Order of the options |
+| `ajax` | `false` | *Since 1.1.* Search box with AJAX suggestions instead of a dropdown with every record (forms and filters) |
+| `minChars` | `2` | *Since 1.1.* With `ajax`: characters to type before searching |
+| `limit` | `20` | *Since 1.1.* With `ajax`: maximum number of suggestions (1-100) |
 
 The values coming from the form are validated against the allowed options (including the `where`).
+
+**AJAX search** (`'ajax' => true`, since 1.1): for tables with too many records for a dropdown (users, products, cities). The form and the filters panel show a text box; after `minChars` characters, kpcrudy's script asks `base/lookup?field=<field>&q=<text>` (a built-in GET operation of the CRUD, JSON `{"results": [{"id": "...", "text": "..."}]}`) and shows up to `limit` suggestions that match any field of `$display`, applying the relation's `where` and `order`. Choosing one stores its id in a hidden field. Only users who can use the field get answers: it must be in the add form (with `add`), the edit form (with `edit`) or the filters (with `list` and `filters`); otherwise the lookup answers 404. The saved value is still checked on the server: it must exist in the related table and match the `where`. The CSV import still matches values by id or text against every record.
+
+```php
+$crud->setRelation('customer_id', 'customers', '{name} ({tax_id})', [
+    'ajax'     => true,
+    'minChars' => 3,
+    'where'    => ['active' => 1],
+]);
+```
 
 ```php
 $crud->setRelation('city_id', 'cities', 'name');
@@ -504,6 +558,7 @@ Translatable fields saved in a child table, **one row per language**. For exampl
 | `rules` | inferred from the translations table | `[field => rules]`, as in `setRules()` |
 | `types` | inferred (`TEXT` => `textarea`, otherwise `text`) | `[field => 'text' \| 'textarea']` |
 | `listLocale` | the language of the request if it is one of `$locales`; otherwise, the first one | Language used in the list, the search, the sorting, the filters and the export |
+| `fallbacks` | none | *Since 1.1.* Languages to use, in order, when a record has no translation (or it is empty) in the list language: `['ca']` for every language, or per language `['es' => ['ca'], 'en' => ['es', 'ca'], '*' => ['ca']]` (`*` = any other). Applies to the list, search, sorting, filters, export and detail view |
 
 The translated fields are used like any other field in `columns()`, `fields()`, `showFields()`, `searchFields()`, `filters()`, `displayAs()`...:
 
@@ -513,7 +568,7 @@ The translated fields are used like any other field in `columns()`, `fields()`, 
 - **Validation**: the rules apply per language; the error keys are `kp_tr.{locale}.{field}` (e.g. `kp_tr.en.title`). The `required` rule only applies to the **required languages**: an optional language left completely empty is not validated, and if it was filled in only what was written is validated.
 - **Saving**: one row is written (or updated) per filled-in language, in the same transaction as the record. An optional language left empty is **deleted** from the translations table. A permanent delete (or a table without trash) also deletes the translations; sending to the trash keeps them.
 - They work with `setTable()` and with `setModel()`: the translated fields are not columns of the main table, so they do **not** go in the model's `allowedFields`.
-- They are not included in the [CSV import](#csv-import).
+- **CSV import** (since 1.1): one column per language, `title:ca` or `Title (Català)`; see [CSV import](#csv-import). **Export**: only the list language, or one column per language with [`exportTranslations()`](#exporttranslationsbool-alllocales--true-static).
 
 ```php
 $crud->setTable('news')
@@ -523,6 +578,16 @@ $crud->setTable('news')
      ->columns(['title', 'published_at'])
      ->fields(['published_at', 'title', 'body'])
      ->searchFields(['title']);
+```
+
+### `exportTranslations(bool $allLocales = true): static`
+
+*Since 1.1.* The CSV export writes the translated fields with **one column per language** (`Title (Català)`, `Title (English)`...) instead of only the list language. With the import enabled, the exported file can be imported again as it is.
+
+```php
+$crud->setTranslations('news_translations', 'news_id', 'locale', ['title'], ['ca' => 'Català', 'en' => 'English'])
+     ->enableImport()
+     ->exportTranslations();
 ```
 
 ### `postedTranslations(): array`
@@ -700,6 +765,44 @@ $crud->afterWrite(function (string $operation, string $id, array $data, ?array $
     cache()->delete('clients_count');
 });
 ```
+
+---
+
+## Upload handlers
+
+*Since 1.1.* By default kpcrudy moves the files of `upload` and `image` fields to [`$uploadPath`](#global-configuration) and serves them from `$uploadUrl`. An **upload handler** takes over that job: where the file is stored (another disk, a private folder, S3, the project's storage service...), what is saved in the column, how it is deleted and which URL it has. kpcrudy still validates the file first (extensions, MIME type of images, size: the field's `allowed` and `maxSize` options).
+
+```php
+// For every CRUD (app/Config/Kpcrudy.php)
+public string|object|null $uploadHandler = \App\Libraries\StorageUploads::class;
+
+// Or for one field (a class name or an instance)
+$crud->fieldType('contract', 'upload', ['handler' => new PrivateUploads('contracts')]);
+```
+
+### Interface `Kpcrudy\Storage\UploadHandler`
+
+| Method | When | Returns |
+|---|---|---|
+| `store(UploadedFile $file, string $field, array $context): string` | A new file is saved (add or edit form) | The value saved in the column (a path, a key, an id...) |
+| `delete(string $stored, string $field, array $context): void` | The file is replaced, removed ("remove" checkbox) or the record is permanently deleted (field option `deleteFiles`, default `true`), or the save fails after storing it | — |
+| `url(string $stored, string $field, array $context): ?string` | The list, detail view and form show the file | The URL of the file or image, or `null`: only the file name is shown (private files without a public link) |
+
+To refuse a file with a message for the user (shown as an error of the field, nothing is saved), throw `Kpcrudy\Storage\UploadRejectedException` from `store()`.
+
+`$context` contains:
+
+| Key | Value |
+|---|---|
+| `crud` | The `Kpcrudy\Crud` instance |
+| `resource`, `table` | `getResource()` and the table |
+| `field`, `type` | The field and its type (`upload` or `image`) |
+| `options` | The field's options (`fieldType()`), including your own keys (e.g. `'disk' => 'private'`) |
+| `operation` | `add`, `edit` (store), `delete` (delete), `list`, `show` or `form` (url) |
+| `data` | (store) The values being saved |
+| `record` | (store) The current record when editing, or `null` |
+
+A class name is instantiated once per field and CRUD (`new $class()`); pass an instance if it needs arguments. See the recipe [Store uploads through your own storage service](howto_EN.md#store-uploads-through-your-own-storage-service).
 
 ---
 
@@ -964,6 +1067,8 @@ If a text matches more than one option (two cities with the same name), the row 
 While the preview is shown, the file is stored in `writable/uploads/kpcrudy-import/` with a random name, private permissions (`0600`) and tied to the user's session. It is deleted when importing, when uploading another one, when going back to the upload page or, if abandoned, after one hour. In the preview, the values of [sensitive fields](#columns-and-fields) are masked.
 
 When importing, the **hooks** (`beforeInsert`, `afterInsert`, `beforeUpdate`, `afterUpdate`) run as if the form were saved, and the N-N relations present in the file are rewritten. The after-hooks (`afterInsert`, `afterUpdate`) only run once the transaction has been committed; with *import nothing* if there are errors, only if the whole import succeeds. The preview does not run the hooks or detect duplicates within the same file (two rows with the same email): those errors show up when importing.
+
+**Translated fields** (since 1.1): the [`setTranslations()`](#translations) fields of the add form (or of `fields`) are imported with **one column per language**, named `field:locale` (`title:ca`), `Label (Language)` (`Title (Català)`) or `Label (CODE)` (`Title (CA)`). They are validated like in the form (required languages, `rules`) and saved in the same transaction as the row; when updating, the languages and fields that are not in the file keep their value. If the file has no translation column, translations are not touched. The template (`base/import?template=1`) includes these columns.
 
 ### `callbackImport(string $field, Closure $callback): static`
 
@@ -1366,6 +1471,52 @@ if ($output instanceof ResponseInterface) {
 }
 
 return view('admin/page', ['content' => $output, 'title' => $crud->getTitle()]);
+```
+
+---
+
+### `columnPriority(array $priorities): static`
+
+*Since 1.1.* Which columns disappear first on small screens: `column => priority`. `1` = always visible (default), `2` = hidden below 576 px, `3` = below 768 px, `4` = below 992 px. Works with every theme (classes `kp-p2`...`kp-p4` of kpcrudy's CSS).
+
+```php
+$crud->columns(['name', 'email', 'city_id', 'created_at'])
+     ->columnPriority(['created_at' => 4, 'city_id' => 3]);
+```
+
+### `rowActionsMenu(bool|int $when = true): static`
+
+*Since 1.1.* Shows the actions of each row in a "⋯" menu instead of a row of buttons: `true` = always, a number = only when the row has more actions than that, `false` = never (default). The menu is an HTML `<details>` element: it needs no JavaScript and works with every theme (kpcrudy's script closes it when clicking outside). The detail view keeps the buttons.
+
+```php
+$crud->rowActionsMenu(3);   // show, edit and delete as buttons; with custom operations, a menu
+```
+
+### `mobileCards(bool $enabled = true): static`
+
+*Since 1.1.* On narrow screens (< 576 px) each row of the list becomes a card with "Label: value" lines instead of a table that has to be scrolled sideways. Every cell carries `data-label` with its column's label.
+
+```php
+$crud->mobileCards()->columnPriority(['notes' => 2]);
+```
+
+### `tree(string $parentField, array $options = []): static`
+
+*Since 1.1.* For self-referencing tables (pages with a parent page, categories with subcategories): the list shows each record under its parent, with the main column indented, while there is no search, filter or column sort (then it is a flat list). When saving, a parent that would create a cycle (the record itself or one of its descendants) is refused. If `$parentField` is also a [`setRelation()`](#setrelationstring-field-string-table-string-display-array-options---static) to the same table, the dropdown shows the options in tree order ("— — Child").
+
+| Option | Default | Description |
+|---|---|---|
+| `order` | the primary key | Field that orders the siblings (e.g. `position`) |
+| `label` | the first column | Column that is indented |
+| `maxDepth` | `20` | Maximum depth (deeper records are shown at this level) |
+
+The tree order is computed with one query on the id and parent of every record of the scope, so it is meant for tables of up to a few thousand records.
+
+```php
+$crud->setTable('pages')
+     ->columns(['title', 'slug', 'status'])
+     ->setRelation('parent_id', 'pages', 'title')
+     ->tree('parent_id', ['order' => 'position']);
 ```
 
 ---
@@ -1840,6 +1991,56 @@ See also the [Signed links](howto_EN.md#share-a-read-only-list-without-login) re
 
 ---
 
+## Describing and capturing a CRUD
+
+*Since 1.1.* Tools that need to know how a CRUD is configured (a permission catalogue checker, documentation generators, tests) can build it and stop before anything runs.
+
+### `Crud::capture(Closure $build): ?Crud` (static)
+
+Runs `$build` (usually a controller action that builds a CRUD and calls `render()`) and returns the CRUD it built **without running any operation**: `render()` stops before reading the URL, checking CSRF or touching data. Returns `null` if `$build` finishes without calling `render()`. Captures can be nested; afterwards `render()` works normally again.
+
+```php
+$crud = Crud::capture(fn () => (new \App\Controllers\Admin\Clients())->index());
+$crud?->permissionCatalogue();
+```
+
+### `Crud::captureController(string $handler, array $arguments = [], ?IncomingRequest $request = null): ?Crud` (static)
+
+Like `capture()`, from a route handler (`'\App\Controllers\Admin\Clients::index'`): it creates the controller, calls `initController()` with a web request (an empty GET one when running from `spark`) and runs the method with `$arguments`. Throws a `RuntimeException` if the class or method does not exist.
+
+```php
+// A spark command that checks every CRUD route
+foreach ($cruds as $route => $handler) {
+    $crud = Crud::captureController($handler);
+    $missing = array_diff($crud?->permissionCatalogue() ?? [], $declared[$crud->getResource()] ?? []);
+}
+```
+
+### `describe(): array`
+
+The configuration of the CRUD as an array, without running any operation or reading the URL:
+
+| Key | Value |
+|---|---|
+| `resource`, `table`, `primaryKey`, `subject`, `subjectPlural` | Identity of the CRUD |
+| `softDeletes`, `maskIds` | Whether it has a trash and masked ids |
+| `operations` | Built-in operations that are active (`list`, `add`, `edit`... without the disabled ones) |
+| `customOperations` | `key => ['row', 'method', 'permission', 'label']` of `addOperation()` |
+| `permissions` | [`permissionCatalogue()`](#permissioncatalogue-array) |
+| `columns`, `addFields`, `editFields`, `showFields`, `searchFields`, `filters`, `exportColumns`, `hiddenFields` | The lists as they are used (defaults included; `filters` includes `addFilter()` keys) |
+| `searchCallbacks` | Number of `searchCallback()` |
+| `types` | `field => type` (`text`, `relation`, `translation`, `virtual`...) |
+| `relations` | `name => ['type' => '1-N'|'N-N', 'table', 'display', ...]` |
+| `translations` | `['table', 'fields', 'locales']` or `null` |
+| `tree` | The `tree()` options or `null` |
+| `actions`, `bulkActions`, `signedOperations` | Actions with their permission, and the operations that need a signed URL |
+
+### `setRequest(IncomingRequest $request): static`
+
+The request the CRUD works with (by default the `request` service). A CRUD can now be built **from the CLI** (`spark` commands, queues, scheduled tasks): when the `request` service is not a web request, the CRUD uses an empty GET request, so `permissionCatalogue()`, `describe()` and `capture()` work there.
+
+---
+
 ## Spark commands
 
 ### `php spark kpcrudy:make [table] [options]`
@@ -1913,9 +2114,9 @@ See the recipe [Find which record a masked code refers to](howto_EN.md#find-whic
 
 Create and check [signed URLs](#signed-urls) from the command line: to send a link by hand or to find out why a link does not work (valid, expired, modified, and when it expires). All the options are in [commands_EN.md](commands_EN.md).
 
-### `php spark kpcrudy:publish <config|theme|lang> [name]`
+### `php spark kpcrudy:publish <config|theme|lang|assets> [name]`
 
-Copies the configuration (`app/Config/Kpcrudy.php`, with every option), a theme (`theme w3css --as intranet`, optionally only some templates with `--only`) or the texts of a language (`lang ca`) into the project, to adapt them without touching the library. It overwrites nothing without `--force`, and with `--dry-run` it only shows what it would do. See [kpcrudy:publish](commands_EN.md#kpcrudypublish).
+`assets` (since 1.1) copies kpcrudy's CSS and JavaScript files (`src/Assets/`) to `Config::$assetsPath` (or `--path`) for [`$assetsMode = 'external'`](#content-security-policy); run it again after every update of the library. The rest copies the configuration (`app/Config/Kpcrudy.php`, with every option), a theme (`theme w3css --as intranet`, optionally only some templates with `--only`) or the texts of a language (`lang ca`) into the project, to adapt them without touching the library. It overwrites nothing without `--force`, and with `--dry-run` it only shows what it would do. See [kpcrudy:publish](commands_EN.md#kpcrudypublish).
 
 ---
 
@@ -1923,7 +2124,7 @@ Copies the configuration (`app/Config/Kpcrudy.php`, with every option), a theme 
 
 ### `Crud::ID_OPERATIONS` · `Crud::OPERATIONS`
 
-URL words the CRUD interprets as an operation: `ID_OPERATIONS` are followed by an id (`edit`, `show`, `delete`, `restore`, `purge`); `OPERATIONS` are not (`add`, `trash`, `export`, `import`, `bulk`, `emptytrash`).
+URL words the CRUD interprets as an operation: `ID_OPERATIONS` are followed by an id (`edit`, `show`, `delete`, `restore`, `purge`); `OPERATIONS` are not (`add`, `trash`, `export`, `import`, `bulk`, `emptytrash` and, since 1.1, `lookup`: the AJAX search of [relations](#setrelationstring-field-string-table-string-display-array-options---static)). A route of your own cannot end in these words (see [Route ending in a reserved word](howto_EN.md#route-ending-in-a-reserved-word)).
 
 ```php
 // Find out whether we are on the main list
@@ -1984,6 +2185,10 @@ class Kpcrudy extends \Kpcrudy\Config\Kpcrudy
 | `int $importMaxSize` | `2048` | Maximum size of an import file, in KB |
 | `string $uploadPath` | `FCPATH . 'uploads'` | Base directory of uploaded files |
 | `string $uploadUrl` | `'uploads'` | Base URL of the files, relative to `base_url()` |
+| `string\|object\|null $uploadHandler` | `null` | *Since 1.1.* [Upload handler](#upload-handlers) for every CRUD (class name or instance of `Kpcrudy\Storage\UploadHandler`); `null` = kpcrudy stores the files in `$uploadPath` |
+| `string $assetsMode` | `'inline'` | *Since 1.1.* How kpcrudy's CSS and JavaScript are included: `'inline'` (`<style>`/`<script>` blocks with the CSP nonce) or `'external'` (files linked from `$assetsUrl`, no inline code; copy them with `php spark kpcrudy:publish assets`) |
+| `string $assetsUrl` | `'assets/kpcrudy'` | *Since 1.1.* URL of the published files: relative to `base_url()`, absolute or starting with `/` |
+| `string $assetsPath` | `FCPATH . 'assets/kpcrudy'` | *Since 1.1.* Folder where `kpcrudy:publish assets` copies them |
 | `int $uploadMaxSize` | `2048` | Default maximum size, in KB |
 | `array $uploadAllowed` | images, PDF, office documents, `txt`, `csv`, `zip` | Default allowed extensions for `upload` fields |
 | `array $imageAllowed` | `jpg`, `jpeg`, `png`, `gif`, `webp` | Default allowed extensions for `image` fields |
@@ -2080,6 +2285,15 @@ Generates escaped HTML attributes. `true` adds the attribute without a value, an
 <!-- <input type="text" name="q" required> -->
 ```
 
+### `Renderer::asset(string $file): string`
+
+*Since 1.1.* Includes one of kpcrudy's CSS or JavaScript files (`src/Assets/`: `kpcrudy.css`, `kpcrudy.js`, `kpcrudy-tailwind.css`, `kpcrudy-w3css.css`) according to [`$assetsMode`](#global-configuration): inline with the nonce, or as a `<link>`/`<script src defer>` to `$assetsUrl` with `?v=` and a hash of the file, so browsers never keep an old version. The themes' `partials/assets` use it; a theme of your own that extends that partial (`renderParent()`) keeps working in both modes.
+
+```php
+<?= $this->asset('kpcrudy.css') ?>
+<?= $this->asset('kpcrudy.js') ?>
+```
+
 ### `Renderer::nonce(string $type = 'script'): string`
 
 The `nonce` attribute of CodeIgniter's Content-Security-Policy for a `<script>` (`'script'`) or `<style>` (`'style'`) block, with a leading space. Empty if the CSP is not enabled.
@@ -2096,6 +2310,8 @@ The `nonce` attribute of CodeIgniter's Content-Security-Policy for a `<script>` 
 ### Content-Security-Policy
 
 The bundled themes work with a **strict CSP** (`Config\App::$CSPEnabled = true`, without `'unsafe-inline'`): the `<script>` and `<style>` blocks carry the nonce, and the templates use **no** inline handlers (`onclick=""`, `onchange=""`...) or `style=""` attributes. The behaviour goes in `data-kp-*` attributes, handled by the JavaScript in `partials/assets`. A theme of your own should follow the same rules:
+
+**Without any inline code** (since 1.1): with `public string $assetsMode = 'external';` and the files copied with `php spark kpcrudy:publish assets`, kpcrudy prints no `<style>` or `<script>` blocks at all: it links `kpcrudy.css` and `kpcrudy.js` from `$assetsUrl`. Then a CSP with `script-src 'self'` and `style-src 'self'` is enough (no nonces needed for kpcrudy).
 
 | Attribute | Behaviour |
 |---|---|

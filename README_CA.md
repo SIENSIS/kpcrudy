@@ -26,7 +26,12 @@ Funcionalitats:
 - **Identificadors emmascarats** a les URL (`edit/Xk3f9...` en lloc d'`edit/5`), opcionals, per CRUD o per a tot el projecte
 - **URL signades amb caducitat** per compartir pàgines de consulta sense iniciar sessió (`requireSignature()`): el visitant hi pot cercar i navegar, però no pot canviar el camí ni allargar la caducitat
 - **Plantilles intercanviables** (tema Bootstrap 5 per defecte) i layout configurable, també com a secció del layout del projecte
-- Funciona amb una **Content-Security-Policy** estricta (nonces de CodeIgniter, sense gestors d'esdeveniments ni atributs `style` en línia)
+- Funciona amb una **Content-Security-Policy** estricta (nonces de CodeIgniter, sense gestors d'esdeveniments ni atributs `style` en línia), o **sense cap codi en línia** (`$assetsMode = 'external'`)
+- **Gestors de fitxers**: desa els fitxers amb el teu emmagatzematge (discos privats, S3, el servei del projecte) amb `UploadHandler`
+- **Cerca i filtres propis** (`searchCallback()`, `addFilter()`) per a valors d'altres taules
+- **Cerca AJAX** per a relacions amb milers de registres, **arbres** per a taules autoreferenciades, **llistats per al mòbil** (prioritat de columnes, menú d'accions, targetes)
+- **Idiomes de reserva** a les traduccions i camps traduïts a la **importació i exportació CSV**
+- **`Crud::capture()` / `describe()`**: consulta la configuració d'un CRUD sense executar-lo (també des de `spark`)
 - Textos en **català, castellà, anglès, francès, portuguès i alemany**
 
 ---

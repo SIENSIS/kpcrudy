@@ -87,6 +87,19 @@ Als exemples, `$crud` és una instància de `Kpcrudy\Crud` dins d'un mètode de 
 - [Configuració diferent per a un CRUD](#configuració-diferent-per-a-un-crud)
 - [Canviar un text o afegir un idioma](#canviar-un-text-o-afegir-un-idioma)
 
+**Novetats de la 1.1**
+- [Desar els fitxers amb el teu servei d'emmagatzematge](#desar-els-fitxers-amb-el-teu-servei-demmagatzematge)
+- [Sense codi en línia: CSS i JavaScript externs](#sense-codi-en-línia-css-i-javascript-externs)
+- [Traduccions amb un idioma de reserva](#traduccions-amb-un-idioma-de-reserva)
+- [Importar i exportar camps traduïts](#importar-i-exportar-camps-traduïts)
+- [Llistats que funcionen al mòbil](#llistats-que-funcionen-al-mòbil)
+- [Relació amb milers de registres (cerca AJAX)](#relació-amb-milers-de-registres-cerca-ajax)
+- [Un arbre de pàgines](#un-arbre-de-pàgines)
+- [Cercar en una altra taula](#cercar-en-una-altra-taula)
+- [Filtres propis](#filtres-propis)
+- [Comprovar tots els CRUD sense obrir-los](#comprovar-tots-els-crud-sense-obrir-los)
+- [Executar les ordres de kpcrudy des del codi](#executar-les-ordres-de-kpcrudy-des-del-codi)
+
 ---
 
 ## Primers passos
@@ -1801,3 +1814,233 @@ return [
 Per afegir un idioma, copia [src/Language/en/Kpcrudy.php](../src/Language/en/Kpcrudy.php) a `app/Language/{codi}/Kpcrudy.php` i tradueix-ne els valors, mantenint els paràmetres `{0}`, `{1}`... L'idioma és el de la petició (`app.defaultLocale` o el negociat per CodeIgniter). kpcrudy inclou anglès, català, castellà, francès, portuguès i alemany; per a qualsevol altre idioma (o una clau que falti), CodeIgniter prova primer l'idioma sense la regió (`pt-BR` → `pt`) i després l'anglès, de manera que el CRUD mai no mostra les claus.
 
 Els missatges de validació són de CodeIgniter. Per tenir-los traduïts, instal·la `composer require codeigniter4/translations` (inclou castellà, francès, portuguès, alemany i molts altres, però **no el català**). Per al català, crea `app/Language/ca/Validation.php` amb les traduccions; pots partir del fitxer castellà del paquet.
+
+---
+
+## Novetats de la 1.1
+
+### Desar els fitxers amb el teu servei d'emmagatzematge
+
+Per defecte els fitxers dels camps `upload` i `image` van a `uploadPath`. Per fer-los passar per l'emmagatzematge del teu projecte (un altre disc, fitxers privats servits per un controlador, S3...), escriu un [gestor de fitxers](functions_CA.md#gestors-de-fitxers). kpcrudy continua comprovant les extensions, el tipus de les imatges i la mida abans de cridar-lo.
+
+```php
+// app/Libraries/StorageUploads.php
+namespace App\Libraries;
+
+use CodeIgniter\HTTP\Files\UploadedFile;
+use Kpcrudy\Storage\UploadHandler;
+use Kpcrudy\Storage\UploadRejectedException;
+
+final class StorageUploads implements UploadHandler
+{
+    public function store(UploadedFile $file, string $field, array $context): string
+    {
+        // Comprovacions pròpies: p. ex. una quota per usuari
+        if ($file->getSizeByUnit('mb') > 5 && ($context['options']['disk'] ?? 'public') === 'private') {
+            throw new UploadRejectedException('Els fitxers privats no poden passar de 5 MB.');
+        }
+
+        // El teu servei decideix la carpeta i el nom; la columna en guarda la clau
+        return service('storage')->store($file, [
+            'disk'   => $context['options']['disk'] ?? 'public',
+            'folder' => $context['table'] . '/' . $field,
+        ]);
+    }
+
+    public function delete(string $stored, string $field, array $context): void
+    {
+        service('storage')->delete($stored);
+    }
+
+    public function url(string $stored, string $field, array $context): ?string
+    {
+        // Fitxers privats: un controlador que comprova permisos; els públics: una URL directa
+        return ($context['options']['disk'] ?? 'public') === 'private'
+            ? site_url('files/private/' . rawurlencode($stored))
+            : service('storage')->url($stored);
+    }
+}
+```
+
+```php
+// app/Config/Kpcrudy.php: per a tots els CRUD
+public string|object|null $uploadHandler = \App\Libraries\StorageUploads::class;
+
+// En un CRUD: les teves opcions arriben al gestor a $context['options']
+$crud->fieldType('photo', 'image', ['maxSize' => 2048])
+     ->fieldType('contract', 'upload', ['allowed' => ['pdf'], 'disk' => 'private']);
+```
+
+Què passa: `store()` quan es puja un fitxer (el que retorna es desa a la columna), `delete()` quan el fitxer se substitueix, es treu amb la casella "treure", s'esborra definitivament el registre o el desament falla; `url()` cada vegada que es mostra el fitxer (retorna `null` per mostrar només el nom).
+
+### Sense codi en línia: CSS i JavaScript externs
+
+kpcrudy imprimeix el seu CSS i JavaScript en blocs `<style>`/`<script>` amb el nonce de la CSP. Si la teva política no admet cap codi en línia, serveix-los com a fitxers:
+
+```php
+// app/Config/Kpcrudy.php
+public string $assetsMode = 'external';
+public string $assetsUrl  = 'assets/kpcrudy';          // o '/static/kpcrudy', 'https://cdn.example.com/kpcrudy'
+public string $assetsPath = FCPATH . 'assets/kpcrudy'; // on els copia l'ordre
+```
+
+```bash
+php spark kpcrudy:publish assets
+```
+
+Torna a executar l'ordre després de cada `composer update` de kpcrudy (posa-la al guió de desplegament). Els enllaços porten `?v=` amb un hash del fitxer de la llibreria, de manera que els navegadors baixen la versió nova tan bon punt la llibreria canvia.
+
+### Traduccions amb un idioma de reserva
+
+Quan un registre no està traduït a l'idioma del llistat, el llistat mostra la cel·la buida. Amb `fallbacks` mostra el primer idioma que tingui valor:
+
+```php
+$crud->setTranslations('news_translations', 'news_id', 'locale', ['title', 'summary'],
+    ['ca' => 'Català', 'es' => 'Español', 'en' => 'English'],
+    [
+        'required'  => ['ca'],
+        // Els llistats en anglès i castellà recorren al català; el castellà prova primer l'anglès
+        'fallbacks' => ['es' => ['en', 'ca'], '*' => ['ca']],
+    ]);
+```
+
+La reserva es fa servir a tot arreu on s'usa l'idioma del llistat: llistat, cerca (un valor de reserva només es troba quan l'idioma del llistat no en té), ordenació, filtres, exportació i fitxa. El formulari sempre mostra cada idioma tal com està desat.
+
+### Importar i exportar camps traduïts
+
+Amb la importació activada, cada camp traduït té una columna per idioma. El fitxer les pot anomenar `title:ca`, `Títol (Català)` o `Títol (CA)`:
+
+```csv
+name;title:ca;title:en
+Opening;Inauguració;Opening
+```
+
+```php
+$crud->setTranslations('events_translations', 'event_id', 'locale', ['title'], ['ca' => 'Català', 'en' => 'English'])
+     ->enableImport(['key' => 'name'])
+     ->exportTranslations();   // l'exportació escriu les mateixes columnes: exportar, editar, tornar a importar
+```
+
+En una actualització, els idiomes que no són al fitxer conserven el text. Un fitxer sense columnes de traducció no les toca.
+
+### Llistats que funcionen al mòbil
+
+```php
+$crud->columns(['name', 'email', 'city_id', 'created_at', 'notes'])
+     ->columnPriority(['notes' => 2, 'created_at' => 3, 'city_id' => 4])  // s'amaguen primer en pantalles petites
+     ->rowActionsMenu(3)                                                  // més de 3 accions: un menú "⋯"
+     ->mobileCards();                                                     // < 576 px: una targeta per fila
+```
+
+- `columnPriority()`: `2` amaga la columna per sota de 576 px, `3` per sota de 768 px, `4` per sota de 992 px.
+- `rowActionsMenu()`: `true` sempre, un número només quan hi ha més accions; funciona sense JavaScript.
+- `mobileCards()`: la taula es converteix en targetes amb "Etiqueta: valor" al mòbil.
+
+El panell de filtres ja és plegable (s'obre quan hi ha un filtre actiu).
+
+### Relació amb milers de registres (cerca AJAX)
+
+Un desplegable amb tots els usuaris o productes és lent i poc útil. Amb `'ajax' => true` el camp es converteix en un quadre de cerca amb suggeriments:
+
+```php
+$crud->setRelation('customer_id', 'customers', '{name} ({tax_id})', [
+    'ajax'     => true,
+    'minChars' => 3,                  // comença a cercar a partir de 3 caràcters
+    'limit'    => 15,                 // com a molt 15 suggeriments
+    'where'    => ['active' => 1],    // només es poden triar clients actius
+    'order'    => 'name',
+])->filters(['customer_id']);         // el filtre també és un quadre de cerca
+```
+
+Més exemples:
+
+```php
+// Cerca per qualsevol camp de la plantilla: "Garcia", "Anna" o el correu troben l'usuari
+$crud->setRelation('user_id', 'users', '{last_name}, {first_name} <{email}>', ['ajax' => true]);
+
+// Cada usuari només tria entre els seus projectes (el where també es comprova en desar)
+$crud->setRelation('project_id', 'projects', 'title', ['ajax' => true, 'where' => ['owner_id' => auth()->id()]]);
+
+// Només lectura en editar: el valor es mostra com a text, sense quadre de cerca
+$crud->setRelation('author_id', 'users', 'username', ['ajax' => true])->readonlyFields(['author_id']);
+```
+
+Els suggeriments surten de `base/lookup?field=customer_id&q=...` (una operació GET del mateix CRUD, JSON). Només respon als usuaris que poden fer servir el camp (formulari d'alta o d'edició, o filtres), i el valor desat sempre es comprova al servidor amb la taula relacionada i el seu `where`.
+
+### Un arbre de pàgines
+
+```php
+$crud->setTable('pages')
+     ->columns(['title', 'slug', 'status'])
+     ->fields(['title', 'slug', 'parent_id', 'position', 'status'])
+     ->setRelation('parent_id', 'pages', 'title')          // el desplegable també mostra l'arbre
+     ->tree('parent_id', ['order' => 'position']);
+```
+
+El llistat mostra cada pàgina sota la seva pàgina pare, sagnada. Cercar, filtrar o ordenar per una columna mostra un llistat pla. Una pàgina no es pot moure sota ella mateixa ni sota una de les seves filles.
+
+### Cercar en una altra taula
+
+El correu de l'usuari és a `auth_identities`, les notes d'una comanda a `order_notes`... `searchCallback()` afegeix una condició al cercador amb una subconsulta:
+
+```php
+use CodeIgniter\Database\BaseBuilder;
+
+$crud->setTable('users')
+     ->searchFields(['username'])
+     ->searchCallback(fn (BaseBuilder $b, string $text) => $b->orWhereIn('users.id',
+         fn (BaseBuilder $q) => $q->select('user_id')->from('auth_identities')
+             ->where('type', 'email_password')->like('secret', $text)));
+```
+
+Fes servir `orWhere...` (la cerca és un `OR` de tots els camps) i deixa que el Query Builder escapi el text.
+
+### Filtres propis
+
+```php
+use CodeIgniter\Database\BaseBuilder;
+
+// Desplegable: usuaris d'un grup
+$crud->addFilter('group', 'Grup', fn (BaseBuilder $b, string $group) => $b->whereIn('users.id',
+    fn (BaseBuilder $q) => $q->select('user_id')->from('auth_groups_users')->where('group', $group)),
+    ['options' => fn () => array_column(db_connect()->table('groups')->get()->getResultArray(), 'title', 'name')]); // només es llegeix si cal
+
+// Desplegable amb opcions que són condicions, no valors
+$crud->addFilter('two_factor', 'Dos passos', fn (BaseBuilder $b, string $value) => $value === 'on'
+    ? $b->whereIn('users.id', fn (BaseBuilder $q) => $q->select('user_id')->from('user_two_factor'))
+    : $b->whereNotIn('users.id', fn (BaseBuilder $q) => $q->select('user_id')->from('user_two_factor')),
+    ['options' => ['on' => 'Activada', 'off' => 'Desactivada']]);
+
+// Text lliure
+$crud->addFilter('note', 'La nota conté', fn (BaseBuilder $b, string $text) => $b->whereIn('orders.id',
+    fn (BaseBuilder $q) => $q->select('order_id')->from('order_notes')->like('text', $text)), ['type' => 'text']);
+```
+
+Un desplegable només accepta les seves opcions (`?f[group]=qualsevol` s'ignora). Els enllaços poden obrir el llistat ja filtrat: `admin/users?f[group]=editor`.
+
+### Comprovar tots els CRUD sense obrir-los
+
+Per comprovar catàlegs de permisos, generar documentació o provar configuracions, construeix cada CRUD i atura'l abans que s'executi:
+
+```php
+use Kpcrudy\Crud;
+
+// Des de l'acció d'un controlador (també des d'una ordre de spark: el CRUD rep una petició GET buida)
+$crud = Crud::captureController('\App\Controllers\Admin\Clients::index');
+
+$description = $crud?->describe();
+// ['resource' => 'clients', 'permissions' => ['list', 'show', 'add', ...], 'columns' => [...], ...]
+
+$missing = array_diff($crud->permissionCatalogue(), $declaredPermissions);
+```
+
+`Crud::capture(fn () => ...)` fa el mateix amb qualsevol codi que cridi `render()`. No s'executa res: cap operació, cap comprovació CSRF, cap consulta del llistat.
+
+### Executar les ordres de kpcrudy des del codi
+
+Totes les ordres de kpcrudy accepten les opcions des de `command()` a més de la línia d'ordres, de manera que altres ordres o instal·ladors les poden cridar:
+
+```php
+command('kpcrudy:make news --route admin/news --controller Admin/News --as admin-news --dry-run');
+command('kpcrudy:publish assets --path ' . FCPATH . 'static/kpcrudy');
+```

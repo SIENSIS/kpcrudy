@@ -5,6 +5,47 @@ Documentation is in English and Catalan: [README_EN.md](README_EN.md) · [README
 
 ## [Unreleased]
 
+### Added
+
+- **Upload handlers**: `Kpcrudy\Storage\UploadHandler` (`store()`, `delete()`, `url()`) stores the files of `upload`/`image`
+  fields through the project's own storage. `Config::$uploadHandler` (all CRUDs) or the field option `handler`;
+  `UploadRejectedException` refuses a file with a message. `url()` may return `null` (private files: only the name is shown).
+- **External assets**: `Config::$assetsMode = 'external'` links `kpcrudy.css`/`kpcrudy.js` from `$assetsUrl` (with a
+  content hash) instead of printing nonce'd `<style>`/`<script>` blocks; `php spark kpcrudy:publish assets` copies them
+  to `$assetsPath`. The CSS and JS now live in `src/Assets/` and the themes include them with `Renderer::asset()`.
+- **Translation fallbacks**: `setTranslations(..., ['fallbacks' => ['ca']])` or per locale
+  (`['es' => ['ca'], '*' => ['ca']]`) for the list, search, sorting, filters, export and detail view.
+- **Translated fields in CSV import** (one column per locale: `title:ca`, `Title (Català)`, `Title (CA)`; validated like the
+  form) and `exportTranslations()` to export one column per locale.
+- **Responsive lists**: `columnPriority()` (hide columns below 576/768/992 px), `rowActionsMenu()` (row actions in a "⋯"
+  `<details>` menu, no JavaScript needed) and `mobileCards()` (rows as cards on phones), for every theme.
+- **AJAX relations**: `setRelation(..., ['ajax' => true, 'minChars' => 2, 'limit' => 20])` shows a search box instead of a
+  dropdown in forms and filters, answered by the built-in GET operation `base/lookup` (only for users who can use the
+  field); values are validated against the related table and its `where`.
+- **Trees**: `tree($parentField, ['order', 'label', 'maxDepth'])` lists self-referencing tables in tree order with
+  indentation, refuses parents that would create a cycle and shows the parent dropdown in tree order.
+- **Custom search and filters**: `searchCallback()` adds conditions (e.g. subqueries on other tables) to the search box;
+  `addFilter()` adds dropdown or text filters with a condition of your own.
+- **Describing a CRUD**: `Crud::capture()` and `Crud::captureController()` return the CRUD a controller builds without
+  running any operation; `describe()` returns its configuration (operations, permissions, fields, filters, relations...).
+- `setRequest()`; a CRUD can be built from the CLI (`spark`, queues): it uses an empty GET request when the `request`
+  service is not a web request.
+- Every command (`kpcrudy:make`, `kpcrudy:publish`, `kpcrudy:signurl`...) reads its options from `command()` parameters as
+  well as from the command line.
+- New texts in the six languages (`moreActions`, `lookupPlaceholder`, `lookupEmpty`, `treeCycle` and exceptions).
+
+### Changed
+
+- `Crud::OPERATIONS` includes `lookup` (the AJAX search of relations): a route of your own can no longer end in `lookup`,
+  and `lookup` is no longer a valid `addOperation()` key.
+- The list cells carry `data-label` and the column classes of `columnPriority()`; a theme of your own that copies
+  `list.php` keeps working, but needs these attributes to support the new options.
+
+### Fixed
+
+- The CSV export of CRUDs with N-N relations or translated fields on databases with a table prefix (`DBPrefix`): the
+  queries of each chunk no longer lose the table aliases.
+
 ## [1.0.0] - 2026-11-03
 
 ### Added
