@@ -5,6 +5,12 @@ Documentation is in English and Catalan: [README_EN.md](README_EN.md) · [README
 
 ## [Unreleased]
 
+### Added
+
+- **Time zones for `datetime` fields**: `Config::$timezone` / `setTimezone()` show and edit `datetime` fields in a time zone
+  (list, detail view, form, filters, CSV export and import) while the database keeps `Config::$storageTimezone` (PHP's by
+  default, usually UTC). Field option `'timezone' => false` leaves a field out. `null` (default): no conversion, as before.
+
 ## [1.1.0] - 2026-11-09
 
 ### Added

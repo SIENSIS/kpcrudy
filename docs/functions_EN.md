@@ -22,7 +22,7 @@ For complete recipes for common cases, see [howto_EN.md](howto_EN.md).
 - [Creating and running](#creating-and-running): `__construct`, `render`, `routes`
 - [Data source](#data-source): `setTable`, `setModel`, `setDatabase`, `setPrimaryKey`, `setSubject`, `softDeletes`, `where`
 - [Columns and fields](#columns-and-fields): `columns`, `fields`, `addFields`, `editFields`, `showFields`, `searchFields`, `searchCallback`, `filters`, `addFilter`, `exportColumns`, `unsortable`, `displayAs`
-- [Field types and validation](#field-types-and-validation): `fieldType`, `setRules`, `requiredFields`, `readonlyFields`, `hideFields`, `setDefault`, `setHelp`
+- [Field types and validation](#field-types-and-validation): `fieldType`, `setRules`, `requiredFields`, `readonlyFields`, `hideFields`, `setDefault`, `setTimezone`, `setHelp`
 - [Relations](#relations): `setRelation` (`ajax`), `setRelationNN`
 - [Translations](#translations): `setTranslations` (`fallbacks`), `exportTranslations`, `postedTranslations`
 - [Display callbacks](#display-callbacks): `callbackColumn`, `callbackField`, `callbackExport`
@@ -382,6 +382,7 @@ Options:
 | `maxSize` | `upload`, `image` | Maximum size in KB |
 | `deleteFiles` | `upload`, `image` | `true` (default): deletes the file when the record is permanently deleted. Only files inside the field's directory (`path`) are deleted |
 | `handler` | `upload`, `image` | *Since 1.1.* [Upload handler](#upload-handlers) of this field: a class name or an instance of `Kpcrudy\Storage\UploadHandler`. By default, `Config::$uploadHandler` (none: kpcrudy stores the file in `path`) |
+| `timezone` | `datetime` | *Since 1.2.* `false`: this field is never converted between time zones (e.g. a local time with no zone) |
 | `attrs` | all | HTML attributes of the input: `['placeholder' => ..., 'min' => 0]` |
 
 ```php
@@ -467,6 +468,21 @@ Initial value of a field in the **add** form. The user can change it. If none is
 $crud->setDefault('status', 'draft')
      ->setDefault('date', date('Y-m-d'))
      ->setDefault('tags', [1, 3]);   // N-N relation: selected ids
+```
+
+### `setTimezone(?string $timezone): static`
+
+*Since 1.2.* Time zone in which this CRUD shows and edits its `datetime` fields (overrides `Config::$timezone`; `null`: the configuration's). Values are still stored in `Config::$storageTimezone` (usually UTC), so a user in Barcelona types `09:00`, the database gets `08:00` (winter) and everybody sees `09:00` again.
+
+- **List, detail view and CSV export**: the stored value converted to this zone, with `$datetimeFormat`.
+- **Form**: the input shows the converted value; the posted one is validated as typed and saved converted back (the `before*` hooks already receive it in the storage zone, like the database).
+- **Filters**: the "from"/"to" dates are read in this zone (a whole day when only the date is given).
+- **CSV import**: dates in the file are in this zone, like the form's.
+- `setDefault()` values and `where()` conditions are in the storage zone (they are database values). `date` and `time` fields are never converted. `fieldType($field, 'datetime', ['timezone' => false])` leaves one field out.
+
+```php
+$crud->setTimezone('Europe/Madrid');                 // or Config::$timezone for every CRUD
+$crud->setTimezone(auth()->user()->timezone ?? null); // the user's own zone
 ```
 
 ### `setHelp(string $field, string $text): static`
@@ -2168,6 +2184,8 @@ class Kpcrudy extends \Kpcrudy\Config\Kpcrudy
 | `array $perPageOptions` | `[10, 25, 50, 100]` | Options of the "Per page" selector |
 | `string $dateFormat` | `'d/m/Y'` | Date format in the list, the detail view and the CSV |
 | `string $datetimeFormat` | `'d/m/Y H:i'` | Format of dates with time |
+| `?string $timezone` | `null` | *Since 1.2.* Time zone in which `datetime` fields are shown and edited (list, detail view, form, filters, CSV export and import), e.g. `'Europe/Madrid'`. `null`: no conversion. See [`setTimezone()`](#settimezonestring-timezone-static) |
+| `?string $storageTimezone` | `null` | *Since 1.2.* Time zone of the `datetime` values stored in the database. `null`: PHP's (`date_default_timezone_get()`, in CodeIgniter `Config\App::$appTimezone`) |
 | `int $listTruncate` | `60` | Maximum characters of texts in the list (`0` = no limit) |
 | `bool $inferRules` | `true` | Infer validation rules from the table structure |
 | `string $csvDelimiter` | `';'` | CSV delimiter (`;` is read correctly by Excel in Catalan and Spanish) |

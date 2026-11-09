@@ -22,7 +22,7 @@ Per a receptes completes de casos habituals, vegeu [howto_CA.md](howto_CA.md).
 - [Creació i execució](#creació-i-execució): `__construct`, `render`, `routes`
 - [Origen de dades](#origen-de-dades): `setTable`, `setModel`, `setDatabase`, `setPrimaryKey`, `setSubject`, `softDeletes`, `where`
 - [Columnes i camps](#columnes-i-camps): `columns`, `fields`, `addFields`, `editFields`, `showFields`, `searchFields`, `searchCallback`, `filters`, `addFilter`, `exportColumns`, `unsortable`, `displayAs`
-- [Tipus de camp i validació](#tipus-de-camp-i-validació): `fieldType`, `setRules`, `requiredFields`, `readonlyFields`, `hideFields`, `setDefault`, `setHelp`
+- [Tipus de camp i validació](#tipus-de-camp-i-validació): `fieldType`, `setRules`, `requiredFields`, `readonlyFields`, `hideFields`, `setDefault`, `setTimezone`, `setHelp`
 - [Relacions](#relacions): `setRelation` (`ajax`), `setRelationNN`
 - [Traduccions](#traduccions): `setTranslations` (`fallbacks`), `exportTranslations`, `postedTranslations`
 - [Callbacks de presentació](#callbacks-de-presentació): `callbackColumn`, `callbackField`, `callbackExport`
@@ -382,6 +382,7 @@ Opcions:
 | `maxSize` | `upload`, `image` | Mida màxima en KB |
 | `deleteFiles` | `upload`, `image` | `true` (per defecte): esborra el fitxer en esborrar definitivament el registre. Només s'esborren fitxers que siguin dins del directori del camp (`path`) |
 | `handler` | `upload`, `image` | *Des de la 1.1.* [Gestor de fitxers](#gestors-de-fitxers) d'aquest camp: un nom de classe o una instància de `Kpcrudy\Storage\UploadHandler`. Per defecte, `Config::$uploadHandler` (cap: kpcrudy desa el fitxer a `path`) |
+| `timezone` | `datetime` | *Des de 1.2.* `false`: aquest camp no es converteix mai entre zones horàries (p. ex. una hora local sense zona) |
 | `attrs` | tots | Atributs HTML de l'input: `['placeholder' => ..., 'min' => 0]` |
 
 ```php
@@ -467,6 +468,21 @@ Valor inicial d'un camp al formulari d'**alta**. L'usuari el pot canviar. Si no 
 $crud->setDefault('status', 'draft')
      ->setDefault('date', date('Y-m-d'))
      ->setDefault('tags', [1, 3]);   // relació N-N: ids seleccionats
+```
+
+### `setTimezone(?string $timezone): static`
+
+*Des de 1.2.* Zona horària en què aquest CRUD mostra i edita els camps `datetime` (té prioritat sobre `Config::$timezone`; `null`: la de la configuració). Els valors es continuen desant en `Config::$storageTimezone` (normalment UTC): un usuari de Barcelona escriu `09:00`, la base de dades rep `08:00` (hivern) i tothom torna a veure `09:00`.
+
+- **Llistat, fitxa i exportació CSV**: el valor desat convertit a aquesta zona, amb `$datetimeFormat`.
+- **Formulari**: el camp mostra el valor convertit; el que s'envia es valida tal com s'ha escrit i es desa convertit de nou (els hooks `before*` ja el reben en la zona de desar, com la base de dades).
+- **Filtres**: les dates "des de"/"fins a" s'interpreten en aquesta zona (un dia sencer si només hi ha data).
+- **Importació CSV**: les dates del fitxer són en aquesta zona, com les del formulari.
+- Els valors de `setDefault()` i les condicions de `where()` són en la zona de desar (són valors de la base de dades). Els camps `date` i `time` no es converteixen mai. `fieldType($camp, 'datetime', ['timezone' => false])` exclou un camp.
+
+```php
+$crud->setTimezone('Europe/Madrid');                 // o Config::$timezone per a tots els CRUD
+$crud->setTimezone(auth()->user()->timezone ?? null); // la zona de l'usuari
 ```
 
 ### `setHelp(string $field, string $text): static`
@@ -2168,6 +2184,8 @@ class Kpcrudy extends \Kpcrudy\Config\Kpcrudy
 | `array $perPageOptions` | `[10, 25, 50, 100]` | Opcions del selector "Per pàgina" |
 | `string $dateFormat` | `'d/m/Y'` | Format de les dates al llistat, la fitxa i el CSV |
 | `string $datetimeFormat` | `'d/m/Y H:i'` | Format de les dates amb hora |
+| `?string $timezone` | `null` | *Des de 1.2.* Zona horària en què es mostren i s'editen els camps `datetime` (llistat, fitxa, formulari, filtres, exportació i importació CSV), p. ex. `'Europe/Madrid'`. `null`: sense conversió. Vegeu [`setTimezone()`](#settimezonestring-timezone-static) |
+| `?string $storageTimezone` | `null` | *Des de 1.2.* Zona horària dels valors `datetime` desats a la base de dades. `null`: la de PHP (`date_default_timezone_get()`, a CodeIgniter `Config\App::$appTimezone`) |
 | `int $listTruncate` | `60` | Caràcters màxims dels textos al llistat (`0` = sense límit) |
 | `bool $inferRules` | `true` | Deduir regles de validació de l'estructura de la taula |
 | `string $csvDelimiter` | `';'` | Separador del CSV (`;` el llegeix bé l'Excel en català i castellà) |

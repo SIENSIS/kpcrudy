@@ -758,6 +758,11 @@ trait ImportsCsv
             case 'datetime':
                 $date = $this->parseImportDate($value, $type === 'datetime');
 
+                if ($date !== null && $type === 'datetime') {
+                    // Les dates del fitxer són en la zona de visualització, com les del formulari
+                    $date = $this->toStorageTime($name, $date);
+                }
+
                 return $date === null ? [null, $invalid] : [$date, null];
 
             case 'number':

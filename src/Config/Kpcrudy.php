@@ -78,6 +78,20 @@ class Kpcrudy extends BaseConfig
     public string $datetimeFormat = 'd/m/Y H:i';
 
     /**
+     * Zona horària en què es mostren i s'editen els camps `datetime` (p. ex. 'Europe/Madrid'):
+     * llistat, fitxa, formulari, filtres, exportació i importació CSV. Els valors es desen a la
+     * base de dades en `$storageTimezone`. null: sense conversió (es mostren tal com es desen).
+     * Un CRUD el pot canviar amb setTimezone(); un camp, amb l'opció 'timezone' => false.
+     */
+    public ?string $timezone = null;
+
+    /**
+     * Zona horària dels valors `datetime` desats a la base de dades. null: la de PHP
+     * (date_default_timezone_get(), a CodeIgniter Config\App::$appTimezone, normalment 'UTC').
+     */
+    public ?string $storageTimezone = null;
+
+    /**
      * Nombre màxim de caràcters dels textos al llistat (0 = sense límit).
      */
     public int $listTruncate = 60;

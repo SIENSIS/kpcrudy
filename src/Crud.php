@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Kpcrudy;
 
 use Closure;
+use DateTimeImmutable;
+use DateTimeZone;
 use CodeIgniter\Database\BaseBuilder;
 use CodeIgniter\Database\BaseConnection;
 use CodeIgniter\Exceptions\PageNotFoundException;
@@ -161,6 +163,9 @@ class Crud
 
     /** @var array<string, array{type: string, options: array<string, mixed>}> */
     protected array $types = [];
+
+    /** Zona horària de visualització dels camps `datetime` (setTimezone()); null: la de la configuració. */
+    protected ?string $timezone = null;
 
     /** @var array<string, list<string>> */
     protected array $rules = [];
@@ -1001,6 +1006,22 @@ class Crud
     public function setDefault(string $field, mixed $value): static
     {
         $this->defaults[$field] = $value;
+
+        return $this;
+    }
+
+    /**
+     * Zona horària en què aquest CRUD mostra i edita els camps `datetime` (p. ex.
+     * 'Europe/Madrid'; null: la de la configuració, `$timezone`). Els valors es continuen desant
+     * en `$storageTimezone`. Un nom no vàlid llança una excepció.
+     */
+    public function setTimezone(?string $timezone): static
+    {
+        if ($timezone !== null) {
+            new DateTimeZone($timezone);
+        }
+
+        $this->timezone = $timezone;
 
         return $this;
     }
@@ -3133,6 +3154,8 @@ class Crud
      */
     protected function save(string $mode, ?string $id, ?array $record, array $fields): array|ResponseInterface
     {
+        $stored = [];
+
         $input = [];
         $data  = [];
         $nn    = [];
@@ -3193,6 +3216,13 @@ class Crud
 
                     $input[$name] = $value;
 
+                    // Es valida el que ha escrit l'usuari, però es desa en la zona de desar
+                    if ($type === 'datetime' && $value !== '') {
+                        $data[$name]   = $this->toStorageTime($name, $value);
+                        $stored[$name] = $data[$name];
+                        break;
+                    }
+
                     if ($type === 'password') {
                         if ($value !== '') {
                             $data[$name] = ($options['hash'] ?? true) ? password_hash($value, PASSWORD_DEFAULT) : $value;
@@ -3207,8 +3237,9 @@ class Crud
         // Els camps de l'abast (where) sempre tenen el valor de l'abast
         $data = array_merge($data, $scope);
 
-        // Valors a mostrar si cal tornar a pintar el formulari
-        $values = array_merge($record ?? [], $input);
+        // Valors a mostrar si cal tornar a pintar el formulari (les dates, en la zona de desar:
+        // el formulari les torna a convertir)
+        $values = array_merge($record ?? [], $input, $stored);
 
         foreach (array_keys($files) as $name) {
             $values[$name] = $record[$name] ?? null;
@@ -4021,12 +4052,18 @@ class Crud
                 $from  = $valid($from) ? $from : '';
                 $to    = $valid($to) ? $to : '';
 
+                if ($type === 'datetime') {
+                    // Els límits s'escriuen en la zona de visualització (un dia sencer si només hi ha data)
+                    $from = $from === '' ? '' : $this->toStorageTime($name, strlen($from) === 10 ? $from . ' 00:00:00' : $from);
+                    $to   = $to === '' ? '' : $this->toStorageTime($name, strlen($to) === 10 ? $to . ' 23:59:59' : $to);
+                }
+
                 if ($from !== '') {
                     $builder->where("{$column} >=", $from);
                 }
 
                 if ($to !== '') {
-                    $builder->where("{$column} <=", $this->typeOf($name) === 'datetime' && strlen($to) === 10 ? $to . ' 23:59:59' : $to);
+                    $builder->where("{$column} <=", $to);
                 }
 
                 continue;
@@ -5140,13 +5177,78 @@ class Crud
                 return $this->formatDate($value, $this->config->dateFormat);
 
             case 'datetime':
-                return $this->formatDate($value, $this->config->datetimeFormat);
+                return $this->formatDate(is_scalar($value) ? $this->toDisplayTime($name, (string) $value) : $value, $this->config->datetimeFormat);
 
             case 'password':
                 return $value ? '••••••' : '';
 
             default:
                 return (string) ($value ?? '');
+        }
+    }
+
+    /**
+     * Zona horària en què es mostra i s'edita un camp `datetime`, o null si no cal convertir
+     * (sense zona configurada, la mateixa que la de desar o el camp amb 'timezone' => false).
+     */
+    protected function displayTimezone(string $name): ?DateTimeZone
+    {
+        if (($this->types[$name]['options']['timezone'] ?? null) === false) {
+            return null;
+        }
+
+        $zone = $this->timezone ?? $this->config->timezone;
+
+        if ($zone === null || $zone === '') {
+            return null;
+        }
+
+        $display = new DateTimeZone($zone);
+
+        return $display->getName() === $this->storageTimezone()->getName() ? null : $display;
+    }
+
+    protected function storageTimezone(): DateTimeZone
+    {
+        $zone = $this->config->storageTimezone;
+
+        return new DateTimeZone($zone !== null && $zone !== '' ? $zone : date_default_timezone_get());
+    }
+
+    /**
+     * Un valor `datetime` desat ("Y-m-d H:i:s", zona de desar) en la zona de visualització.
+     * Els valors que no són dates es retornen tal qual.
+     */
+    protected function toDisplayTime(string $name, string $value): string
+    {
+        $zone = $this->displayTimezone($name);
+
+        if ($zone === null || $value === '' || str_starts_with($value, '0000')) {
+            return $value;
+        }
+
+        try {
+            return (new DateTimeImmutable($value, $this->storageTimezone()))->setTimezone($zone)->format('Y-m-d H:i:s');
+        } catch (Throwable) {
+            return $value;
+        }
+    }
+
+    /**
+     * Un valor `datetime` escrit per l'usuari (zona de visualització) en la zona de desar.
+     */
+    protected function toStorageTime(string $name, string $value): string
+    {
+        $zone = $this->displayTimezone($name);
+
+        if ($zone === null || $value === '') {
+            return $value;
+        }
+
+        try {
+            return (new DateTimeImmutable($value, $zone))->setTimezone($this->storageTimezone())->format('Y-m-d H:i:s');
+        } catch (Throwable) {
+            return $value;
         }
     }
 
@@ -5288,7 +5390,7 @@ class Crud
                 'name'      => $name,
                 'label'     => $this->label($name),
                 'type'      => $readonly ? 'readonly' : $type,
-                'value'     => $this->formValue($type, $value),
+                'value'     => $this->formValue($type, $type === 'datetime' && is_scalar($value) ? $this->toDisplayTime($name, (string) $value) : $value),
                 'options'   => in_array($type, self::SELECT_TYPES, true) && ! $this->isLookup($name) ? $this->optionsFor($name) : [],
                 // Relacions AJAX: un camp de cerca en lloc d'un desplegable
                 'lookup'    => $this->isLookup($name) && ! $readonly ? $this->lookupData($name, $value) : null,
