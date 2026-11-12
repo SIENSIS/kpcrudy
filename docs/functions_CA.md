@@ -20,11 +20,11 @@ Per a receptes completes de casos habituals, vegeu [howto_CA.md](howto_CA.md).
 ## Índex
 
 - [Creació i execució](#creació-i-execució): `__construct`, `render`, `routes`
-- [Origen de dades](#origen-de-dades): `setTable`, `setModel`, `setDatabase`, `setPrimaryKey`, `setSubject`, `softDeletes`, `where`
+- [Origen de dades](#origen-de-dades): `setTable`, `setModel`, `setDatabase`, `setPrimaryKey`, `setSubject`, `softDeletes`, `where` (`Closure`)
 - [Columnes i camps](#columnes-i-camps): `columns`, `fields`, `addFields`, `editFields`, `showFields`, `searchFields`, `searchCallback`, `filters`, `addFilter`, `exportColumns`, `unsortable`, `displayAs`
 - [Tipus de camp i validació](#tipus-de-camp-i-validació): `fieldType`, `setRules`, `requiredFields`, `readonlyFields`, `hideFields`, `setDefault`, `setTimezone`, `setHelp`
 - [Relacions](#relacions): `setRelation` (`ajax`), `setRelationNN`
-- [Traduccions](#traduccions): `setTranslations` (`fallbacks`), `exportTranslations`, `postedTranslations`
+- [Traduccions](#traduccions): `setTranslations` (`fallbacks`, `attrs`), `exportTranslations`, `postedTranslations`
 - [Callbacks de presentació](#callbacks-de-presentació): `callbackColumn`, `callbackField`, `callbackExport`
 - [Hooks](#hooks): `beforeInsert`, `afterInsert`, `beforeUpdate`, `afterUpdate`, `beforeDelete`, `afterDelete`, `afterRestore`, `afterWrite`
 - [Gestors de fitxers](#gestors-de-fitxers): `UploadHandler`, `UploadRejectedException`, opció `handler` del camp
@@ -171,7 +171,7 @@ $crud->setTable('posts')->softDeletes(true, 'removed_at');
 $crud->setTable('logs')->softDeletes(false);
 ```
 
-### `where(array|string $field, mixed $value = null): static`
+### `where(array|Closure|string $field, mixed $value = null): static`
 
 Limita els registres que gestiona el CRUD. La condició s'aplica a **tot**: llistat, cerca, exportació, fitxa, edició, esborrat i accions massives. Un usuari no pot accedir a un registre de fora de l'abast encara que en canviï l'id a la URL.
 
@@ -192,6 +192,41 @@ Les condicions d'**igualtat simples** (`camp => valor` amb un valor escalar o `n
 Als exemples anteriors, `company_id`, `status` i `deleted_by` es desen sempre amb el valor indicat; `price >` no assigna res, però un preu que no la compleixi no es pot desar.
 
 > Per a les condicions amb operador, el valor dels registres nous l'has d'assignar tu, amb `fieldType('camp', 'hidden', ['value' => ...])`, `setDefault()` o un hook (vegeu la recepta [Limitar el CRUD a l'usuari connectat](howto_CA.md#limitar-el-crud-a-lusuari-connectat)).
+
+### `where(Closure $condition)`: condicions pròpies (OR, subconsultes)
+
+*Des de la 1.3.* Una **closure** `fn (BaseBuilder $builder, Crud $crud)` afegeix condicions que una parella `camp => valor` no pot expressar: un `OR`, una subconsulta sobre una altra taula, una condició que depèn de l'usuari connectat. Rep el Query Builder de la consulta principal del CRUD i hi afegeix `where()`, `orWhere()`, `whereIn()`, `groupStart()`... El que retorna no es fa servir.
+
+```php
+// Esdeveniments que l'usuari pot gestionar: els públics, o els restringits amb un públic
+// que inclou un dels grups de l'usuari o l'usuari mateix.
+$groups = $user->getGroups();   // p. ex. ['editor', 'docents']
+$userId = $user->id;
+
+$crud->setTable('events')
+     ->where(static fn (BaseBuilder $builder) => $builder
+         ->where('events.visibility', 'public')
+         ->orWhereIn('events.id', static fn (BaseBuilder $sub) => $sub
+             ->select('event_id')->from('event_audience')
+             ->groupStart()
+                 ->where('type', 'group')->whereIn('subject', $groups)
+             ->groupEnd()
+             ->orGroupStart()
+                 ->where('type', 'user')->where('subject', $userId)
+             ->groupEnd()));
+```
+
+Com funciona:
+
+- **L'abast de tot.** Com les altres condicions de `where()`, s'aplica al llistat, la cerca, els filtres, l'ordenació i els comptadors, l'exportació, la fitxa, els formularis d'edició i esborrat, les accions massives, la paperera (restaurar, eliminar definitivament) i les operacions pròpies amb id. Un registre de fora es tracta com un registre que no existeix, encara que l'usuari canviï l'id a la URL o manipuli el formulari de les accions massives.
+- **Sempre entre parèntesis.** Les condicions de cada closure van dins d'un grup `( … )` unit amb `AND` a la resta de l'abast, de manera que un `orWhere()` no el pot eixamplar. A l'exemple, `where('school_id', 3)` més la closure dona `school_id = 3 AND (visibility = 'public' OR id IN (…))`.
+- **Valors segurs.** Els valors passen pel Query Builder, vinculats i escapats. No construeixis mai SQL ajuntant cadenes amb valors que vénen de la petició.
+- **En desar.** Una closure no assigna valors als registres nous (no hi ha cap valor per assignar, com passa amb una condició amb operador), però després de desar el registre ha de continuar dins l'abast: si no hi és, es desfà tot el desament (taula principal, relacions N-N i traduccions) i es mostra "No tens permís per fer aquesta operació". Els valors que mantenen visible un registre nou els has d'assignar tu (`setDefault()`, un hook `beforeInsert`...).
+- **Se'n poden afegir diverses**; cadascuna és un grup propi (`AND` entre elles). Una closure que no afegeix cap condició no es té en compte.
+- **Qualifica les columnes** amb el nom de la taula (`events.visibility`): la consulta del llistat també uneix les taules de les relacions i de les traduccions, i un nom sol podria ser ambigu.
+- `describe()` en diu quantes n'hi ha (`whereCallbacks`).
+
+> Consell: posa la regla en una classe teva (p. ex. `EventVisibility::apply(BaseBuilder $builder, User $user)`) i fes-la servir al CRUD, a les pàgines públiques i a l'API ([kpapy](https://github.com/SIENSIS/kpapy) accepta la mateixa closure des de la 1.2): una sola regla, el mateix resultat a tot arreu.
 
 ---
 
@@ -382,7 +417,7 @@ Opcions:
 | `maxSize` | `upload`, `image` | Mida màxima en KB |
 | `deleteFiles` | `upload`, `image` | `true` (per defecte): esborra el fitxer en esborrar definitivament el registre. Només s'esborren fitxers que siguin dins del directori del camp (`path`) |
 | `handler` | `upload`, `image` | *Des de la 1.1.* [Gestor de fitxers](#gestors-de-fitxers) d'aquest camp: un nom de classe o una instància de `Kpcrudy\Storage\UploadHandler`. Per defecte, `Config::$uploadHandler` (cap: kpcrudy desa el fitxer a `path`) |
-| `timezone` | `datetime` | *Des de 1.2.* `false`: aquest camp no es converteix mai entre zones horàries (p. ex. una hora local sense zona) |
+| `timezone` | `datetime` | *Des de la 1.2.* `false`: aquest camp no es converteix mai entre zones horàries (p. ex. una hora local sense zona) |
 | `attrs` | tots | Atributs HTML de l'input: `['placeholder' => ..., 'min' => 0]` |
 
 ```php
@@ -472,7 +507,7 @@ $crud->setDefault('status', 'draft')
 
 ### `setTimezone(?string $timezone): static`
 
-*Des de 1.2.* Zona horària en què aquest CRUD mostra i edita els camps `datetime` (té prioritat sobre `Config::$timezone`; `null`: la de la configuració). Els valors es continuen desant en `Config::$storageTimezone` (normalment UTC): un usuari de Barcelona escriu `09:00`, la base de dades rep `08:00` (hivern) i tothom torna a veure `09:00`.
+*Des de la 1.2.* Zona horària en què aquest CRUD mostra i edita els camps `datetime` (té prioritat sobre `Config::$timezone`; `null`: la de la configuració). Els valors es continuen desant en `Config::$storageTimezone` (normalment UTC): un usuari de Barcelona escriu `09:00`, la base de dades rep `08:00` (hivern) i tothom torna a veure `09:00`.
 
 - **Llistat, fitxa i exportació CSV**: el valor desat convertit a aquesta zona, amb `$datetimeFormat`.
 - **Formulari**: el camp mostra el valor convertit; el que s'envia es valida tal com s'ha escrit i es desa convertit de nou (els hooks `before*` ja el reben en la zona de desar, com la base de dades).
@@ -575,6 +610,7 @@ Camps traduïbles desats en una taula filla, **una fila per idioma**. Per exempl
 | `types` | deduïts (`TEXT` => `textarea`; si no, `text`) | `[camp => 'text' \| 'textarea']` |
 | `listLocale` | l'idioma de la petició si és un dels de `$locales`; si no, el primer | Idioma del llistat, la cerca, l'ordenació, els filtres i l'exportació |
 | `fallbacks` | cap | *Des de la 1.1.* Idiomes que es fan servir, per ordre, quan un registre no té traducció (o és buida) a l'idioma del llistat: `['ca']` per a tots els idiomes, o per idioma `['es' => ['ca'], 'en' => ['es', 'ca'], '*' => ['ca']]` (`*` = qualsevol altre). S'aplica al llistat, la cerca, l'ordenació, els filtres, l'exportació i la fitxa |
+| `attrs` | cap | *Des de la 1.3.* Atributs HTML dels inputs d'un camp traduït: `[camp => [atribut => valor]]`, o `[camp => fn (string $locale, string $field): array]` per a atributs que depenen de l'idioma. Vegeu [Atributs dels inputs traduïts](#atributs-dels-inputs-traduïts) |
 
 Els camps traduïts es fan servir com qualsevol altre camp a `columns()`, `fields()`, `showFields()`, `searchFields()`, `filters()`, `displayAs()`...:
 
@@ -595,6 +631,50 @@ $crud->setTable('news')
      ->fields(['published_at', 'title', 'body'])
      ->searchFields(['title']);
 ```
+
+### Atributs dels inputs traduïts
+
+*Des de la 1.3.* L'opció `attrs` de `setTranslations()` afegeix atributs HTML a l'input (o textarea) d'un camp traduït **a cada pestanya d'idioma**, sense canviar-ne el tipus ni treure'l de les pestanyes. És la manera d'enganxar un component JavaScript a un camp traduït: un editor de text enriquit, un comptador de caràcters, un generador de slugs...
+
+```php
+// El cos de cada idioma es converteix en l'editor de text enriquit del projecte
+$crud->setTranslations('news_translations', 'news_id', 'locale', ['title', 'body'],
+    ['ca' => 'Català', 'en' => 'English'],
+    [
+        'types' => ['body' => 'textarea'],
+        'attrs' => [
+            'body'  => ['data-component' => 'editor', 'data-toolbar' => 'basic'],
+            'title' => ['placeholder' => 'Un títol curt', 'autocomplete' => 'off'],
+        ],
+    ]);
+```
+
+El resultat, a la pestanya del català:
+
+```html
+<textarea id="kp-tr-ca-body" name="kp_tr[ca][body]" class="form-control" rows="4" lang="ca"
+          data-component="editor" data-toolbar="basic"></textarea>
+```
+
+Amb una **closure**, els atributs poden dependre de l'idioma (rep el codi d'idioma i el nom del camp, i retorna un array):
+
+```php
+'attrs' => [
+    'body'  => static fn (string $locale, string $field): array => [
+        'data-component' => 'editor',
+        'spellcheck'     => 'true',
+        'dir'            => $locale === 'ar' ? 'rtl' : 'ltr',
+    ],
+],
+```
+
+Regles:
+
+- Els atributs **s'afegeixen** als que escriu kpcrudy, mai no els substitueixen: `id`, `name`, `class`, `value`, `required`, `lang`, `rows` i `maxlength` sempre són els de la llibreria (un `class` o un `name` a `attrs` no es té en compte), de manera que el camp continua funcionant (validació, missatges d'error, desament) afegeixis el que afegeixis. Per donar estil a l'input, fes servir un atribut propi (`data-*`) i CSS.
+- Els valors s'escapen. Un atribut amb el valor `true` s'escriu sense valor (`spellcheck` → `spellcheck`); `false` i `null` no s'escriuen.
+- El teu JavaScript ha de mantenir el valor a l'input original (la majoria d'editors ho fan sincronitzant el seu textarea): kpcrudy només llegeix `kp_tr[{idioma}][{camp}]`.
+- kpcrudy **no** neteja l'HTML que envia un editor de text enriquit: sanititza'l al projecte (p. ex. amb HTMLPurifier) abans de desar-lo i en mostrar-lo.
+- Abans de la 1.3 l'única manera era el tipus intern `fieldType('body', 'translation', ['attrs' => ...])`; continua funcionant (l'opció `attrs` de `setTranslations()` s'hi afegeix al damunt), però fes servir l'opció.
 
 ### `exportTranslations(bool $allLocales = true): static`
 
@@ -2184,8 +2264,8 @@ class Kpcrudy extends \Kpcrudy\Config\Kpcrudy
 | `array $perPageOptions` | `[10, 25, 50, 100]` | Opcions del selector "Per pàgina" |
 | `string $dateFormat` | `'d/m/Y'` | Format de les dates al llistat, la fitxa i el CSV |
 | `string $datetimeFormat` | `'d/m/Y H:i'` | Format de les dates amb hora |
-| `?string $timezone` | `null` | *Des de 1.2.* Zona horària en què es mostren i s'editen els camps `datetime` (llistat, fitxa, formulari, filtres, exportació i importació CSV), p. ex. `'Europe/Madrid'`. `null`: sense conversió. Vegeu [`setTimezone()`](#settimezonestring-timezone-static) |
-| `?string $storageTimezone` | `null` | *Des de 1.2.* Zona horària dels valors `datetime` desats a la base de dades. `null`: la de PHP (`date_default_timezone_get()`, a CodeIgniter `Config\App::$appTimezone`) |
+| `?string $timezone` | `null` | *Des de la 1.2.* Zona horària en què es mostren i s'editen els camps `datetime` (llistat, fitxa, formulari, filtres, exportació i importació CSV), p. ex. `'Europe/Madrid'`. `null`: sense conversió. Vegeu [`setTimezone()`](#settimezonestring-timezone-static) |
+| `?string $storageTimezone` | `null` | *Des de la 1.2.* Zona horària dels valors `datetime` desats a la base de dades. `null`: la de PHP (`date_default_timezone_get()`, a CodeIgniter `Config\App::$appTimezone`) |
 | `int $listTruncate` | `60` | Caràcters màxims dels textos al llistat (`0` = sense límit) |
 | `bool $inferRules` | `true` | Deduir regles de validació de l'estructura de la taula |
 | `string $csvDelimiter` | `';'` | Separador del CSV (`;` el llegeix bé l'Excel en català i castellà) |

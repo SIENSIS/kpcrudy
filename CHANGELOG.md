@@ -3,7 +3,21 @@
 All notable changes to kpcrudy. The format follows [Keep a Changelog](https://keepachangelog.com/).
 Documentation is in English and Catalan: [README_EN.md](README_EN.md) · [README_CA.md](README_CA.md).
 
-## [Unreleased]
+## [1.3.0] - 2026-11-12
+
+### Added
+
+- **`where(Closure)`**: `where(fn (BaseBuilder $builder, Crud $crud) => …)` adds conditions of your own (`OR`, subqueries
+  on other tables, conditions that depend on the user) to the CRUD's scope: list, search, filters, sorting, counts, export,
+  detail view, edit, delete, bulk actions, trash and custom operations. Each closure goes in its own brackets (joined with
+  `AND`), so an `OR` cannot widen the scope; a closure that adds nothing is ignored. A saved record must still be inside
+  the scope, otherwise the save is rolled back. Same contract as kpapy 1.2. `describe()` reports `whereCallbacks`.
+- **`attrs` option of `setTranslations()`**: HTML attributes for the inputs of a translated field in every language tab
+  (`[field => [...]]` or `[field => fn (string $locale, string $field): array]`), e.g. to turn a translated body into a
+  rich-text editor without taking it out of the language tabs. They are added to the library's attributes, never replace
+  them. Replaces the undocumented `fieldType($field, 'translation', ['attrs' => …])`, which still works.
+
+## [1.2.0] - 2026-11-09
 
 ### Added
 
@@ -105,6 +119,7 @@ Published on [Packagist](https://packagist.org/packages/siensis/kpcrudy) from th
 with `composer update siensis/kpcrudy`. The Composer package does not include the test application
 (`demo/`) nor the screenshots (`.gitattributes`); the documentation (`docs/`) is included.
 
-[Unreleased]: https://github.com/SIENSIS/kpcrudy/compare/v1.1.0...HEAD
+[1.3.0]: https://github.com/SIENSIS/kpcrudy/compare/v1.2.0...v1.3.0
+[1.2.0]: https://github.com/SIENSIS/kpcrudy/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/SIENSIS/kpcrudy/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/SIENSIS/kpcrudy/releases/tag/v1.0.0

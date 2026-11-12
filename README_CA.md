@@ -438,7 +438,7 @@ public function clients()
 | `setDatabase(string\|BaseConnection $db)` | Grup o connexió de base de dades (mode taula). |
 | `setPrimaryKey(string $key)` | Força la clau primària. |
 | `softDeletes(bool $enabled = true, string $field = 'deleted_at')` | Activa o desactiva la paperera (mode taula). En mode model, mana el model. |
-| `where(string\|array $field, $value = null)` | Limita els registres que gestiona el CRUD. S'aplica al llistat, al detall, a l'edició, a l'esborrat i a les accions massives. |
+| `where(string\|array\|Closure $field, $value = null)` | Limita els registres que gestiona el CRUD. S'aplica al llistat, al detall, a l'edició, a l'esborrat i a les accions massives. Des de la 1.3, una closure `fn (BaseBuilder $builder)` hi afegeix condicions pròpies (`OR`, subconsultes), sempre entre parèntesis. |
 | `setSubject(string $singular, ?string $plural)` | Noms que surten als títols i missatges. |
 
 > **Model amb `{id}` a les regles**: a CodeIgniter 4.5+ el camp de la clau primària ha de tenir una regla pròpia per poder fer servir `{id}`, per exemple `'id' => 'permit_empty|is_natural_no_zero'`. Kpcrudy hi afegeix l'identificador automàticament en editar (l'id real, encara que la URL porti un codi emmascarat).
@@ -829,7 +829,7 @@ Si no hi ha traducció de kpcrudy per al locale, CodeIgniter prova el locale sen
 
 - Tot el text s'escapa a les plantilles. Els callbacks `callbackColumn` i `callbackField` retornen HTML tal qual: escapa-hi les dades.
 - **CSRF**: totes les peticions POST del CRUD comproven el token. Si el filtre `csrf` de CodeIgniter (o una subclasse de `CodeIgniter\Filters\CSRF`) està actiu per a la petició, ho fa el filtre; si no, ho fa el CRUD mateix. Es pot desactivar amb `$csrfProtection = false` si el projecte protegeix les peticions d'una altra manera.
-- **Abast de `where()`**: les condicions d'igualtat simples (`camp => valor`) també s'apliquen en desar: el camp no surt al formulari, es desa sempre amb aquest valor (també a la importació) i, si després de desar el registre queda fora de l'abast, es desfà el canvi.
+- **Abast de `where()`**: les condicions d'igualtat simples (`camp => valor`) també s'apliquen en desar: el camp no surt al formulari, es desa sempre amb aquest valor (també a la importació) i, si després de desar el registre queda fora de l'abast, es desfà el canvi. Les condicions d'una closure de `where()` (des de la 1.3) van entre parèntesis, de manera que un `OR` no pot eixamplar l'abast, i els seus valors els vincula el Query Builder.
 - **Camps secrets**: les columnes amb noms com `password`, `token`, `secret`, `salt`, `hash`, `apikey`... (`$sensitiveFields`) no surten per defecte al llistat, la fitxa, la cerca, l'ordenació, els filtres, l'exportació ni els formularis (les contrasenyes sí que surten al formulari, i es desen amb hash). Només es mostren si les indiques explícitament.
 - Les columnes amb `callbackColumn` no es fan servir per cercar si no les poses a `searchFields()`, perquè el callback pot amagar el valor real.
 - Els valors de relacions, enum i select es validen contra les opcions permeses. Els valors de filtre no vàlids s'ignoren, els comodins `%` i `_` de la cerca es busquen literalment i un id que no pot ser una clau primària vàlida es tracta com a inexistent.

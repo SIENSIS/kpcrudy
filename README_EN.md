@@ -438,7 +438,7 @@ public function clients()
 | `setDatabase(string\|BaseConnection $db)` | Database group or connection (table mode). |
 | `setPrimaryKey(string $key)` | Forces the primary key. |
 | `softDeletes(bool $enabled = true, string $field = 'deleted_at')` | Enables or disables the trash (table mode). In model mode, the model decides. |
-| `where(string\|array $field, $value = null)` | Limits the records managed by the CRUD. It applies to the list, detail, editing, deletion and bulk actions. |
+| `where(string\|array\|Closure $field, $value = null)` | Limits the records managed by the CRUD. It applies to the list, detail, editing, deletion and bulk actions. Since 1.3, a closure `fn (BaseBuilder $builder)` adds conditions of your own (`OR`, subqueries), always in brackets. |
 | `setSubject(string $singular, ?string $plural)` | Names shown in titles and messages. |
 
 > **Model with `{id}` in the rules**: in CodeIgniter 4.5+ the primary key field must have its own rule to be able to use `{id}`, for example `'id' => 'permit_empty|is_natural_no_zero'`. Kpcrudy adds the identifier automatically when editing (the real id, even if the URL carries a masked code).
@@ -829,7 +829,7 @@ If there is no kpcrudy translation for the locale, CodeIgniter tries the locale 
 
 - All text is escaped in the templates. The `callbackColumn` and `callbackField` callbacks return HTML as is: escape the data in them.
 - **CSRF**: every POST request of the CRUD checks the token. If CodeIgniter's `csrf` filter (or a subclass of `CodeIgniter\Filters\CSRF`) is active for the request, the filter does it; otherwise, the CRUD does it itself. It can be disabled with `$csrfProtection = false` if the project protects requests in another way.
-- **`where()` scope**: simple equality conditions (`field => value`) are also enforced when saving: the field does not appear in the form, it is always saved with that value (also on import) and, if after saving the record is outside the scope, the change is rolled back.
+- **`where()` scope**: simple equality conditions (`field => value`) are also enforced when saving: the field does not appear in the form, it is always saved with that value (also on import) and, if after saving the record is outside the scope, the change is rolled back. Conditions of a `where()` closure (since 1.3) go in brackets, so an `OR` cannot widen the scope, and their values are bound by the Query Builder.
 - **Sensitive fields**: columns with names like `password`, `token`, `secret`, `salt`, `hash`, `apikey`... (`$sensitiveFields`) are hidden by default from the list, the detail view, search, sorting, filters, export and forms (passwords do appear in the form, and are saved hashed). They are only shown if you list them explicitly.
 - Columns with `callbackColumn` are not searched unless you add them to `searchFields()`, because the callback may hide the real value.
 - Values of relations, enum and select are validated against the allowed options. Invalid filter values are ignored, the `%` and `_` search wildcards are matched literally, and an id that cannot be a valid primary key is treated as not found.

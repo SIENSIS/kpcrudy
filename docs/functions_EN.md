@@ -20,11 +20,11 @@ For complete recipes for common cases, see [howto_EN.md](howto_EN.md).
 ## Index
 
 - [Creating and running](#creating-and-running): `__construct`, `render`, `routes`
-- [Data source](#data-source): `setTable`, `setModel`, `setDatabase`, `setPrimaryKey`, `setSubject`, `softDeletes`, `where`
+- [Data source](#data-source): `setTable`, `setModel`, `setDatabase`, `setPrimaryKey`, `setSubject`, `softDeletes`, `where` (`Closure`)
 - [Columns and fields](#columns-and-fields): `columns`, `fields`, `addFields`, `editFields`, `showFields`, `searchFields`, `searchCallback`, `filters`, `addFilter`, `exportColumns`, `unsortable`, `displayAs`
 - [Field types and validation](#field-types-and-validation): `fieldType`, `setRules`, `requiredFields`, `readonlyFields`, `hideFields`, `setDefault`, `setTimezone`, `setHelp`
 - [Relations](#relations): `setRelation` (`ajax`), `setRelationNN`
-- [Translations](#translations): `setTranslations` (`fallbacks`), `exportTranslations`, `postedTranslations`
+- [Translations](#translations): `setTranslations` (`fallbacks`, `attrs`), `exportTranslations`, `postedTranslations`
 - [Display callbacks](#display-callbacks): `callbackColumn`, `callbackField`, `callbackExport`
 - [Hooks](#hooks): `beforeInsert`, `afterInsert`, `beforeUpdate`, `afterUpdate`, `beforeDelete`, `afterDelete`, `afterRestore`, `afterWrite`
 - [Upload handlers](#upload-handlers): `UploadHandler`, `UploadRejectedException`, field option `handler`
@@ -171,7 +171,7 @@ $crud->setTable('posts')->softDeletes(true, 'removed_at');
 $crud->setTable('logs')->softDeletes(false);
 ```
 
-### `where(array|string $field, mixed $value = null): static`
+### `where(array|Closure|string $field, mixed $value = null): static`
 
 Limits the records the CRUD manages. The condition applies to **everything**: list, search, export, detail view, edit, delete and bulk actions. A user cannot access a record outside the scope even if they change its id in the URL.
 
@@ -192,6 +192,41 @@ $crud->where(['status' => 'published', 'deleted_by' => null]);
 In the examples above, `company_id`, `status` and `deleted_by` are always saved with the given value; `price >` assigns nothing, but a price that does not meet it cannot be saved.
 
 > For conditions with an operator, you have to assign the value of new records yourself, with `fieldType('field', 'hidden', ['value' => ...])`, `setDefault()` or a hook (see the recipe [Limit the CRUD to the logged-in user](howto_EN.md#limit-the-crud-to-the-logged-in-user)).
+
+### `where(Closure $condition)`: conditions of your own (OR, subqueries)
+
+*Since 1.3.* A **closure** `fn (BaseBuilder $builder, Crud $crud)` adds conditions that a `field => value` pair cannot express: an `OR`, a subquery on another table, a condition that depends on the logged-in user. It receives the Query Builder of the CRUD's main query and adds `where()`, `orWhere()`, `whereIn()`, `groupStart()`... to it. What it returns is ignored.
+
+```php
+// Events the user may manage: the public ones, or the restricted ones whose audience
+// includes one of the user's groups or the user themself.
+$groups = $user->getGroups();   // e.g. ['editor', 'teachers']
+$userId = $user->id;
+
+$crud->setTable('events')
+     ->where(static fn (BaseBuilder $builder) => $builder
+         ->where('events.visibility', 'public')
+         ->orWhereIn('events.id', static fn (BaseBuilder $sub) => $sub
+             ->select('event_id')->from('event_audience')
+             ->groupStart()
+                 ->where('type', 'group')->whereIn('subject', $groups)
+             ->groupEnd()
+             ->orGroupStart()
+                 ->where('type', 'user')->where('subject', $userId)
+             ->groupEnd()));
+```
+
+How it works:
+
+- **The scope of everything.** Like the other `where()` conditions, it applies to the list, the search, the filters, the sorting and the counts, the export, the detail view, the edit and delete forms, the bulk actions, the trash (restore, purge) and the custom operations with an id. A record outside it is treated as a record that does not exist, even if the user changes the id in the URL or tampers with the bulk actions form.
+- **Always in brackets.** The conditions of each closure go inside a group `( … )` joined with `AND` to the rest of the scope, so an `orWhere()` cannot widen it. In the example, `where('school_id', 3)` plus the closure gives `school_id = 3 AND (visibility = 'public' OR id IN (…))`.
+- **Safe values.** Values go through the Query Builder, bound and escaped. Never build SQL by joining strings with values that come from the request.
+- **Saving.** A closure does not assign values to new records (there is no value to assign, as with a condition with an operator), but after saving, the record must still be inside the scope: if it is not, the whole save is rolled back (main table, N-N relations and translations) and "You are not allowed to perform this operation" is shown. Assign the values that keep a new record visible yourself (`setDefault()`, a `beforeInsert` hook...).
+- **Several closures** can be added; each one is a group of its own (`AND` between them). A closure that adds no condition is ignored.
+- **Qualify the columns** with the table name (`events.visibility`): the list query also joins the relations' and the translations' tables, and a bare name could be ambiguous.
+- `describe()` reports how many there are (`whereCallbacks`).
+
+> Tip: put the rule in a class of your own (e.g. `EventVisibility::apply(BaseBuilder $builder, User $user)`) and use it in the CRUD, in your public pages and in your API ([kpapy](https://github.com/SIENSIS/kpapy) accepts the same closure since 1.2): one rule, the same result everywhere.
 
 ---
 
@@ -575,6 +610,7 @@ Translatable fields saved in a child table, **one row per language**. For exampl
 | `types` | inferred (`TEXT` => `textarea`, otherwise `text`) | `[field => 'text' \| 'textarea']` |
 | `listLocale` | the language of the request if it is one of `$locales`; otherwise, the first one | Language used in the list, the search, the sorting, the filters and the export |
 | `fallbacks` | none | *Since 1.1.* Languages to use, in order, when a record has no translation (or it is empty) in the list language: `['ca']` for every language, or per language `['es' => ['ca'], 'en' => ['es', 'ca'], '*' => ['ca']]` (`*` = any other). Applies to the list, search, sorting, filters, export and detail view |
+| `attrs` | none | *Since 1.3.* HTML attributes of the inputs of a translated field: `[field => [attribute => value]]`, or `[field => fn (string $locale, string $field): array]` for attributes that depend on the language. See [Attributes of translated inputs](#attributes-of-translated-inputs) |
 
 The translated fields are used like any other field in `columns()`, `fields()`, `showFields()`, `searchFields()`, `filters()`, `displayAs()`...:
 
@@ -595,6 +631,50 @@ $crud->setTable('news')
      ->fields(['published_at', 'title', 'body'])
      ->searchFields(['title']);
 ```
+
+### Attributes of translated inputs
+
+*Since 1.3.* The `attrs` option of `setTranslations()` adds HTML attributes to the input (or textarea) of a translated field **in every language tab**, without changing its type or taking it out of the tabs. It is the way to attach a JavaScript component to a translated field: a rich-text editor, a character counter, a slug generator...
+
+```php
+// The body of each language becomes the project's rich-text editor
+$crud->setTranslations('news_translations', 'news_id', 'locale', ['title', 'body'],
+    ['ca' => 'Català', 'en' => 'English'],
+    [
+        'types' => ['body' => 'textarea'],
+        'attrs' => [
+            'body'  => ['data-component' => 'editor', 'data-toolbar' => 'basic'],
+            'title' => ['placeholder' => 'A short title', 'autocomplete' => 'off'],
+        ],
+    ]);
+```
+
+The result, in the Catalan tab:
+
+```html
+<textarea id="kp-tr-ca-body" name="kp_tr[ca][body]" class="form-control" rows="4" lang="ca"
+          data-component="editor" data-toolbar="basic"></textarea>
+```
+
+With a **closure**, the attributes can depend on the language (it receives the locale and the field name, and returns an array):
+
+```php
+'attrs' => [
+    'body'  => static fn (string $locale, string $field): array => [
+        'data-component' => 'editor',
+        'spellcheck'     => 'true',
+        'dir'            => $locale === 'ar' ? 'rtl' : 'ltr',
+    ],
+],
+```
+
+Rules:
+
+- The attributes are **added** to the ones kpcrudy writes, never replace them: `id`, `name`, `class`, `value`, `required`, `lang`, `rows` and `maxlength` are always the library's (a `class` or `name` in `attrs` is ignored), so the field keeps working (validation, error messages, saving) whatever you add. To style the input, use your own attribute (`data-*`) and CSS.
+- Values are escaped. An attribute with the value `true` is written without a value (`spellcheck` → `spellcheck`); `false` and `null` are left out.
+- Your JavaScript must keep the value in the original input (most editors do it with their own textarea sync): kpcrudy only reads `kp_tr[{locale}][{field}]`.
+- The HTML a rich-text editor sends is **not** cleaned by kpcrudy: sanitise it in your project (e.g. with HTMLPurifier) before saving and when showing it.
+- Before 1.3 the only way was the internal type `fieldType('body', 'translation', ['attrs' => ...])`; it still works (the `attrs` option of `setTranslations()` is added after it), but use the option.
 
 ### `exportTranslations(bool $allLocales = true): static`
 

@@ -100,6 +100,10 @@ In the examples, `$crud` is an instance of `Kpcrudy\Crud` inside a controller me
 - [Check every CRUD without opening it](#check-every-crud-without-opening-it)
 - [Run kpcrudy commands from your code](#run-kpcrudy-commands-from-your-code)
 
+**New in 1.3**
+- [Records visible to the user's groups (OR and subqueries)](#records-visible-to-the-users-groups-or-and-subqueries)
+- [A rich-text editor in a translated field](#a-rich-text-editor-in-a-translated-field)
+
 ---
 
 ## Getting started
@@ -2043,4 +2047,89 @@ Every kpcrudy command accepts its options from `command()` as well as from the c
 ```php
 command('kpcrudy:make news --route admin/news --controller Admin/News --as admin-news --dry-run');
 command('kpcrudy:publish assets --path ' . FCPATH . 'static/kpcrudy');
+```
+
+---
+
+## New in 1.3
+
+### Records visible to the user's groups (OR and subqueries)
+
+A school publishes announcements to everyone or only to some groups (`announcements`, and `announcement_groups` with `announcement_id`, `group_id`). Teachers must only see and edit the announcements they could read: the public ones and the ones of their groups. That is an `OR` with a subquery, so it needs a [`where()` closure](functions_EN.md#whereclosure-condition-conditions-of-your-own-or-subqueries):
+
+```php
+use CodeIgniter\Database\BaseBuilder;
+
+$groupIds = $this->groupIdsOf($user);   // e.g. [3, 7]
+
+$crud->setTable('announcements')
+     ->where('school_id', $schoolId)                       // simple condition: also assigned on save
+     ->where(static fn (BaseBuilder $builder) => $builder  // your own condition, always in brackets
+         ->where('announcements.audience', 'everyone')
+         ->orWhereIn('announcements.id', static fn (BaseBuilder $sub) => $sub
+             ->select('announcement_id')
+             ->from('announcement_groups')
+             ->whereIn('group_id', $groupIds ?: [0])))
+     ->columns(['title', 'audience', 'published_at']);
+```
+
+The query is `school_id = ? AND (audience = 'everyone' OR id IN (SELECT …))`: the `OR` cannot reach other schools. Everything the CRUD does follows it: list, search, export, detail view, edit, delete, bulk actions, trash. If a teacher saves an announcement for a group that is not theirs, it would leave their scope, so the save is rolled back and they see "You are not allowed to perform this operation".
+
+Use `?: [0]` (or skip the `orWhereIn()`) when the list can be empty: `whereIn()` with an empty array is not valid SQL.
+
+The same rule can go in a class of your own and be reused by kpapy (since 1.2) for the API, so the back office and the API always agree:
+
+```php
+final class AnnouncementVisibility
+{
+    public static function apply(BaseBuilder $builder, array $groupIds): BaseBuilder
+    {
+        return $builder->where('announcements.audience', 'everyone')
+            ->orWhereIn('announcements.id', static fn (BaseBuilder $sub) => $sub
+                ->select('announcement_id')->from('announcement_groups')->whereIn('group_id', $groupIds ?: [0]));
+    }
+}
+
+$crud->where(static fn (BaseBuilder $b) => AnnouncementVisibility::apply($b, $groupIds));   // kpcrudy
+$api->where(static fn (BaseBuilder $b) => AnnouncementVisibility::apply($b, $groupIds));    // kpapy
+```
+
+### A rich-text editor in a translated field
+
+The body of a news item is translated (one tab per language) and must be edited with your project's rich-text editor, a JavaScript component that turns `<textarea data-component="editor">` into an editor. The [`attrs` option](functions_EN.md#attributes-of-translated-inputs) of `setTranslations()` adds the attribute to the textarea of every language, which stays in its tab:
+
+```php
+$crud->setTable('news')
+     ->setTranslations('news_translations', 'news_id', 'locale', ['title', 'body'],
+         ['ca' => 'Català', 'es' => 'Español', 'en' => 'English'],
+         [
+             'required' => ['ca'],
+             'types'    => ['title' => 'text', 'body' => 'textarea'],
+             'attrs'    => ['body' => ['data-component' => 'editor', 'data-options' => json_encode(['toolbar' => 'basic'])]],
+         ])
+     ->fields(['title', 'body', 'published_at']);
+```
+
+Two things stay in your project, because only you know your editor:
+
+1. **The script** that finds `[data-component="editor"]` and mounts the editor, keeping the textarea's value up to date (so the form posts `kp_tr[ca][body]`, `kp_tr[en][body]`...).
+2. **Cleaning the HTML.** kpcrudy saves what the form sends. Clean it with an HTML sanitiser (e.g. HTMLPurifier) before the CRUD reads the form, and again when you show it:
+
+```php
+// In the controller, before $crud->render():
+$post = $this->request->getPost();
+
+foreach ($post['kp_tr'] ?? [] as $locale => $fields) {
+    if (isset($fields['body'])) {
+        $post['kp_tr'][$locale]['body'] = $purifier->purify((string) $fields['body']);
+    }
+}
+
+$this->request->setGlobal('post', $post);
+```
+
+For attributes that depend on the language (e.g. the editor's language or the text direction), give a closure:
+
+```php
+'attrs' => ['body' => static fn (string $locale): array => ['data-component' => 'editor', 'data-locale' => $locale]],
 ```

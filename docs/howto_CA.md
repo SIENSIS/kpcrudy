@@ -100,6 +100,10 @@ Als exemples, `$crud` és una instància de `Kpcrudy\Crud` dins d'un mètode de 
 - [Comprovar tots els CRUD sense obrir-los](#comprovar-tots-els-crud-sense-obrir-los)
 - [Executar les ordres de kpcrudy des del codi](#executar-les-ordres-de-kpcrudy-des-del-codi)
 
+**Novetats de la 1.3**
+- [Registres visibles per als grups de l'usuari (OR i subconsultes)](#registres-visibles-per-als-grups-de-lusuari-or-i-subconsultes)
+- [Un editor de text enriquit en un camp traduït](#un-editor-de-text-enriquit-en-un-camp-traduït)
+
 ---
 
 ## Primers passos
@@ -2043,4 +2047,89 @@ Totes les ordres de kpcrudy accepten les opcions des de `command()` a més de la
 ```php
 command('kpcrudy:make news --route admin/news --controller Admin/News --as admin-news --dry-run');
 command('kpcrudy:publish assets --path ' . FCPATH . 'static/kpcrudy');
+```
+
+---
+
+## Novetats de la 1.3
+
+### Registres visibles per als grups de l'usuari (OR i subconsultes)
+
+Una escola publica avisos per a tothom o només per a alguns grups (`announcements`, i `announcement_groups` amb `announcement_id`, `group_id`). Els docents només han de veure i editar els avisos que podrien llegir: els públics i els dels seus grups. És un `OR` amb una subconsulta, així que cal una [closure a `where()`](functions_CA.md#whereclosure-condition-condicions-pròpies-or-subconsultes):
+
+```php
+use CodeIgniter\Database\BaseBuilder;
+
+$groupIds = $this->groupIdsOf($user);   // p. ex. [3, 7]
+
+$crud->setTable('announcements')
+     ->where('school_id', $schoolId)                       // condició simple: també s'assigna en desar
+     ->where(static fn (BaseBuilder $builder) => $builder  // condició pròpia, sempre entre parèntesis
+         ->where('announcements.audience', 'everyone')
+         ->orWhereIn('announcements.id', static fn (BaseBuilder $sub) => $sub
+             ->select('announcement_id')
+             ->from('announcement_groups')
+             ->whereIn('group_id', $groupIds ?: [0])))
+     ->columns(['title', 'audience', 'published_at']);
+```
+
+La consulta és `school_id = ? AND (audience = 'everyone' OR id IN (SELECT …))`: l'`OR` no pot arribar a altres escoles. Tot el que fa el CRUD la segueix: llistat, cerca, exportació, fitxa, edició, esborrat, accions massives, paperera. Si un docent desa un avís per a un grup que no és seu, quedaria fora del seu abast, així que el desament es desfà i veu "No tens permís per fer aquesta operació".
+
+Fes servir `?: [0]` (o no afegeixis l'`orWhereIn()`) quan la llista pot ser buida: `whereIn()` amb un array buit no és SQL vàlid.
+
+La mateixa regla pot anar en una classe teva i reaprofitar-se a kpapy (des de la 1.2) per a l'API, de manera que el back-office i l'API sempre coincideixen:
+
+```php
+final class AnnouncementVisibility
+{
+    public static function apply(BaseBuilder $builder, array $groupIds): BaseBuilder
+    {
+        return $builder->where('announcements.audience', 'everyone')
+            ->orWhereIn('announcements.id', static fn (BaseBuilder $sub) => $sub
+                ->select('announcement_id')->from('announcement_groups')->whereIn('group_id', $groupIds ?: [0]));
+    }
+}
+
+$crud->where(static fn (BaseBuilder $b) => AnnouncementVisibility::apply($b, $groupIds));   // kpcrudy
+$api->where(static fn (BaseBuilder $b) => AnnouncementVisibility::apply($b, $groupIds));    // kpapy
+```
+
+### Un editor de text enriquit en un camp traduït
+
+El cos d'una notícia és traduït (una pestanya per idioma) i s'ha d'editar amb l'editor de text enriquit del projecte, un component JavaScript que converteix `<textarea data-component="editor">` en un editor. L'[opció `attrs`](functions_CA.md#atributs-dels-inputs-traduïts) de `setTranslations()` afegeix l'atribut al textarea de cada idioma, que es queda a la seva pestanya:
+
+```php
+$crud->setTable('news')
+     ->setTranslations('news_translations', 'news_id', 'locale', ['title', 'body'],
+         ['ca' => 'Català', 'es' => 'Español', 'en' => 'English'],
+         [
+             'required' => ['ca'],
+             'types'    => ['title' => 'text', 'body' => 'textarea'],
+             'attrs'    => ['body' => ['data-component' => 'editor', 'data-options' => json_encode(['toolbar' => 'basic'])]],
+         ])
+     ->fields(['title', 'body', 'published_at']);
+```
+
+Dues coses queden al projecte, perquè només tu coneixes el teu editor:
+
+1. **L'script** que troba `[data-component="editor"]` i munta l'editor, mantenint al dia el valor del textarea (perquè el formulari enviï `kp_tr[ca][body]`, `kp_tr[en][body]`...).
+2. **Netejar l'HTML.** kpcrudy desa el que envia el formulari. Neteja'l amb un sanititzador d'HTML (p. ex. HTMLPurifier) abans que el CRUD llegeixi el formulari, i un altre cop quan el mostris:
+
+```php
+// Al controlador, abans de $crud->render():
+$post = $this->request->getPost();
+
+foreach ($post['kp_tr'] ?? [] as $locale => $fields) {
+    if (isset($fields['body'])) {
+        $post['kp_tr'][$locale]['body'] = $purifier->purify((string) $fields['body']);
+    }
+}
+
+$this->request->setGlobal('post', $post);
+```
+
+Per a atributs que depenen de l'idioma (p. ex. l'idioma de l'editor o la direcció del text), passa-hi una closure:
+
+```php
+'attrs' => ['body' => static fn (string $locale): array => ['data-component' => 'editor', 'data-locale' => $locale]],
 ```
