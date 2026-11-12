@@ -1608,6 +1608,17 @@ $crud->mobileCards()->columnPriority(['notes' => 2]);
 
 L'ordre d'arbre es calcula amb una consulta de l'id i el pare de tots els registres de l'abast: és pensat per a taules de fins a uns quants milers de registres.
 
+Com funciona amb la resta del CRUD:
+
+- **`label`** ha de ser una de les columnes del llistat (`columns()`); si no, no se sagna res. Pot ser qualsevol mena de columna: un camp de la taula, un **camp traduït** de [`setTranslations()`](#traduccions) (el text de l'idioma del llistat, amb els seus `fallbacks`) o una columna amb [`callbackColumn()`](#callbackcolumnstring-column-closure-callback-static). El sagnat s'afegeix davant de la cel·la **després** del callback, de manera que el callback només retorna el seu propi HTML.
+- **La cerca, els filtres i l'ordenació** converteixen l'arbre en un llistat pla (una coincidència pot no tenir el pare a la pàgina). Es pot cercar o filtrar per qualsevol columna, els camps traduïts i les columnes virtuals amb les seves regles habituals (una columna virtual només es pot cercar amb [`searchCallback()`](#searchcallbackclosure-callback-static)).
+- **Abast:** l'arbre es construeix amb els registres que compleixen les condicions de [`where()`](#wherearrayclosurestring-field-mixed-value--null-static) del CRUD (closures incloses). Un registre amb el pare fora de l'abast (o a la paperera) es mostra com a arrel.
+- **Paperera:** el llistat de la paperera també es mostra com un arbre dels registres que hi ha.
+- **Paginació:** l'ordre es calcula per a tots els registres de l'abast i després es talla en pàgines, de manera que una pàgina pot començar amb fills que tenen el pare a la pàgina anterior.
+- **Camp pare:** el desplegable només es mostra en ordre d'arbre quan el camp pare és un `setRelation()` a la mateixa taula. Amb opcions pròpies (`fieldType('parent_id', 'select', ['options' => …])`, p. ex. per deixar fora el subarbre del mateix registre) n'esculls tu l'ordre i els textos; la comprovació de cicles en desar s'aplica igualment.
+- **L'exportació** no fa servir l'arbre: les files s'exporten en l'ordre de la columna triada o de [`defaultOrder()`](#defaultorderstring-field-string-direction--asc-static), sense sagnat.
+- **La importació CSV** encara **no** comprova els cicles (només ho fa el formulari): un fitxer pot donar a un registre un dels seus descendents com a pare. Aquests registres es continuen mostrant (com a arrels al final de l'arbre), però amb el pare incorrecte; si importa, deixa el camp pare fora de la importació (`enableImport(['fields' => …])`).
+
 ```php
 $crud->setTable('pages')
      ->columns(['title', 'slug', 'status'])

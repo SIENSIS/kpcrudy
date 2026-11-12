@@ -1608,6 +1608,17 @@ $crud->mobileCards()->columnPriority(['notes' => 2]);
 
 The tree order is computed with one query on the id and parent of every record of the scope, so it is meant for tables of up to a few thousand records.
 
+How it works with the rest of the CRUD:
+
+- **`label`** must be one of the list columns (`columns()`); otherwise nothing is indented. It can be any kind of column: a field of the table, a **translated field** of [`setTranslations()`](#translations) (the text of the list language, with its `fallbacks`) or a column with [`callbackColumn()`](#callbackcolumnstring-column-closure-callback-static). The indentation is added in front of the cell **after** the callback, so the callback returns only its own HTML.
+- **Search, filters and sorting** turn the tree into a flat list (a match may not have its parent on the page). Any column can still be searched or filtered, translated fields and virtual columns with their usual rules (a virtual column is only searchable with [`searchCallback()`](#searchcallbackclosure-callback-static)).
+- **Scope:** the tree is built from the records inside the CRUD's [`where()`](#wherearrayclosurestring-field-mixed-value--null-static) conditions (closures included). A record whose parent is outside the scope (or in the trash) is shown as a root.
+- **Trash:** the trash list is also shown as a tree of the records in the trash.
+- **Pagination:** the order is computed for every record of the scope and then cut into pages, so a page may start with children whose parent is on the previous page.
+- **Parent field:** the dropdown is shown in tree order only when the parent field is a `setRelation()` to the same table. With your own options (`fieldType('parent_id', 'select', ['options' => …])`, e.g. to leave out the record's own subtree) you choose their order and texts yourself; the cycle check on save still applies.
+- **Export** ignores the tree: rows are exported in the column order or the [`defaultOrder()`](#defaultorderstring-field-string-direction--asc-static), without indentation.
+- **CSV import** does **not** check cycles yet (only the form does): a file can give a record one of its descendants as parent. Such records are still listed (as roots at the end of the tree), but their parent is wrong; leave the parent field out of the import (`enableImport(['fields' => …])`) when that matters.
+
 ```php
 $crud->setTable('pages')
      ->columns(['title', 'slug', 'status'])

@@ -3,6 +3,13 @@
 All notable changes to kpcrudy. The format follows [Keep a Changelog](https://keepachangelog.com/).
 Documentation is in English and Catalan: [README_EN.md](README_EN.md) · [README_CA.md](README_CA.md).
 
+## [Unreleased]
+
+### Documentation
+
+- **`tree()`**: how it works with translated `label` columns, `callbackColumn()`, search and filters, `where()` scopes,
+  the trash, pagination, a parent field with options of your own, export and CSV import (which does not check cycles yet).
+
 ## [1.3.0] - 2026-11-12
 
 ### Added
