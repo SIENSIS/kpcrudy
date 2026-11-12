@@ -1617,7 +1617,7 @@ Com funciona amb la resta del CRUD:
 - **Paginació:** l'ordre es calcula per a tots els registres de l'abast i després es talla en pàgines, de manera que una pàgina pot començar amb fills que tenen el pare a la pàgina anterior.
 - **Camp pare:** el desplegable només es mostra en ordre d'arbre quan el camp pare és un `setRelation()` a la mateixa taula. Amb opcions pròpies (`fieldType('parent_id', 'select', ['options' => …])`, p. ex. per deixar fora el subarbre del mateix registre) n'esculls tu l'ordre i els textos; la comprovació de cicles en desar s'aplica igualment.
 - **L'exportació** no fa servir l'arbre: les files s'exporten en l'ordre de la columna triada o de [`defaultOrder()`](#defaultorderstring-field-string-direction--asc-static), sense sagnat.
-- **La importació CSV** encara **no** comprova els cicles (només ho fa el formulari): un fitxer pot donar a un registre un dels seus descendents com a pare. Aquests registres es continuen mostrant (com a arrels al final de l'arbre), però amb el pare incorrecte; si importa, deixa el camp pare fora de la importació (`enableImport(['fields' => …])`).
+- **La importació CSV** refusa un pare que crearia un cicle, com el formulari (la fila té l'error i se salta o atura la importació, segons el que hagis triat). Cada fila es comprova en importar-la, de manera que també es refusen dues files del mateix fitxer que tanquen un cicle.
 
 ```php
 $crud->setTable('pages')

@@ -554,6 +554,30 @@ final class CrudExtensionsTest extends CIUnitTestCase
         $this->assertSame(0, substr_count($tree($this->crud('items', 'GET', [], ['q' => 'Delta']))->render(), 'class="kp-tree-pad"'));
     }
 
+    public function testTheCsvImportRefusesParentsThatMakeACycle(): void
+    {
+        $crud = new TestableCrud($this->configForTests());
+        $this->crud(); // request
+        $crud->setTable('kx_items')->fields(['id', 'name', 'parent_id'])->columns(['name'])
+            ->tree('parent_id')->enableImport(['key' => 'id']);
+
+        // Beta (2) under its grandchild Delta (4); Alpha (1) under itself; Gamma (3) under Alpha: allowed.
+        // Then two rows of the same file that close a cycle: Alpha under Gamma (Gamma is now under Alpha).
+        $file = tempnam(sys_get_temp_dir(), 'kx');
+        file_put_contents($file, "id,name,parent_id\n2,Beta,4\n1,Alpha,1\n3,Gamma,1\n1,Alpha,3\n");
+        $result = $crud->import($file, 'upsert');
+
+        $this->assertSame(1, $result['updated'], 'Only Gamma moved: ' . json_encode($result['errors']));
+        $this->assertSame(3, $result['skipped']);
+        $this->assertSame([2, 3, 5], array_column($result['errors'], 'line'));
+        $this->assertStringContainsString('parent', strtolower(json_encode($result['errors'][0]['errors'], JSON_UNESCAPED_UNICODE) ?: ''));
+
+        $parents = array_column($this->db->table('kx_items')->select('id, parent_id')->get()->getResultArray(), 'parent_id', 'id');
+        $this->assertNull($parents[2], 'Beta untouched');
+        $this->assertNull($parents[1], 'Alpha untouched');
+        $this->assertSame(1, (int) $parents[3], 'Gamma moved under Alpha');
+    }
+
     private function configForTests(): KpcrudyConfig
     {
         $config                 = new KpcrudyConfig();
@@ -610,11 +634,11 @@ final class TestableCrud extends Crud
     /**
      * @return array<string, mixed>
      */
-    public function import(string $path): array
+    public function import(string $path, string $mode = 'insert'): array
     {
         $this->boot();
 
-        return $this->runImport($path, 'insert', 'skip');
+        return $this->runImport($path, $mode, 'skip');
     }
 }
 

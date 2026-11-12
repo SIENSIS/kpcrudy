@@ -594,6 +594,14 @@ trait ImportsCsv
             $row['trFields'] = $trFields;
         }
 
+        // Arbre (tree()): el pare no pot ser el mateix registre ni un dels seus descendents,
+        // com en el formulari. Es comprova en importar cada fila, de manera que també es
+        // detecten els cicles que formen dues files del mateix fitxer.
+        if ($this->tree !== null && $action === 'update' && array_key_exists($this->tree['parent'], $row['data'])
+            && ! isset($row['errors'][$this->tree['parent']]) && $this->treeCycle((string) $id, $row['data'][$this->tree['parent']])) {
+            $row['errors'][$this->tree['parent']] = lang('Kpcrudy.treeCycle', [$this->label($this->tree['parent'])]);
+        }
+
         // El registre, tal com quedaria, ha de continuar sent editable per l'usuari
         if ($row['errors'] === [] && $action === 'update' && ! $this->can('edit', array_merge($record, $row['data']))) {
             $row['errors'][] = lang('Kpcrudy.importRowNotAllowed');

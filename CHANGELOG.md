@@ -8,7 +8,12 @@ Documentation is in English and Catalan: [README_EN.md](README_EN.md) · [README
 ### Documentation
 
 - **`tree()`**: how it works with translated `label` columns, `callbackColumn()`, search and filters, `where()` scopes,
-  the trash, pagination, a parent field with options of your own, export and CSV import (which does not check cycles yet).
+  the trash, pagination, a parent field with options of your own, export and CSV import.
+
+### Fixed
+
+- **`tree()` and CSV import**: an imported parent that would make a cycle (the record itself or one of its descendants,
+  also across two rows of the same file) is refused like in the form.
 
 ## [1.3.0] - 2026-11-12
 

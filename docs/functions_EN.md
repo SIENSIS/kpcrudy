@@ -1617,7 +1617,7 @@ How it works with the rest of the CRUD:
 - **Pagination:** the order is computed for every record of the scope and then cut into pages, so a page may start with children whose parent is on the previous page.
 - **Parent field:** the dropdown is shown in tree order only when the parent field is a `setRelation()` to the same table. With your own options (`fieldType('parent_id', 'select', ['options' => …])`, e.g. to leave out the record's own subtree) you choose their order and texts yourself; the cycle check on save still applies.
 - **Export** ignores the tree: rows are exported in the column order or the [`defaultOrder()`](#defaultorderstring-field-string-direction--asc-static), without indentation.
-- **CSV import** does **not** check cycles yet (only the form does): a file can give a record one of its descendants as parent. Such records are still listed (as roots at the end of the tree), but their parent is wrong; leave the parent field out of the import (`enableImport(['fields' => …])`) when that matters.
+- **CSV import** refuses a parent that would make a cycle, like the form (the row gets the error and is skipped or stops the import, as you chose). Each row is checked when it is imported, so two rows of the same file that close a cycle are refused too.
 
 ```php
 $crud->setTable('pages')
