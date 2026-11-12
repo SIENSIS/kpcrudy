@@ -1095,7 +1095,8 @@ class Crud
      * @param string               $thisKey    Camp de la intermèdia que apunta a aquesta taula
      * @param string               $otherKey   Camp de la intermèdia que apunta a la relacionada
      * @param string               $display    Camp o plantilla a mostrar de la relacionada
-     * @param array<string, mixed> $options    'pk', 'where', 'order' (com setRelation)
+     * @param array<string, mixed> $options    'pk', 'where', 'order' (com setRelation); 'ajax', 'minChars',
+     *                                         'limit' (cerca AJAX, com setRelation) i 'max' (nombre màxim de valors)
      */
     public function setRelationNN(
         string $name,
@@ -1116,6 +1117,12 @@ class Crud
             'pk'       => $options['pk'] ?? 'id',
             'where'    => $options['where'] ?? [],
             'order'    => $options['order'] ?? null,
+            // Cerca AJAX (des de la 1.4): un quadre de cerca amb els valors triats en lloc
+            // d'un desplegable amb tots els registres
+            'ajax'     => (bool) ($options['ajax'] ?? false),
+            'minChars' => max(0, (int) ($options['minChars'] ?? 2)),
+            'limit'    => max(1, min(100, (int) ($options['limit'] ?? 20))),
+            'max'      => isset($options['max']) ? max(1, (int) $options['max']) : null,
         ];
         unset($this->optionsCache[$name]);
 
@@ -1652,7 +1659,7 @@ class Crud
         }
 
         foreach ($this->relationsNN as $name => $relation) {
-            $relations[$name] = ['type' => 'N-N', 'table' => $relation['table'], 'display' => $relation['display'], 'junction' => $relation['junction']];
+            $relations[$name] = ['type' => 'N-N', 'table' => $relation['table'], 'display' => $relation['display'], 'junction' => $relation['junction'], 'ajax' => (bool) ($relation['ajax'] ?? false)];
         }
 
         return [
@@ -3049,9 +3056,9 @@ class Crud
             throw PageNotFoundException::forPageNotFound(lang('Kpcrudy.notAllowed'));
         }
 
-        $relation = $this->relations[$field];
+        $relation = $this->lookupRelation($field);
 
-        if (mb_strlen($query) < $relation['minChars']) {
+        if ($relation === null || mb_strlen($query) < $relation['minChars']) {
             return service('response')->setJSON(['results' => []]);
         }
 
@@ -3064,6 +3071,17 @@ class Crud
 
         $builder->groupEnd();
 
+        // Camps N-N: es poden deixar fora els valors que ja s'han triat (exclude[]=id)
+        $exclude = $this->request->getGet('exclude');
+
+        if (is_array($exclude) && isset($this->relationsNN[$field])) {
+            $exclude = array_values(array_filter(array_map(static fn ($id): string => is_scalar($id) ? (string) $id : '', $exclude), static fn (string $id): bool => $id !== ''));
+
+            if ($exclude !== []) {
+                $builder->whereNotIn($relation['pk'], array_slice($exclude, 0, 500));
+            }
+        }
+
         $results = [];
 
         foreach ($builder->limit($relation['limit'])->get()->getResultArray() as $row) {
@@ -3074,11 +3092,34 @@ class Crud
     }
 
     /**
-     * Si un camp és una relació 1-N amb cerca AJAX (setRelation(..., ['ajax' => true])).
+     * Si un camp és una relació amb cerca AJAX: 1-N (setRelation(..., ['ajax' => true]))
+     * o N-N (setRelationNN(..., ['ajax' => true]), des de la 1.4).
      */
     protected function isLookup(string $name): bool
     {
-        return isset($this->relations[$name]) && $this->relations[$name]['ajax'] && isset($this->meta[$name]);
+        return $this->lookupRelation($name) !== null;
+    }
+
+    /**
+     * Si un camp és una relació N-N amb cerca AJAX.
+     */
+    protected function isLookupNN(string $name): bool
+    {
+        return isset($this->relationsNN[$name]) && $this->relationsNN[$name]['ajax'];
+    }
+
+    /**
+     * La relació (1-N o N-N) d'un camp amb cerca AJAX, o null.
+     *
+     * @return array<string, mixed>|null
+     */
+    protected function lookupRelation(string $name): ?array
+    {
+        if (isset($this->relations[$name]) && $this->relations[$name]['ajax'] && isset($this->meta[$name])) {
+            return $this->relations[$name];
+        }
+
+        return $this->isLookupNN($name) ? $this->relationsNN[$name] : null;
     }
 
     /**
@@ -3096,11 +3137,11 @@ class Crud
     }
 
     /**
-     * Consulta de la taula d'una relació 1-N amb el seu 'where' i ordre.
+     * Consulta de la taula d'una relació (1-N o N-N) amb el seu 'where' i ordre.
      */
     protected function relationBuilder(string $name): BaseBuilder
     {
-        $relation = $this->relations[$name];
+        $relation = $this->relations[$name] ?? $this->relationsNN[$name];
         $builder  = $this->db->table($relation['table'])->select($relation['pk'] . ' AS kp_value');
 
         foreach ($relation['fields'] as $column) {
@@ -3124,22 +3165,68 @@ class Crud
             return null;
         }
 
-        $row = $this->relationBuilder($name)->where($this->relations[$name]['pk'], (string) $value)->get(1)->getRowArray();
+        $relation = $this->relations[$name] ?? $this->relationsNN[$name];
+        $row      = $this->relationBuilder($name)->where($relation['pk'], (string) $value)->get(1)->getRowArray();
 
-        return $row === null ? null : $this->formatTemplate($this->relations[$name]['display'], $row);
+        return $row === null ? null : $this->formatTemplate($relation['display'], $row);
     }
 
     /**
-     * Dades del giny de cerca d'un camp AJAX (formulari o filtre).
+     * Textos de diversos valors d'una relació, amb una sola consulta: [id => text], en
+     * l'ordre de la relació. Els que no existeixen o queden fora del 'where' no hi són
+     * (serveix també per validar els valors dels camps N-N amb cerca AJAX).
      *
-     * @return array{url: string, minChars: int, text: string}
+     * @param list<mixed> $values
+     *
+     * @return array<string, string>
      */
-    protected function lookupData(string $name, mixed $value): array
+    protected function relationTexts(string $name, array $values): array
     {
+        $ids = array_values(array_unique(array_filter(
+            array_map(static fn ($value): string => is_scalar($value) ? (string) $value : '', $values),
+            static fn (string $id): bool => $id !== '',
+        )));
+
+        if ($ids === []) {
+            return [];
+        }
+
+        $relation = $this->relations[$name] ?? $this->relationsNN[$name];
+        $texts    = [];
+
+        foreach (array_chunk($ids, 500) as $chunk) {
+            foreach ($this->relationBuilder($name)->whereIn($relation['pk'], $chunk)->get()->getResultArray() as $row) {
+                $texts[(string) $row['kp_value']] = $this->formatTemplate($relation['display'], $row);
+            }
+        }
+
+        return $texts;
+    }
+
+    /**
+     * Dades del giny de cerca d'un camp AJAX (formulari o filtre). Amb $multiple (camps
+     * N-N al formulari), 'items' són els valors triats amb el seu text.
+     *
+     * @return array{url: string, minChars: int, text: string, multiple: bool, items: list<array{id: string, text: string}>, max: int|null}
+     */
+    protected function lookupData(string $name, mixed $value, bool $multiple = false): array
+    {
+        $relation = $this->lookupRelation($name) ?? $this->relations[$name];
+        $items    = [];
+
+        if ($multiple) {
+            foreach ($this->relationTexts($name, (array) $value) as $id => $text) {
+                $items[] = ['id' => (string) $id, 'text' => $text];
+            }
+        }
+
         return [
             'url'      => $this->withQuery($this->url('lookup'), ['field' => $name]),
-            'minChars' => $this->relations[$name]['minChars'],
-            'text'     => (string) $this->relationText($name, $value),
+            'minChars' => $relation['minChars'],
+            'text'     => $multiple || is_array($value) ? '' : (string) $this->relationText($name, $value),
+            'multiple' => $multiple,
+            'items'    => $items,
+            'max'      => $multiple ? ($relation['max'] ?? null) : null,
         ];
     }
 
@@ -3177,11 +3264,12 @@ class Crud
     {
         $stored = [];
 
-        $input = [];
-        $data  = [];
-        $nn    = [];
-        $files = [];
-        $scope = $this->scopeValues();
+        $input    = [];
+        $data     = [];
+        $nn       = [];
+        $nnErrors = [];
+        $files    = [];
+        $scope    = $this->scopeValues();
 
         foreach ($fields as $name) {
             if (! $this->isEditable($name, $mode) || array_key_exists($name, $scope) || $this->isTranslated($name)) {
@@ -3193,11 +3281,34 @@ class Crud
 
             switch ($type) {
                 case 'relation_nn':
-                    $posted = array_map('strval', (array) $this->request->getPost($name));
-                    $valid  = array_map('strval', array_keys($this->optionsFor($name)));
+                    $posted = array_values(array_unique(array_map(
+                        static fn ($value): string => is_scalar($value) ? (string) $value : '',
+                        (array) $this->request->getPost($name),
+                    )));
+                    $posted = array_values(array_filter($posted, static fn (string $value): bool => $value !== ''));
 
-                    $input[$name] = array_values(array_intersect(array_unique($posted), $valid));
-                    $nn[$name]    = $input[$name];
+                    if ($this->isLookupNN($name)) {
+                        // Cerca AJAX: no es carrega la taula sencera; un valor que no existeix o
+                        // queda fora del 'where' és un error del camp (no es descarta en silenci)
+                        $valid = array_map('strval', array_keys($this->relationTexts($name, $posted)));
+
+                        if (array_diff($posted, $valid) !== []) {
+                            $nnErrors[$name] = lang('Kpcrudy.invalidOption', [$this->label($name)]);
+                        }
+
+                        $input[$name] = array_values(array_intersect($posted, $valid));
+                    } else {
+                        $valid        = array_map('strval', array_keys($this->optionsFor($name)));
+                        $input[$name] = array_values(array_intersect($posted, $valid));
+                    }
+
+                    $max = $this->relationsNN[$name]['max'] ?? null;
+
+                    if ($max !== null && count($input[$name]) > $max) {
+                        $nnErrors[$name] = lang('Kpcrudy.tooManyValues', [$this->label($name), $max]);
+                    }
+
+                    $nn[$name] = $input[$name];
                     break;
 
                 case 'multiselect':
@@ -3282,6 +3393,8 @@ class Crud
         if ($rules !== [] && ! $validation->setRules($rules)->run($input)) {
             $errors = $validation->getErrors();
         }
+
+        $errors += $nnErrors;
 
         foreach ($input as $name => $value) {
             $type = $this->typeOf($name);
@@ -3549,7 +3662,11 @@ class Crud
         foreach ($values as $name => $ids) {
             $relation = $this->relationsNN[$name];
             $junction = $this->db->table($relation['junction']);
-            $allowed  = array_map('strval', array_keys($this->optionsFor($name)));
+            // Amb cerca AJAX no es carrega la taula sencera: les opcions que l'usuari podia
+            // triar són, d'entre les ja vinculades i les enviades, les que compleixen el 'where'
+            $allowed = $relation['ajax']
+                ? array_map('strval', array_keys($this->relationTexts($name, array_merge($this->selectedNN($id, $name), $ids))))
+                : array_map('strval', array_keys($this->optionsFor($name)));
 
             // Només es reescriuen els vincles que l'usuari podia triar: els que
             // queden fora de les opcions (p. ex. per un 'where' de la relació) es mantenen
@@ -5455,7 +5572,7 @@ class Crud
                 'value'     => $this->formValue($type, $type === 'datetime' && is_scalar($value) ? $this->toDisplayTime($name, (string) $value) : $value),
                 'options'   => in_array($type, self::SELECT_TYPES, true) && ! $this->isLookup($name) ? $this->optionsFor($name) : [],
                 // Relacions AJAX: un camp de cerca en lloc d'un desplegable
-                'lookup'    => $this->isLookup($name) && ! $readonly ? $this->lookupData($name, $value) : null,
+                'lookup'    => $this->isLookup($name) && ! $readonly ? $this->lookupData($name, $value, $this->isLookupNN($name)) : null,
                 'required'  => in_array('required', $this->fieldRules($name, $mode, null), true),
                 'error'     => $errors[$name] ?? null,
                 'help'      => $this->help[$name] ?? ($type === 'password' && $mode === 'edit' ? lang('Kpcrudy.passwordKeep') : null),

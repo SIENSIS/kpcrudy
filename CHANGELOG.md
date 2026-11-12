@@ -5,6 +5,20 @@ Documentation is in English and Catalan: [README_EN.md](README_EN.md) · [README
 
 ## [Unreleased]
 
+### Added
+
+- **AJAX search for `setRelationNN()`**: options `ajax`, `minChars` and `limit` (as `setRelation()`): a search box with
+  the chosen values as removable tags instead of a multiple select with every record; suggestions from the built-in
+  `lookup` operation with the relation's `where` and `order`, leaving out the chosen values (`exclude[]`). Saved ids are
+  checked with one query and an invalid one is a field error; links outside the `where` are kept; the filter is a search
+  box; the CSV import matches values with a query. New option `max` (most values, with or without `ajax`).
+  `describe()` reports `ajax` for N-N relations. New texts `lookupRemove` and `tooManyValues` in every language.
+
+### Changed
+
+- The CSV import of relations with `ajax` (1-N and N-N) matches ids and texts with a query instead of loading every
+  record of the related table.
+
 ### Documentation
 
 - **`tree()`**: how it works with translated `label` columns, `callbackColumn()`, search and filters, `where()` scopes,

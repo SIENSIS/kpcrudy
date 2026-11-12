@@ -58,8 +58,47 @@
     });
 
     // Relacions amb cerca AJAX (setRelation(..., ['ajax' => true])): el camp visible
-    // cerca a base/lookup i el camp ocult guarda l'id triat
+    // cerca a base/lookup i el camp ocult guarda l'id triat. Els camps N-N
+    // (setRelationNN(..., ['ajax' => true]), data-kp-multiple) guarden cada valor triat
+    // en una etiqueta amb el seu camp ocult "nom[]".
     var lookupTimer = null;
+
+    function lookupChosen(box) {
+        return Array.prototype.map.call(box.querySelectorAll('.kp-lookup-chip'), function (chip) {
+            return chip.getAttribute('data-id');
+        });
+    }
+
+    function lookupAddChip(box, id, text) {
+        var max = parseInt(box.getAttribute('data-kp-max') || '0', 10);
+        var chosen = lookupChosen(box);
+
+        if (chosen.indexOf(id) !== -1 || (max > 0 && chosen.length >= max)) { return; }
+
+        var chip = document.createElement('li');
+        chip.className = 'kp-lookup-chip';
+        chip.setAttribute('data-id', id);
+
+        var label = document.createElement('span');
+        label.textContent = text;
+
+        var remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'kp-lookup-chip-remove';
+        remove.setAttribute('data-kp-chip-remove', '');
+        remove.setAttribute('aria-label', (box.getAttribute('data-kp-remove') || '{0}').replace('{0}', text));
+        remove.textContent = '\u00d7';
+
+        var hidden = document.createElement('input');
+        hidden.type = 'hidden';
+        hidden.name = box.getAttribute('data-kp-multiple');
+        hidden.value = id;
+
+        chip.appendChild(label);
+        chip.appendChild(remove);
+        chip.appendChild(hidden);
+        box.querySelector('.kp-lookup-chips').appendChild(chip);
+    }
 
     function lookupClose(box) {
         var list = box.querySelector('.kp-lookup-list');
@@ -102,7 +141,9 @@
         var min = parseInt(box.getAttribute('data-kp-min') || '0', 10);
 
         // Escriure anul·la la tria anterior: només val un element de la llista
-        box.querySelector('[data-kp-lookup-value]').value = '';
+        // (als camps N-N, els valors triats es mantenen com a etiquetes)
+        var single = box.querySelector('[data-kp-lookup-value]');
+        if (single) { single.value = ''; }
         clearTimeout(lookupTimer);
 
         if (text.length < min || text === '') {
@@ -111,7 +152,13 @@
         }
 
         lookupTimer = setTimeout(function () {
-            fetch(box.getAttribute('data-kp-lookup') + '&q=' + encodeURIComponent(text), {
+            var url = box.getAttribute('data-kp-lookup') + '&q=' + encodeURIComponent(text);
+
+            lookupChosen(box).forEach(function (id) {
+                url += '&exclude%5B%5D=' + encodeURIComponent(id);
+            });
+
+            fetch(url, {
                 credentials: 'same-origin',
                 headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }
             }).then(function (response) {
@@ -129,9 +176,27 @@
 
         if (item) {
             var box = item.closest('[data-kp-lookup]');
+
+            if (box.hasAttribute('data-kp-multiple')) {
+                lookupAddChip(box, item.getAttribute('data-id'), item.textContent);
+                box.querySelector('[data-kp-lookup-text]').value = '';
+                lookupClose(box);
+                box.querySelector('[data-kp-lookup-text]').focus();
+                return;
+            }
+
             box.querySelector('[data-kp-lookup-value]').value = item.getAttribute('data-id');
             box.querySelector('[data-kp-lookup-text]').value = item.textContent;
             lookupClose(box);
+            return;
+        }
+
+        var remove = e.target.closest('[data-kp-chip-remove]');
+
+        if (remove) {
+            var chips = remove.closest('[data-kp-lookup]');
+            remove.closest('.kp-lookup-chip').remove();
+            chips.querySelector('[data-kp-lookup-text]').focus();
             return;
         }
 
@@ -143,6 +208,22 @@
     document.addEventListener('keydown', function (e) {
         if (e.key === 'Escape' && e.target.matches('[data-kp-lookup-text]')) {
             lookupClose(e.target.closest('[data-kp-lookup]'));
+        }
+
+        // Camps N-N: retrocés en el quadre buit treu l'última etiqueta; Enter no envia el formulari
+        if (e.target.matches('[data-kp-multiple] [data-kp-lookup-text]')) {
+            var box = e.target.closest('[data-kp-lookup]');
+
+            if (e.key === 'Backspace' && e.target.value === '') {
+                var chips = box.querySelectorAll('.kp-lookup-chip');
+                if (chips.length) { chips[chips.length - 1].remove(); }
+            }
+
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                var first = box.querySelector('.kp-lookup-item');
+                if (first) { first.click(); }
+            }
         }
     });
 

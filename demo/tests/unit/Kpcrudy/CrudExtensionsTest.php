@@ -524,6 +524,155 @@ final class CrudExtensionsTest extends CIUnitTestCase
     }
 
     // ------------------------------------------------------------------
+    // AJAX N-N relations (1.4)
+    // ------------------------------------------------------------------
+
+    /**
+     * Junction kx_links: each row links an item to a category OR to a note (the other
+     * column null), so that two N-N fields share one table.
+     */
+    private function links(): void
+    {
+        $forge = \Config\Database::forge($this->DBGroup);
+        $forge->dropTable('kx_links', true);
+        $forge->addField([
+            'id'          => ['type' => 'INTEGER', 'unsigned' => true, 'auto_increment' => true],
+            'item_id'     => ['type' => 'INTEGER'],
+            'category_id' => ['type' => 'INTEGER', 'null' => true],
+            'note_id'     => ['type' => 'INTEGER', 'null' => true],
+        ]);
+        $forge->addPrimaryKey('id');
+        $forge->createTable('kx_links');
+
+        $this->db->table('kx_categories')->insert(['name' => 'Cabins', 'kind' => 'public']); // 4
+        $this->db->table('kx_links')->insertBatch([
+            ['item_id' => 1, 'category_id' => 1, 'note_id' => null],
+            ['item_id' => 1, 'category_id' => 3, 'note_id' => null], // Secret: outside the where
+            ['item_id' => 1, 'category_id' => null, 'note_id' => 1],
+        ]);
+    }
+
+    /**
+     * @param array<string, mixed> $extra
+     */
+    private function nn(Crud $crud, array $extra = []): Crud
+    {
+        return $crud->fields(['name', 'cats', 'notes'])->filters(['cats'])->columns(['name', 'cats'])
+            ->setRelationNN('cats', 'kx_links', 'kx_categories', 'item_id', 'category_id', 'name', $extra + ['ajax' => true, 'minChars' => 2, 'where' => ['kind' => 'public']])
+            ->setRelationNN('notes', 'kx_links', 'kx_notes', 'item_id', 'note_id', 'text', ['ajax' => true]);
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function linkedCategories(int $item): array
+    {
+        $ids = array_column($this->db->table('kx_links')->where('item_id', $item)->where('category_id IS NOT NULL')->orderBy('category_id')->get()->getResultArray(), 'category_id');
+
+        return array_map('strval', $ids);
+    }
+
+    public function testNnLookupFormShowsOnlyTheChosenValues(): void
+    {
+        $this->links();
+        $form = html_entity_decode((string) $this->nn($this->crud('items/edit/1'))->render(), ENT_QUOTES | ENT_HTML5);
+
+        $this->assertStringContainsString('data-kp-multiple="cats[]"', $form);
+        $this->assertMatchesRegularExpression('/class="kp-lookup-chip" data-id="1">\s*<span>Castles<\/span>/', $form);
+        $this->assertStringContainsString('<input type="hidden" name="cats[]" value="1">', $form);
+        $this->assertStringNotContainsString('Caves', $form, 'no list of every option');
+        $this->assertStringNotContainsString('Secret', $form, 'a link outside the where is not shown');
+        $this->assertStringNotContainsString('<select', substr($form, (int) strpos($form, 'cats')), 'no multiple select');
+        $this->assertTrue($this->nn($this->crud())->describe()['relations']['cats']['ajax']);
+    }
+
+    public function testNnLookupSearchesWithTheWhereAndExcludesChosenValues(): void
+    {
+        $this->links();
+        $json = fn (array $get): array => json_decode((string) $this->nn($this->crud('items/lookup', 'GET', [], $get))->render()->getBody(), true);
+
+        $this->assertSame([['id' => '4', 'text' => 'Cabins'], ['id' => '1', 'text' => 'Castles'], ['id' => '2', 'text' => 'Caves']], $json(['field' => 'cats', 'q' => 'ca'])['results']);
+        $this->assertSame([['id' => '4', 'text' => 'Cabins'], ['id' => '2', 'text' => 'Caves']], $json(['field' => 'cats', 'q' => 'ca', 'exclude' => ['1']])['results']);
+        $this->assertSame([], $json(['field' => 'cats', 'q' => 'Secret'])['results'], 'outside the where');
+        $this->assertSame([], $json(['field' => 'cats', 'q' => 'c'])['results'], 'minChars');
+        $limited = $this->nn($this->crud('items/lookup', 'GET', [], ['field' => 'cats', 'q' => 'ca']), ['limit' => 1])->render();
+        $this->assertSame([['id' => '4', 'text' => 'Cabins']], json_decode((string) $limited->getBody(), true)['results'], 'limit');
+    }
+
+    public function testNnLookupIsRefusedWithoutAFormOrFilterAndWithoutAjax(): void
+    {
+        $this->links();
+
+        foreach ([
+            fn (): mixed => $this->nn($this->crud('items/lookup', 'GET', [], ['field' => 'cats', 'q' => 'ca']))->filters([])->unsetAdd()->unsetEdit()->render(),
+            fn (): mixed => $this->nn($this->crud('items/lookup', 'GET', [], ['field' => 'cats', 'q' => 'ca']), ['ajax' => false])->render(),
+            fn (): mixed => $this->nn($this->crud('items/lookup', 'GET', [], ['field' => 'cats', 'q' => 'ca']))->hideFields(['cats'])->filters([])->render(),
+        ] as $i => $call) {
+            try {
+                $call();
+                $this->fail("case {$i}: no 404");
+            } catch (\CodeIgniter\Exceptions\PageNotFoundException) {
+                $this->addToAssertionCount(1);
+            }
+        }
+    }
+
+    public function testNnLookupSavingChecksTheValuesAndKeepsOtherLinks(): void
+    {
+        $this->links();
+
+        // Unknown, outside the where, not numeric: a field error, nothing changes
+        foreach (['99', '3', 'x'] as $bad) {
+            $html = $this->nn($this->crud('items/edit/1', 'POST', ['name' => 'Alpha', 'cats' => ['2', $bad], 'notes' => ['1']]))->render();
+            $this->assertIsString($html, $bad);
+            $this->assertStringContainsString('is not valid', $html, $bad);
+            $this->assertSame(['1', '3'], $this->linkedCategories(1), $bad);
+        }
+
+        // Valid: Castles replaced by Caves and Cabins; Secret (outside the where) and the note are kept
+        $this->assertInstanceOf(RedirectResponse::class, $this->nn($this->crud('items/edit/1', 'POST', ['name' => 'Alpha', 'cats' => ['2', '4'], 'notes' => ['1']]))->render());
+        $this->assertSame(['2', '3', '4'], $this->linkedCategories(1));
+        $this->assertSame(1, $this->db->table('kx_links')->where('item_id', 1)->where('note_id', 1)->countAllResults(), 'the other N-N field is untouched');
+
+        // Removing every value keeps the links outside the where
+        $this->nn($this->crud('items/edit/1', 'POST', ['name' => 'Alpha', 'notes' => ['1']]))->render();
+        $this->assertSame(['3'], $this->linkedCategories(1));
+
+        // max
+        $html = $this->nn($this->crud('items/edit/1', 'POST', ['name' => 'Alpha', 'cats' => ['1', '2', '4'], 'notes' => ['1']]), ['max' => 2])->render();
+        $this->assertIsString($html);
+        $this->assertStringContainsString('at most 2 values', $html);
+        $this->assertSame(['3'], $this->linkedCategories(1));
+
+        // A new record
+        $this->nn($this->crud('items/add', 'POST', ['name' => 'Omega', 'cats' => ['4']]))->render();
+        $omega = (int) $this->db->table('kx_items')->where('name', 'Omega')->get()->getRow()->id;
+        $this->assertSame(['4'], $this->linkedCategories($omega));
+    }
+
+    public function testNnLookupFiltersAndImports(): void
+    {
+        $this->links();
+
+        $list = $this->nn($this->crud('items', 'GET', [], ['f' => ['cats' => '1']]))->render();
+        $this->assertStringContainsString('Alpha', $list);
+        $this->assertStringNotContainsString('Gamma', $list);
+        $this->assertStringContainsString('data-kp-lookup=', $list, 'the filter is a search box');
+
+        $crud = new TestableCrud($this->configForTests());
+        $this->crud(); // request
+        $this->nn($crud->setTable('kx_items'))->enableImport(['fields' => ['name', 'cats']]);
+        $file = tempnam(sys_get_temp_dir(), 'kx');
+        file_put_contents($file, "name,cats\nSigma,\"caves, 4\"\nTau,Secret\nUpsilon,Nowhere\n");
+        $result = $crud->import($file);
+
+        $this->assertSame(1, $result['created'], json_encode($result['errors']));
+        $sigma = (int) $this->db->table('kx_items')->where('name', 'Sigma')->get()->getRow()->id;
+        $this->assertSame(['2', '4'], $this->linkedCategories($sigma), 'by text (any case) and by id');
+        $this->assertSame([3, 4], array_column($result['errors'], 'line'), 'outside the where, unknown');
+    }
+
+    // ------------------------------------------------------------------
     // Trees
     // ------------------------------------------------------------------
 

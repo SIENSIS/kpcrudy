@@ -691,15 +691,16 @@ trait ImportsCsv
 
             // El valor que retorna el callback també ha de ser una de les opcions permeses
             if (in_array($type, ['relation_nn', 'multiselect'], true)) {
-                $ids = array_map('strval', (array) $converted);
+                $ids     = array_map('strval', (array) $converted);
+                $allowed = $this->isLookup($name) ? $this->relationTexts($name, $ids) : $this->optionsFor($name);
 
-                return array_diff($ids, array_map('strval', array_keys($this->optionsFor($name)))) === []
+                return array_diff($ids, array_map('strval', array_keys($allowed))) === []
                     ? [array_values(array_unique($ids)), null]
                     : [null, $invalid];
             }
 
             if (in_array($type, ['relation', 'enum', 'select'], true) && $converted !== null && $converted !== ''
-                && ! array_key_exists((string) $converted, $this->optionsFor($name))) {
+                && ($this->isLookup($name) ? $this->relationText($name, $converted) === null : ! array_key_exists((string) $converted, $this->optionsFor($name)))) {
                 return [null, $invalid];
             }
 
@@ -790,6 +791,11 @@ trait ImportsCsv
      */
     protected function matchImportOption(string $name, string $value): string|false|null
     {
+        // Relacions amb cerca AJAX: es busca a la base de dades, sense carregar la taula sencera
+        if ($this->isLookup($name)) {
+            return $this->matchLookupOption($name, $value);
+        }
+
         $options = $this->optionsFor($name);
 
         if (array_key_exists($value, $options)) {
@@ -802,6 +808,44 @@ trait ImportsCsv
         return match (count($matches)) {
             0       => null,
             1       => (string) $matches[0],
+            default => false,
+        };
+    }
+
+    /**
+     * Com matchImportOption(), per a una relació amb cerca AJAX: l'id, o el text que es
+     * mostra (sense distingir majúscules) entre els registres que el contenen.
+     */
+    protected function matchLookupOption(string $name, string $value): string|false|null
+    {
+        if ($this->relationText($name, $value) !== null) {
+            return $value;
+        }
+
+        $relation = $this->lookupRelation($name);
+
+        if ($relation === null) {
+            return null;
+        }
+
+        $builder = $this->relationBuilder($name)->groupStart();
+
+        foreach ($relation['fields'] as $column) {
+            $builder->orLike($column, $this->escapeLike($value), 'both', true, true);
+        }
+
+        $lower   = mb_strtolower($value);
+        $matches = [];
+
+        foreach ($builder->groupEnd()->limit(200)->get()->getResultArray() as $row) {
+            if (mb_strtolower($this->formatTemplate($relation['display'], $row)) === $lower) {
+                $matches[] = (string) $row['kp_value'];
+            }
+        }
+
+        return match (count($matches)) {
+            0       => null,
+            1       => $matches[0],
             default => false,
         };
     }

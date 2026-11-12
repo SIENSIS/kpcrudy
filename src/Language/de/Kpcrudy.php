@@ -75,6 +75,7 @@ return [
     'exportTooMany'    => 'Es gibt zu viele Datensätze für den Export (maximal {0}). Filtern Sie die Liste und versuchen Sie es erneut.',
     'invalidRequest'   => 'Ungültige Anfrage.',
     'invalidOption'    => 'Der Wert des Feldes {0} ist ungültig.',
+    'tooManyValues'    => '{0}: höchstens {1} Werte.',
     'validationErrors' => 'Bitte korrigieren Sie die Fehler im Formular.',
     'cancelled'        => 'Der Vorgang wurde abgebrochen.',
     'saveError'        => 'Der Vorgang konnte nicht abgeschlossen werden.',
@@ -133,6 +134,7 @@ return [
     'moreActions' => 'Weitere Aktionen',
     'lookupPlaceholder' => 'Mindestens {0} Zeichen eingeben, um zu suchen…',
     'lookupEmpty' => 'Keine Ergebnisse',
+    'lookupRemove' => '{0} entfernen',
     'treeCycle' => '{0}: Ein Datensatz kann nicht sein eigenes Elternelement sein oder von einem seiner Nachkommen abhängen.',
     'exceptions' => [
         'invalidFilterKey' => 'Der Filterschlüssel "{0}" muss mit einem Kleinbuchstaben beginnen und darf nur Kleinbuchstaben, Ziffern und "_" enthalten.',

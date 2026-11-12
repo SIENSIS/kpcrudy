@@ -75,6 +75,7 @@ return [
     'exportTooMany'    => 'Hi ha massa registres per exportar (màxim {0}). Filtra el llistat i torna-ho a provar.',
     'invalidRequest'   => 'Petició no vàlida.',
     'invalidOption'    => 'El valor del camp {0} no és vàlid.',
+    'tooManyValues'    => '{0}: com a màxim {1} valors.',
     'validationErrors' => 'Revisa els errors del formulari.',
     'cancelled'        => 'S\'ha cancel·lat l\'operació.',
     'saveError'        => 'No s\'ha pogut completar l\'operació.',
@@ -133,6 +134,7 @@ return [
     'moreActions' => 'Més accions',
     'lookupPlaceholder' => 'Escriu almenys {0} caràcters per cercar…',
     'lookupEmpty' => 'Cap resultat',
+    'lookupRemove' => 'Treu {0}',
     'treeCycle' => '{0}: un registre no pot ser el seu propi pare ni penjar d\'un dels seus descendents.',
     'exceptions' => [
         'invalidFilterKey' => 'La clau del filtre "{0}" ha de començar amb una lletra minúscula i només pot tenir lletres minúscules, números i "_".',

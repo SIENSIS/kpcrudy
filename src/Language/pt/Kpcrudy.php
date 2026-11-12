@@ -75,6 +75,7 @@ return [
     'exportTooMany'    => 'Há demasiados registos para exportar (máximo {0}). Filtre a lista e tente novamente.',
     'invalidRequest'   => 'Pedido inválido.',
     'invalidOption'    => 'O valor do campo {0} não é válido.',
+    'tooManyValues'    => '{0}: no máximo {1} valores.',
     'validationErrors' => 'Reveja os erros do formulário.',
     'cancelled'        => 'A operação foi cancelada.',
     'saveError'        => 'Não foi possível concluir a operação.',
@@ -133,6 +134,7 @@ return [
     'moreActions' => 'Mais ações',
     'lookupPlaceholder' => 'Escreva pelo menos {0} caracteres para pesquisar…',
     'lookupEmpty' => 'Nenhum resultado',
+    'lookupRemove' => 'Remover {0}',
     'treeCycle' => '{0}: um registo não pode ser o seu próprio pai nem depender de um dos seus descendentes.',
     'exceptions' => [
         'invalidFilterKey' => 'A chave do filtro "{0}" deve começar com uma letra minúscula e conter apenas letras minúsculas, números e "_".',

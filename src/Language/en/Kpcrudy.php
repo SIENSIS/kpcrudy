@@ -75,6 +75,7 @@ return [
     'exportTooMany'    => 'There are too many records to export (maximum {0}). Filter the list and try again.',
     'invalidRequest'   => 'Invalid request.',
     'invalidOption'    => 'The value of {0} is not valid.',
+    'tooManyValues'    => '{0}: choose at most {1} values.',
     'validationErrors' => 'Please fix the errors in the form.',
     'cancelled'        => 'The operation was cancelled.',
     'saveError'        => 'The operation could not be completed.',
@@ -133,6 +134,7 @@ return [
     'moreActions' => 'More actions',
     'lookupPlaceholder' => 'Type at least {0} characters to search…',
     'lookupEmpty' => 'No results',
+    'lookupRemove' => 'Remove {0}',
     'treeCycle' => '{0}: a record cannot be its own parent nor hang from one of its descendants.',
     'exceptions' => [
         'invalidFilterKey' => 'The filter key "{0}" must start with a lowercase letter and contain only lowercase letters, numbers and "_".',

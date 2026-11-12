@@ -23,7 +23,7 @@ Per a receptes completes de casos habituals, vegeu [howto_CA.md](howto_CA.md).
 - [Origen de dades](#origen-de-dades): `setTable`, `setModel`, `setDatabase`, `setPrimaryKey`, `setSubject`, `softDeletes`, `where` (`Closure`)
 - [Columnes i camps](#columnes-i-camps): `columns`, `fields`, `addFields`, `editFields`, `showFields`, `searchFields`, `searchCallback`, `filters`, `addFilter`, `exportColumns`, `unsortable`, `displayAs`
 - [Tipus de camp i validació](#tipus-de-camp-i-validació): `fieldType`, `setRules`, `requiredFields`, `readonlyFields`, `hideFields`, `setDefault`, `setTimezone`, `setHelp`
-- [Relacions](#relacions): `setRelation` (`ajax`), `setRelationNN`
+- [Relacions](#relacions): `setRelation` (`ajax`), `setRelationNN` (`ajax`)
 - [Traduccions](#traduccions): `setTranslations` (`fallbacks`, `attrs`), `exportTranslations`, `postedTranslations`
 - [Callbacks de presentació](#callbacks-de-presentació): `callbackColumn`, `callbackField`, `callbackExport`
 - [Hooks](#hooks): `beforeInsert`, `afterInsert`, `beforeUpdate`, `afterUpdate`, `beforeDelete`, `afterDelete`, `afterRestore`, `afterWrite`
@@ -549,7 +549,7 @@ Relació **1-N**: el camp `$field` és una clau forana cap a `$table`. Al formul
 
 Els valors que arriben del formulari es validen contra les opcions permeses (incloent-hi el `where`).
 
-**Cerca AJAX** (`'ajax' => true`, des de la 1.1): per a taules amb massa registres per a un desplegable (usuaris, productes, poblacions). El formulari i el panell de filtres mostren un quadre de text; després de `minChars` caràcters, el script de kpcrudy consulta `base/lookup?field=<camp>&q=<text>` (una operació GET del CRUD, JSON `{"results": [{"id": "...", "text": "..."}]}`) i mostra fins a `limit` suggeriments que coincideixen amb qualsevol camp de `$display`, aplicant el `where` i l'`order` de la relació. En triar-ne un, el seu id es desa en un camp ocult. Només obtenen respostes els usuaris que poden fer servir el camp: ha de ser al formulari d'alta (amb `add`), al d'edició (amb `edit`) o als filtres (amb `list` i `filters`); si no, la consulta respon 404. El valor desat es continua comprovant al servidor: ha d'existir a la taula relacionada i complir el `where`. La importació CSV continua relacionant els valors per id o pel text amb tots els registres.
+**Cerca AJAX** (`'ajax' => true`, des de la 1.1): per a taules amb massa registres per a un desplegable (usuaris, productes, poblacions). El formulari i el panell de filtres mostren un quadre de text; després de `minChars` caràcters, el script de kpcrudy consulta `base/lookup?field=<camp>&q=<text>` (una operació GET del CRUD, JSON `{"results": [{"id": "...", "text": "..."}]}`) i mostra fins a `limit` suggeriments que coincideixen amb qualsevol camp de `$display`, aplicant el `where` i l'`order` de la relació. En triar-ne un, el seu id es desa en un camp ocult. Només obtenen respostes els usuaris que poden fer servir el camp: ha de ser al formulari d'alta (amb `add`), al d'edició (amb `edit`) o als filtres (amb `list` i `filters`); si no, la consulta respon 404. El valor desat es continua comprovant al servidor: ha d'existir a la taula relacionada i complir el `where`. La importació CSV relaciona els valors per id o pel text que es mostra (sense distingir majúscules) amb una consulta, sense carregar tota la taula (des de la 1.4). Per a les relacions N-N, vegeu [`setRelationNN()`](#setrelationnnstring-name-string-junction-string-othertable-string-thiskey-string-otherkey-string-display-array-options---static) (`ajax` des de la 1.4).
 
 ```php
 $crud->setRelation('customer_id', 'customers', '{name} ({tax_id})', [
@@ -580,12 +580,38 @@ Relació **N-N** a través d'una taula intermèdia. `$name` és un camp virtual 
 | `$thisKey` | `'client_id'` | Camp de la intermèdia que apunta a aquesta taula |
 | `$otherKey` | `'tag_id'` | Camp de la intermèdia que apunta a la relacionada |
 | `$display` | `'name'` | Camp o plantilla a mostrar |
-| `$options` | | `pk`, `where`, `order` (com a `setRelation`) |
+| `$options` | | `pk`, `where`, `order` (com a `setRelation`); `ajax`, `minChars`, `limit` i `max` (a sota) |
 
 ```php
 $crud->setRelationNN('tags', 'client_tag', 'tags', 'client_id', 'tag_id', 'name');
 $crud->columns(['name', 'tags'])->filters(['tags']);
 ```
+
+**Cerca AJAX** (*des de la 1.4*): per a taules relacionades amb massa registres per a un desplegable múltiple (usuaris, productes).
+
+| Opció | Per defecte | Descripció |
+|---|---|---|
+| `ajax` | `false` | Un quadre de cerca amb suggeriments, i els valors triats com a etiquetes que es poden treure, en lloc d'un desplegable múltiple amb tots els registres |
+| `minChars` | `2` | Caràcters que cal escriure abans de cercar |
+| `limit` | `20` | Nombre màxim de suggeriments (1-100) |
+| `max` | cap | Nombre màxim de valors que es poden triar (també sense `ajax`); més valors és un error del camp |
+
+- **Formulari:** només es carreguen els valors triats (una consulta), cadascun com una etiqueta amb un botó × i un camp ocult `nom[]`. Els suggeriments vénen de la mateixa operació `base/lookup?field=<nom>&q=<text>` que la [cerca AJAX de `setRelation()`](#setrelationstring-field-string-table-string-display-array-options---static), amb el `where` i l'`order` de la relació, i deixen fora els valors ja triats (`&exclude[]=<id>`). El retrocés en el quadre buit treu l'última etiqueta; Enter tria el primer suggeriment. Sense JavaScript, les etiquetes mantenen els valors actuals.
+- **Qui obté respostes:** com a `setRelation()`: el camp ha de ser al formulari d'alta (amb `add`), al d'edició (amb `edit`) o als filtres (amb `list` i `filters`) i no estar amagat; si no, 404.
+- **En desar:** cada id enviat es comprova amb una consulta: ha d'existir a la taula relacionada i complir el `where`. Un id que no existeix, que queda fora del `where` o un valor que no és un id és un **error del camp** (sense `ajax`, aquests valors es descarten en silenci, com fins ara). Com sense `ajax`, només es reescriuen els vincles que l'usuari podia triar: els vincles a registres de fora del `where` es mantenen, i mai es carrega tota la taula.
+- **Filtres:** el filtre és un quadre de cerca d'un sol valor (els registres vinculats a aquest valor).
+- **Importació CSV:** valors per id o pel text que es mostra (sense distingir majúscules), relacionats amb una consulta.
+- [`describe()`](#describe-array) indica `'ajax' => true` per a la relació.
+
+```php
+$crud->setRelationNN('members', 'project_users', 'users', 'project_id', 'user_id', '{name} ({email})', [
+    'ajax'  => true,
+    'where' => ['active' => 1],
+    'max'   => 10,
+]);
+```
+
+Diversos camps N-N poden compartir una mateixa taula intermèdia si cada fila només omple la seva columna (p. ex. `event_audience` amb `group_id` **o** `user_id`, l'altra `NULL`): cada camp només reescriu les files de la seva columna.
 
 > En esborrar definitivament un registre, se n'esborren les files de la taula intermèdia. Si la intermèdia té més dades que les dues claus (estat, data...), no la posis als `fields()`: en desar el formulari es perdrien. Fes-ne un CRUD propi (vegeu la recepta [Taula intermèdia amb dades pròpies](howto_CA.md#taula-intermèdia-amb-dades-pròpies)).
 

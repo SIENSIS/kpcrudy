@@ -36,6 +36,11 @@
 .kpcrudy .kp-lookup-item { display: block; width: 100%; padding: .35rem .6rem; color: inherit; text-align: left; background: none; border: 0; }
 .kpcrudy .kp-lookup-item:hover, .kpcrudy .kp-lookup-item:focus { background: rgba(127, 127, 127, .15); }
 .kpcrudy .kp-lookup-empty { padding: .35rem .6rem; opacity: .7; }
+.kpcrudy .kp-lookup-chips { display: flex; flex-wrap: wrap; gap: .3rem; margin: 0 0 .35rem; padding: 0; list-style: none; }
+.kpcrudy .kp-lookup-chips:empty { display: none; }
+.kpcrudy .kp-lookup-chip { display: inline-flex; align-items: center; gap: .25rem; padding: .1rem .2rem .1rem .55rem; border: 1px solid rgba(127, 127, 127, .35); border-radius: 1rem; background: rgba(127, 127, 127, .1); }
+.kpcrudy .kp-lookup-chip-remove { padding: 0 .35rem; color: inherit; line-height: 1.2; background: none; border: 0; border-radius: 1rem; }
+.kpcrudy .kp-lookup-chip-remove:hover, .kpcrudy .kp-lookup-chip-remove:focus { background: rgba(127, 127, 127, .25); }
 
 /* Taules en arbre (tree()) */
 .kpcrudy .kp-tree-pad { display: inline-block; width: 1.25rem; }

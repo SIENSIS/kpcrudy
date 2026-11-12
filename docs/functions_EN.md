@@ -23,7 +23,7 @@ For complete recipes for common cases, see [howto_EN.md](howto_EN.md).
 - [Data source](#data-source): `setTable`, `setModel`, `setDatabase`, `setPrimaryKey`, `setSubject`, `softDeletes`, `where` (`Closure`)
 - [Columns and fields](#columns-and-fields): `columns`, `fields`, `addFields`, `editFields`, `showFields`, `searchFields`, `searchCallback`, `filters`, `addFilter`, `exportColumns`, `unsortable`, `displayAs`
 - [Field types and validation](#field-types-and-validation): `fieldType`, `setRules`, `requiredFields`, `readonlyFields`, `hideFields`, `setDefault`, `setTimezone`, `setHelp`
-- [Relations](#relations): `setRelation` (`ajax`), `setRelationNN`
+- [Relations](#relations): `setRelation` (`ajax`), `setRelationNN` (`ajax`)
 - [Translations](#translations): `setTranslations` (`fallbacks`, `attrs`), `exportTranslations`, `postedTranslations`
 - [Display callbacks](#display-callbacks): `callbackColumn`, `callbackField`, `callbackExport`
 - [Hooks](#hooks): `beforeInsert`, `afterInsert`, `beforeUpdate`, `afterUpdate`, `beforeDelete`, `afterDelete`, `afterRestore`, `afterWrite`
@@ -549,7 +549,7 @@ $crud->setHelp('capacity', 'Leave it blank if there is no limit on places.');
 
 The values coming from the form are validated against the allowed options (including the `where`).
 
-**AJAX search** (`'ajax' => true`, since 1.1): for tables with too many records for a dropdown (users, products, cities). The form and the filters panel show a text box; after `minChars` characters, kpcrudy's script asks `base/lookup?field=<field>&q=<text>` (a built-in GET operation of the CRUD, JSON `{"results": [{"id": "...", "text": "..."}]}`) and shows up to `limit` suggestions that match any field of `$display`, applying the relation's `where` and `order`. Choosing one stores its id in a hidden field. Only users who can use the field get answers: it must be in the add form (with `add`), the edit form (with `edit`) or the filters (with `list` and `filters`); otherwise the lookup answers 404. The saved value is still checked on the server: it must exist in the related table and match the `where`. The CSV import still matches values by id or text against every record.
+**AJAX search** (`'ajax' => true`, since 1.1): for tables with too many records for a dropdown (users, products, cities). The form and the filters panel show a text box; after `minChars` characters, kpcrudy's script asks `base/lookup?field=<field>&q=<text>` (a built-in GET operation of the CRUD, JSON `{"results": [{"id": "...", "text": "..."}]}`) and shows up to `limit` suggestions that match any field of `$display`, applying the relation's `where` and `order`. Choosing one stores its id in a hidden field. Only users who can use the field get answers: it must be in the add form (with `add`), the edit form (with `edit`) or the filters (with `list` and `filters`); otherwise the lookup answers 404. The saved value is still checked on the server: it must exist in the related table and match the `where`. The CSV import matches values by id or by the displayed text (any case) with a query, without loading the whole table (since 1.4). For N-N relations, see [`setRelationNN()`](#setrelationnnstring-name-string-junction-string-othertable-string-thiskey-string-otherkey-string-display-array-options---static) (`ajax` since 1.4).
 
 ```php
 $crud->setRelation('customer_id', 'customers', '{name} ({tax_id})', [
@@ -580,12 +580,38 @@ $crud->setRelation('manager_id', 'users', '{last_name}, {first_name}', [
 | `$thisKey` | `'client_id'` | Junction table field that points to this table |
 | `$otherKey` | `'tag_id'` | Junction table field that points to the related table |
 | `$display` | `'name'` | Field or template to display |
-| `$options` | | `pk`, `where`, `order` (as in `setRelation`) |
+| `$options` | | `pk`, `where`, `order` (as in `setRelation`); `ajax`, `minChars`, `limit` and `max` (below) |
 
 ```php
 $crud->setRelationNN('tags', 'client_tag', 'tags', 'client_id', 'tag_id', 'name');
 $crud->columns(['name', 'tags'])->filters(['tags']);
 ```
+
+**AJAX search** (*since 1.4*): for related tables with too many records for a multiple select (users, products).
+
+| Option | Default | Description |
+|---|---|---|
+| `ajax` | `false` | A search box with suggestions, and the chosen values as removable tags, instead of a multiple select with every record |
+| `minChars` | `2` | Characters to type before searching |
+| `limit` | `20` | Maximum number of suggestions (1-100) |
+| `max` | none | Most values that may be chosen (also without `ajax`); more is a field error |
+
+- **Form:** only the chosen values are loaded (one query), each one a tag with a × button and a hidden input `name[]`. The suggestions come from the same built-in `base/lookup?field=<name>&q=<text>` operation as [`setRelation()`'s AJAX search](#setrelationstring-field-string-table-string-display-array-options---static), with the relation's `where` and `order`, and leave out the values already chosen (`&exclude[]=<id>`). Backspace in the empty box removes the last tag; Enter chooses the first suggestion. Without JavaScript the tags keep the current values.
+- **Who gets answers:** as for `setRelation()`: the field must be in the add form (with `add`), the edit form (with `edit`) or the filters (with `list` and `filters`) and not hidden; otherwise 404.
+- **Saving:** every posted id is checked with one query: it must exist in the related table and match the `where`. An unknown id, an id outside the `where` or a value that is not an id is a **field error** (without `ajax`, such values are dropped silently, as before). As without `ajax`, only the links the user could choose are rewritten: links to records outside the `where` are kept, and the table is never loaded whole.
+- **Filters:** the filter is a search box for one value (records linked to it).
+- **CSV import:** values by id or by the displayed text (any case), matched with a query.
+- [`describe()`](#describe-array) reports `'ajax' => true` for the relation.
+
+```php
+$crud->setRelationNN('members', 'project_users', 'users', 'project_id', 'user_id', '{name} ({email})', [
+    'ajax'  => true,
+    'where' => ['active' => 1],
+    'max'   => 10,
+]);
+```
+
+Several N-N fields can share one junction table when each row fills only its own column (e.g. `event_audience` with `group_id` **or** `user_id`, the other one `NULL`): each field only rewrites the rows of its column.
 
 > When a record is permanently deleted, its rows in the junction table are deleted. If the junction table holds more data than the two keys (status, date...), do not put it in `fields()`: that data would be lost when the form is saved. Give it its own CRUD instead (see the recipe [Junction table with its own data](howto_EN.md#junction-table-with-its-own-data)).
 

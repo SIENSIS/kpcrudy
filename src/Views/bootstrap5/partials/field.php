@@ -51,7 +51,7 @@ if ($type === 'hidden') {
             </div>
 
         <?php elseif (($field['lookup'] ?? null) !== null): ?>
-            <?= $this->render('partials/lookup', ['id' => $id, 'name' => $name, 'value' => (string) ($value ?? ''), 'lookup' => $field['lookup'], 'inputClass' => 'form-control' . $invalid, 'required' => $field['required']]) ?>
+            <?= $this->render('partials/lookup', ['id' => $id, 'name' => $name, 'value' => is_array($value) ? $value : (string) ($value ?? ''), 'lookup' => $field['lookup'], 'inputClass' => 'form-control' . $invalid, 'required' => $field['required']]) ?>
 
         <?php elseif (in_array($type, ['relation', 'enum', 'select'], true)): ?>
             <select<?= $this->attrs(['id' => $id, 'name' => $name, 'class' => 'form-select' . $invalid, 'required' => $field['required']] + $attrs) ?>>

@@ -50,7 +50,7 @@ if ($type === 'hidden') {
             <input<?= $this->attrs(['type' => 'checkbox', 'id' => $id, 'name' => $name, 'value' => '1', 'class' => 'w3-check', 'checked' => (bool) $value] + $attrs) ?>>
 
         <?php elseif (($field['lookup'] ?? null) !== null): ?>
-            <?= $this->render('partials/lookup', ['id' => $id, 'name' => $name, 'value' => (string) ($value ?? ''), 'lookup' => $field['lookup'], 'inputClass' => 'w3-input w3-border w3-round' . $border, 'required' => $field['required']]) ?>
+            <?= $this->render('partials/lookup', ['id' => $id, 'name' => $name, 'value' => is_array($value) ? $value : (string) ($value ?? ''), 'lookup' => $field['lookup'], 'inputClass' => 'w3-input w3-border w3-round' . $border, 'required' => $field['required']]) ?>
 
         <?php elseif (in_array($type, ['relation', 'enum', 'select'], true)): ?>
             <select<?= $this->attrs(['id' => $id, 'name' => $name, 'class' => 'w3-select w3-border w3-round' . $border, 'required' => $field['required']] + $attrs) ?>>
