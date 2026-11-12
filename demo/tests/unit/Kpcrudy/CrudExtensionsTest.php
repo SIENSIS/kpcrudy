@@ -381,6 +381,73 @@ final class CrudExtensionsTest extends CIUnitTestCase
         $this->assertStringContainsString('Omega;Hello;Hola', $csv);
     }
 
+    public function testTranslationFiltersRunBeforeValidationAndStorage(): void
+    {
+        $filter = static fn (string $value, string $locale): string => trim(strip_tags($value)) . ($locale === 'ca' ? ' (ca)' : '');
+        $hooked = null;
+
+        $response = $this->translated($this->crud('items/edit/1', 'POST', [
+            'name'  => 'Alpha',
+            'kp_tr' => ['en' => ['title' => '<script>x</script><b>Clean</b>'], 'ca' => ['title' => 'Net']],
+        ]), ['filters' => ['title' => $filter], 'rules' => ['title' => 'required|max_length[80]']])->render();
+
+        $this->assertInstanceOf(RedirectResponse::class, $response);
+        $titles = array_column($this->db->table('kx_item_translations')->where('item_id', 1)->get()->getResultArray(), 'title', 'locale');
+        $this->assertSame(['ca' => 'Net (ca)', 'en' => 'xClean'], ['ca' => $titles['ca'], 'en' => $titles['en']]);
+
+        // postedTranslations() in a hook sees the filtered values
+        $crud = $this->translated($this->crud('items/edit/2', 'POST', ['name' => 'Beta', 'kp_tr' => ['en' => ['title' => '<i>B</i>'], 'ca' => ['title' => '']]]), ['filters' => ['title' => $filter]]);
+        $crud->beforeUpdate(function (array $data) use ($crud, &$hooked): array {
+            $hooked = $crud->postedTranslations();
+
+            return $data;
+        })->render();
+        $this->assertSame(['en' => ['title' => 'B'], 'ca' => ['title' => '']], $hooked, 'empty values are not filtered');
+
+        // A filter that empties a required language fails validation; the form shows the filtered value
+        $html = $this->translated($this->crud('items/edit/1', 'POST', ['name' => 'Alpha', 'kp_tr' => ['en' => ['title' => '<script></script>'], 'ca' => ['title' => 'Ok<br>']]]), [
+            'filters' => ['title' => static fn (string $value): string => strip_tags(preg_replace('#<script>.*?</script>#s', '', $value) ?? '')],
+            'rules'   => ['title' => 'required'],
+        ])->render();
+        $this->assertIsString($html);
+        $this->assertStringContainsString('value="Ok"', $html);
+        $this->assertSame('xClean', $this->db->table('kx_item_translations')->where(['item_id' => 1, 'locale' => 'en'])->get()->getRow()->title, 'not saved');
+    }
+
+    public function testTranslationFiltersRunOnTheCsvImport(): void
+    {
+        $crud = new TestableCrud($this->configForTests());
+        $this->crud(); // request
+        $crud->setTable('kx_items')->fields(['name', 'title'])->enableImport()
+            ->setTranslations('kx_item_translations', 'item_id', 'locale', ['title'], ['en' => 'English', 'ca' => 'Català'], [
+                'required' => ['en'],
+                'filters'  => ['title' => static fn (string $value, string $locale): string => strtoupper(strip_tags($value)) . ":{$locale}"],
+            ]);
+
+        $file = tempnam(sys_get_temp_dir(), 'kx');
+        file_put_contents($file, "name,title:en,title:ca\nOmega,<b>hello</b>,\n");
+        $result = $crud->import($file);
+
+        $this->assertSame(1, $result['created'], json_encode($result['errors']));
+        $omega  = $this->db->table('kx_items')->where('name', 'Omega')->get()->getRow()->id;
+        $titles = array_column($this->db->table('kx_item_translations')->where('item_id', $omega)->get()->getResultArray(), 'title', 'locale');
+        $this->assertSame(['en' => 'HELLO:en'], $titles, 'the empty Catalan column stays empty (removed)');
+    }
+
+    public function testTranslationFiltersMustBeClosuresOfTranslatedFields(): void
+    {
+        foreach ([['name' => static fn (string $v): string => $v], ['title' => 'strtoupper']] as $filters) {
+            try {
+                $this->translated($this->crud(), ['filters' => $filters]);
+                $this->fail('no exception');
+            } catch (\RuntimeException $e) {
+                $this->assertStringContainsString('setTranslations()', $e->getMessage());
+            }
+        }
+
+        $this->assertSame(['title'], $this->translated($this->crud(), ['filters' => ['title' => static fn (string $v): string => $v]])->describe()['translations']['filters']);
+    }
+
     // ------------------------------------------------------------------
     // Upload handlers
     // ------------------------------------------------------------------

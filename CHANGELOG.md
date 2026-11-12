@@ -13,6 +13,10 @@ Documentation is in English and Catalan: [README_EN.md](README_EN.md) · [README
   checked with one query and an invalid one is a field error; links outside the `where` are kept; the filter is a search
   box; the CSV import matches values with a query. New option `max` (most values, with or without `ajax`).
   `describe()` reports `ajax` for N-N relations. New texts `lookupRemove` and `tooManyValues` in every language.
+- **`filters` option of `setTranslations()`**: `[field => fn (string $value, string $locale): string]` cleans translated
+  values (e.g. sanitises rich text) before validation and storage, in the forms **and** in the CSV import; the
+  `before*` hooks cannot change translated values, and the CSV import did not go through any workaround in the request.
+  `postedTranslations()` returns the filtered values; `describe()` lists them in `translations.filters`.
 
 ### Changed
 

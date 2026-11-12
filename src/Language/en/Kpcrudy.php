@@ -164,5 +164,6 @@ return [
         'unknownOperation'    => 'Kpcrudy: unknown operation "{0}". Valid operations: {1}.',
         'signAndSignFrom'     => 'Kpcrudy: an operation cannot both require a signature and hand out signed links.',
         'translationsEmpty'   => 'Kpcrudy: setTranslations() needs at least one field and one locale.',
+        'translationFilter'   => 'Kpcrudy: the setTranslations() filter of {0} must be a Closure of a translated field.',
     ],
 ];

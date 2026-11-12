@@ -1163,6 +1163,15 @@ class Crud
             throw new RuntimeException(lang('Kpcrudy.exceptions.translationsEmpty'));
         }
 
+        // Filtres (des de la 1.4): fn (string $value, string $locale): string, abans de validar
+        $filters = (array) ($options['filters'] ?? []);
+
+        foreach ($filters as $field => $filter) {
+            if (! in_array($field, $fields, true) || ! $filter instanceof Closure) {
+                throw new RuntimeException(lang('Kpcrudy.exceptions.translationFilter', [(string) $field]));
+            }
+        }
+
         $this->translations = [
             'table'      => $table,
             'fk'         => $foreignKey,
@@ -1175,6 +1184,7 @@ class Crud
             'listLocale' => $options['listLocale'] ?? null,
             'fallbacks'  => (array) ($options['fallbacks'] ?? []),
             'attrs'      => (array) ($options['attrs'] ?? []),
+            'filters'    => $filters,
             'meta'       => null,
         ];
 
@@ -1685,7 +1695,7 @@ class Crud
             'hiddenFields'     => $this->hidden,
             'types'            => $this->describeTypes(),
             'relations'        => $relations,
-            'translations'     => $this->translations === null ? null : ['table' => $this->translations['table'], 'fields' => $this->translations['fields'], 'locales' => $this->translations['locales']],
+            'translations'     => $this->translations === null ? null : ['table' => $this->translations['table'], 'fields' => $this->translations['fields'], 'locales' => $this->translations['locales'], 'filters' => array_keys($this->translations['filters'])],
             'tree'             => $this->tree,
             'actions'          => array_map(static fn (array $a): array => ['label' => $a['label'], 'method' => $a['method'], 'permission' => $a['permission']], $this->actions),
             'bulkActions'      => array_map(static fn (array $a): array => ['label' => $a['label'] ?? '', 'permission' => $a['permission'] ?? null], $this->bulkActions),
@@ -4753,6 +4763,27 @@ class Crud
             foreach ($fields as $name) {
                 $value                   = $posted[$locale][$name] ?? '';
                 $values[$locale][$name] = is_scalar($value) ? trim((string) $value) : '';
+            }
+        }
+
+        return $this->filterTranslations($values);
+    }
+
+    /**
+     * Aplica els filtres de setTranslations() ('filters') als valors no buits:
+     * [locale => [camp => valor]] filtrat i sense espais als extrems.
+     *
+     * @param array<string, array<string, string>> $values
+     *
+     * @return array<string, array<string, string>>
+     */
+    protected function filterTranslations(array $values): array
+    {
+        foreach ($this->translations['filters'] ?? [] as $name => $filter) {
+            foreach ($values as $locale => $fields) {
+                if (isset($fields[$name]) && $fields[$name] !== '') {
+                    $values[$locale][$name] = trim((string) $filter($fields[$name], (string) $locale));
+                }
             }
         }
 

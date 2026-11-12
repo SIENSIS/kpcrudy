@@ -164,5 +164,6 @@ return [
         'unknownOperation'    => 'Kpcrudy: Die Operation "{0}" existiert nicht. Gültige Operationen: {1}.',
         'signAndSignFrom'     => 'Kpcrudy: Eine Operation kann nicht gleichzeitig eine Signatur verlangen und signierte Links verteilen.',
         'translationsEmpty'   => 'Kpcrudy: setTranslations() benötigt mindestens ein Feld und eine Sprache.',
+        'translationFilter'   => 'Kpcrudy: Der Filter von setTranslations() für das Feld {0} muss eine Closure eines übersetzten Feldes sein.',
     ],
 ];

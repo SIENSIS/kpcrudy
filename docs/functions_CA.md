@@ -24,7 +24,7 @@ Per a receptes completes de casos habituals, vegeu [howto_CA.md](howto_CA.md).
 - [Columnes i camps](#columnes-i-camps): `columns`, `fields`, `addFields`, `editFields`, `showFields`, `searchFields`, `searchCallback`, `filters`, `addFilter`, `exportColumns`, `unsortable`, `displayAs`
 - [Tipus de camp i validació](#tipus-de-camp-i-validació): `fieldType`, `setRules`, `requiredFields`, `readonlyFields`, `hideFields`, `setDefault`, `setTimezone`, `setHelp`
 - [Relacions](#relacions): `setRelation` (`ajax`), `setRelationNN` (`ajax`)
-- [Traduccions](#traduccions): `setTranslations` (`fallbacks`, `attrs`), `exportTranslations`, `postedTranslations`
+- [Traduccions](#traduccions): `setTranslations` (`fallbacks`, `attrs`, `filters`), `exportTranslations`, `postedTranslations`
 - [Callbacks de presentació](#callbacks-de-presentació): `callbackColumn`, `callbackField`, `callbackExport`
 - [Hooks](#hooks): `beforeInsert`, `afterInsert`, `beforeUpdate`, `afterUpdate`, `beforeDelete`, `afterDelete`, `afterRestore`, `afterWrite`
 - [Gestors de fitxers](#gestors-de-fitxers): `UploadHandler`, `UploadRejectedException`, opció `handler` del camp
@@ -637,6 +637,7 @@ Camps traduïbles desats en una taula filla, **una fila per idioma**. Per exempl
 | `listLocale` | l'idioma de la petició si és un dels de `$locales`; si no, el primer | Idioma del llistat, la cerca, l'ordenació, els filtres i l'exportació |
 | `fallbacks` | cap | *Des de la 1.1.* Idiomes que es fan servir, per ordre, quan un registre no té traducció (o és buida) a l'idioma del llistat: `['ca']` per a tots els idiomes, o per idioma `['es' => ['ca'], 'en' => ['es', 'ca'], '*' => ['ca']]` (`*` = qualsevol altre). S'aplica al llistat, la cerca, l'ordenació, els filtres, l'exportació i la fitxa |
 | `attrs` | cap | *Des de la 1.3.* Atributs HTML dels inputs d'un camp traduït: `[camp => [atribut => valor]]`, o `[camp => fn (string $locale, string $field): array]` per a atributs que depenen de l'idioma. Vegeu [Atributs dels inputs traduïts](#atributs-dels-inputs-traduïts) |
+| `filters` | cap | *Des de la 1.4.* Funcions que netegen un valor traduït abans de validar-lo i desar-lo, al formulari **i** a la importació CSV: `[camp => fn (string $value, string $locale): string]`. Vegeu [Filtres dels camps traduïts](#filtres-dels-camps-traduïts) |
 
 Els camps traduïts es fan servir com qualsevol altre camp a `columns()`, `fields()`, `showFields()`, `searchFields()`, `filters()`, `displayAs()`...:
 
@@ -712,9 +713,28 @@ $crud->setTranslations('news_translations', 'news_id', 'locale', ['title'], ['ca
      ->exportTranslations();
 ```
 
+### Filtres dels camps traduïts
+
+*Des de la 1.4.* Els hooks `before*` només reben les dades de la taula principal, de manera que no s'hi pot canviar un valor traduït. L'opció `filters` de `setTranslations()` el neteja, per exemple un text enriquit que s'ha de sanejar abans de desar-lo:
+
+```php
+$crud->setTranslations('news_translations', 'news_id', 'locale', ['title', 'body'], ['ca' => 'Català', 'en' => 'English'], [
+    'filters' => [
+        'body' => static fn (string $value, string $locale): string => $purifier->purify($value),
+    ],
+]);
+```
+
+- Cada filtre rep un valor **no buit** i el seu idioma, i retorna el valor que s'ha de guardar (sense espais als extrems). Els valors buits no es filtren.
+- S'executa **abans de validar**, als formularis d'alta i d'edició i a la [importació CSV](#importació-csv) (les columnes traduïdes del fitxer; els idiomes i camps que no hi són mantenen el valor desat). Si el formulari es torna a mostrar amb errors, mostra els valors filtrats.
+- [`postedTranslations()`](#postedtranslations-array) retorna els valors filtrats.
+- Un filtre que retorna una cadena buida deixa aquell idioma buit: un idioma opcional s'esborra, un d'obligatori no passa la validació.
+- Només per a camps de `setTranslations()`, i només closures: qualsevol altra cosa llança una excepció. `describe()` llista els camps filtrats a `translations.filters`.
+- No és un filtre de sortida: escapa o saneja de nou el valor en mostrar-lo si pot venir d'un altre lloc.
+
 ### `postedTranslations(): array`
 
-Les traduccions enviades amb el formulari que s'està desant, com a `[locale => [camp => valor]]` (valors sense espais als extrems; també hi són els idiomes buits). Serveix en un hook `beforeInsert` o `beforeUpdate`, que només reben les dades de la taula principal.
+Les traduccions enviades amb el formulari que s'està desant, com a `[locale => [camp => valor]]` (valors sense espais als extrems, després dels [`filters`](#filtres-dels-camps-traduïts); també hi són els idiomes buits). Serveix en un hook `beforeInsert` o `beforeUpdate`, que només reben les dades de la taula principal.
 
 ```php
 $crud->beforeInsert(function (array $data) use ($crud) {
@@ -1190,7 +1210,7 @@ Mentre es mostra la previsualització, el fitxer es guarda a `writable/uploads/k
 
 En importar, s'executen els **hooks** (`beforeInsert`, `afterInsert`, `beforeUpdate`, `afterUpdate`) com si es desés el formulari, i es reescriuen les relacions N-N que hi hagi al fitxer. Els hooks posteriors (`afterInsert`, `afterUpdate`) s'executen només quan la transacció s'ha confirmat; amb *no importar res* si hi ha errors, només si tota la importació ha anat bé. La previsualització no executa els hooks ni detecta duplicats dins del mateix fitxer (dues files amb el mateix email): aquests errors surten en importar.
 
-**Camps traduïts** (des de la 1.1): els camps de [`setTranslations()`](#traduccions) del formulari d'alta (o de `fields`) s'importen amb **una columna per idioma**, amb el nom `camp:idioma` (`title:ca`), `Etiqueta (Idioma)` (`Títol (Català)`) o `Etiqueta (CODI)` (`Títol (CA)`). Es validen com al formulari (idiomes obligatoris, `rules`) i es desen a la mateixa transacció que la fila; en una actualització, els idiomes i camps que no són al fitxer conserven el valor. Si el fitxer no té cap columna de traducció, no es toquen. La plantilla (`base/import?template=1`) inclou aquestes columnes.
+**Camps traduïts** (des de la 1.1): els camps de [`setTranslations()`](#traduccions) del formulari d'alta (o de `fields`) s'importen amb **una columna per idioma**, amb el nom `camp:idioma` (`title:ca`), `Etiqueta (Idioma)` (`Títol (Català)`) o `Etiqueta (CODI)` (`Títol (CA)`). Passen pels [`filters`](#filtres-dels-camps-traduïts) (des de la 1.4) i es validen com al formulari (idiomes obligatoris, `rules`) i es desen a la mateixa transacció que la fila; en una actualització, els idiomes i camps que no són al fitxer conserven el valor. Si el fitxer no té cap columna de traducció, no es toquen. La plantilla (`base/import?template=1`) inclou aquestes columnes.
 
 ### `callbackImport(string $field, Closure $callback): static`
 

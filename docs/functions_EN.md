@@ -24,7 +24,7 @@ For complete recipes for common cases, see [howto_EN.md](howto_EN.md).
 - [Columns and fields](#columns-and-fields): `columns`, `fields`, `addFields`, `editFields`, `showFields`, `searchFields`, `searchCallback`, `filters`, `addFilter`, `exportColumns`, `unsortable`, `displayAs`
 - [Field types and validation](#field-types-and-validation): `fieldType`, `setRules`, `requiredFields`, `readonlyFields`, `hideFields`, `setDefault`, `setTimezone`, `setHelp`
 - [Relations](#relations): `setRelation` (`ajax`), `setRelationNN` (`ajax`)
-- [Translations](#translations): `setTranslations` (`fallbacks`, `attrs`), `exportTranslations`, `postedTranslations`
+- [Translations](#translations): `setTranslations` (`fallbacks`, `attrs`, `filters`), `exportTranslations`, `postedTranslations`
 - [Display callbacks](#display-callbacks): `callbackColumn`, `callbackField`, `callbackExport`
 - [Hooks](#hooks): `beforeInsert`, `afterInsert`, `beforeUpdate`, `afterUpdate`, `beforeDelete`, `afterDelete`, `afterRestore`, `afterWrite`
 - [Upload handlers](#upload-handlers): `UploadHandler`, `UploadRejectedException`, field option `handler`
@@ -637,6 +637,7 @@ Translatable fields saved in a child table, **one row per language**. For exampl
 | `listLocale` | the language of the request if it is one of `$locales`; otherwise, the first one | Language used in the list, the search, the sorting, the filters and the export |
 | `fallbacks` | none | *Since 1.1.* Languages to use, in order, when a record has no translation (or it is empty) in the list language: `['ca']` for every language, or per language `['es' => ['ca'], 'en' => ['es', 'ca'], '*' => ['ca']]` (`*` = any other). Applies to the list, search, sorting, filters, export and detail view |
 | `attrs` | none | *Since 1.3.* HTML attributes of the inputs of a translated field: `[field => [attribute => value]]`, or `[field => fn (string $locale, string $field): array]` for attributes that depend on the language. See [Attributes of translated inputs](#attributes-of-translated-inputs) |
+| `filters` | none | *Since 1.4.* Functions that clean a translated value before it is validated and stored, in the form **and** in the CSV import: `[field => fn (string $value, string $locale): string]`. See [Filters of translated fields](#filters-of-translated-fields) |
 
 The translated fields are used like any other field in `columns()`, `fields()`, `showFields()`, `searchFields()`, `filters()`, `displayAs()`...:
 
@@ -712,9 +713,28 @@ $crud->setTranslations('news_translations', 'news_id', 'locale', ['title'], ['ca
      ->exportTranslations();
 ```
 
+### Filters of translated fields
+
+*Since 1.4.* The `before*` hooks only receive the main table's data, so a translated value cannot be changed there. The `filters` option of `setTranslations()` cleans it instead, for example rich text that must be sanitised before it is stored:
+
+```php
+$crud->setTranslations('news_translations', 'news_id', 'locale', ['title', 'body'], ['ca' => 'Català', 'en' => 'English'], [
+    'filters' => [
+        'body' => static fn (string $value, string $locale): string => $purifier->purify($value),
+    ],
+]);
+```
+
+- Each filter receives a **non-empty** value and its language and returns the value to keep (it is trimmed). Empty values are not filtered.
+- It runs **before validation**, in the add and edit forms and in the [CSV import](#csv-import) (the translated columns of the file; languages and fields that are not in the file keep their stored value). If the form is shown again with errors, it shows the filtered values.
+- [`postedTranslations()`](#postedtranslations-array) returns the filtered values.
+- A filter that returns an empty string leaves that language empty: an optional language is removed, a required one fails validation.
+- Only for fields of `setTranslations()`, and only closures: anything else throws an exception. `describe()` lists the filtered fields in `translations.filters`.
+- It is not an output filter: escape or sanitise again when you show the value if it may come from elsewhere.
+
 ### `postedTranslations(): array`
 
-The translations posted with the form being saved, as `[locale => [field => value]]` (trimmed values; empty languages included). Useful in a `beforeInsert` or `beforeUpdate` hook, which only receive the main table's data.
+The translations posted with the form being saved, as `[locale => [field => value]]` (trimmed values, after the [`filters`](#filters-of-translated-fields); empty languages included). Useful in a `beforeInsert` or `beforeUpdate` hook, which only receive the main table's data.
 
 ```php
 $crud->beforeInsert(function (array $data) use ($crud) {
@@ -1190,7 +1210,7 @@ While the preview is shown, the file is stored in `writable/uploads/kpcrudy-impo
 
 When importing, the **hooks** (`beforeInsert`, `afterInsert`, `beforeUpdate`, `afterUpdate`) run as if the form were saved, and the N-N relations present in the file are rewritten. The after-hooks (`afterInsert`, `afterUpdate`) only run once the transaction has been committed; with *import nothing* if there are errors, only if the whole import succeeds. The preview does not run the hooks or detect duplicates within the same file (two rows with the same email): those errors show up when importing.
 
-**Translated fields** (since 1.1): the [`setTranslations()`](#translations) fields of the add form (or of `fields`) are imported with **one column per language**, named `field:locale` (`title:ca`), `Label (Language)` (`Title (Català)`) or `Label (CODE)` (`Title (CA)`). They are validated like in the form (required languages, `rules`) and saved in the same transaction as the row; when updating, the languages and fields that are not in the file keep their value. If the file has no translation column, translations are not touched. The template (`base/import?template=1`) includes these columns.
+**Translated fields** (since 1.1): the [`setTranslations()`](#translations) fields of the add form (or of `fields`) are imported with **one column per language**, named `field:locale` (`title:ca`), `Label (Language)` (`Title (Català)`) or `Label (CODE)` (`Title (CA)`). They go through the [`filters`](#filters-of-translated-fields) (since 1.4) and are validated like in the form (required languages, `rules`) and saved in the same transaction as the row; when updating, the languages and fields that are not in the file keep their value. If the file has no translation column, translations are not touched. The template (`base/import?template=1`) includes these columns.
 
 ### `callbackImport(string $field, Closure $callback): static`
 

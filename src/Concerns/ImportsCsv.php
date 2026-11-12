@@ -440,6 +440,11 @@ trait ImportsCsv
             $posted[$locale][$field]  = $value;
         }
 
+        // Filtres dels camps traduïts ('filters' de setTranslations()), com al formulari
+        if ($posted !== []) {
+            $posted = $this->filterTranslations($posted);
+        }
+
         $keyField = $this->importKey();
         $keyValue = $mapping['key'] !== null ? $this->importCell($cells[$mapping['key']] ?? '') : '';
         $record   = null;
