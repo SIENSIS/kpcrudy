@@ -267,6 +267,13 @@ class Crud
     /** @var array<string, mixed> */
     protected array $where = [];
 
+    /**
+     * Condicions pròpies de where(Closure): fn (BaseBuilder $builder, Crud $crud): mixed
+     *
+     * @var list<Closure>
+     */
+    protected array $whereCallbacks = [];
+
     protected ?bool $softDeletes   = null;
     protected string $deletedField = 'deleted_at';
     protected ?string $createdField = null;
@@ -477,10 +484,20 @@ class Crud
      * Restringeix els registres que gestiona el CRUD (llistat, edició, esborrat...).
      * Accepta els mateixos formats que el where() del Query Builder.
      *
-     * @param array<string, mixed>|string $field
+     * Una closure fn (BaseBuilder $builder, Crud $crud) afegeix condicions pròpies (OR,
+     * subconsultes...) a totes les consultes del CRUD, dins d'un grup entre parèntesis perquè
+     * un OR no en pugui sortir. Els registres desats també l'han de complir (si no, es desfà).
+     *
+     * @param array<string, mixed>|Closure|string $field
      */
-    public function where(array|string $field, mixed $value = null): static
+    public function where(array|Closure|string $field, mixed $value = null): static
     {
+        if ($field instanceof Closure) {
+            $this->whereCallbacks[] = $field;
+
+            return $this;
+        }
+
         if (is_array($field)) {
             $this->where = array_merge($this->where, $field);
         } else {
@@ -1124,6 +1141,8 @@ class Crud
      *                                                       'fallbacks' (idiomes de reserva quan un registre no té
      *                                                       traducció a l'idioma del llistat: ['ca'] per a tots, o
      *                                                       ['es' => ['ca'], 'en' => ['es', 'ca'], '*' => ['ca']])
+     *                                                       'attrs' (camp => atributs HTML de l'input de cada idioma:
+     *                                                       un array, o fn (string $locale, string $field): array).
      */
     public function setTranslations(string $table, string $foreignKey, string $localeField, array $fields, array $locales, array $options = []): static
     {
@@ -1148,6 +1167,7 @@ class Crud
             'types'      => (array) ($options['types'] ?? []),
             'listLocale' => $options['listLocale'] ?? null,
             'fallbacks'  => (array) ($options['fallbacks'] ?? []),
+            'attrs'      => (array) ($options['attrs'] ?? []),
             'meta'       => null,
         ];
 
@@ -1652,6 +1672,7 @@ class Crud
             'showFields'       => $this->showFieldList(),
             'searchFields'     => $this->searchFieldList(),
             'searchCallbacks'  => count($this->searchCallbacks),
+            'whereCallbacks'   => count($this->whereCallbacks),
             'filters'          => [...$this->filterFieldList(), ...array_keys($this->customFilters)],
             'exportColumns'    => $this->exportColumns ?? $this->columnList(),
             'hiddenFields'     => $this->hidden,
@@ -3807,6 +3828,28 @@ class Crud
             $builder->where(preg_match('/^(\w+)/', $key, $m) && isset($this->meta[$m[1]]) && ! str_contains($key, '.') ? "{$table}.{$key}" : $key, $value);
         }
 
+        // Condicions pròpies (where(Closure)): entre parèntesis, perquè un OR no n'escapi.
+        // Una closure que no afegeix res no deixa un grup buit "()" (SQL no vàlid).
+        $conditions = static fn (BaseBuilder $builder): int => (fn (): int => count($this->QBWhere))->call($builder);
+
+        foreach ($this->whereCallbacks as $callback) {
+            $before = $conditions($builder);
+            $builder->groupStart();
+            $callback($builder, $this);
+
+            if ($conditions($builder) === $before + 1) {
+                (function (): void {
+                    array_pop($this->QBWhere);
+                    $this->QBWhereGroupStarted = false;
+                    $this->QBWhereGroupCount--;
+                })->call($builder);
+
+                continue;
+            }
+
+            $builder->groupEnd();
+        }
+
         if ($this->softDeletes && $trash !== null) {
             if ($trash) {
                 $builder->where("{$table}.{$this->deletedField} IS NOT NULL");
@@ -3848,7 +3891,7 @@ class Crud
      */
     protected function assertInScope(string $id): void
     {
-        if ($this->where === []) {
+        if ($this->where === [] && $this->whereCallbacks === []) {
             return;
         }
 
@@ -4489,7 +4532,7 @@ class Crud
                     'error'     => $errors[$key] ?? null,
                     'help'      => $this->help[$name] ?? null,
                     'maxlength' => $this->translationType($name) === 'text' ? ($this->translationMeta()[$name]['max_length'] ?? null) : null,
-                    'attrs'     => $this->types[$name]['options']['attrs'] ?? [],
+                    'attrs'     => $this->translationAttrs($name, $locale),
                 ];
             }
 
@@ -4517,6 +4560,25 @@ class Crud
             'file'     => null,
             'html'     => null,
         ] + ['maxlength' => null];
+    }
+
+    /**
+     * Atributs HTML de l'input d'un camp traduït en un idioma: els de l'opció 'attrs' de
+     * setTranslations() (un array o fn (string $locale, string $field): array) per sobre dels
+     * d'un fieldType() del camp, si n'hi ha.
+     *
+     * @return array<string, mixed>
+     */
+    protected function translationAttrs(string $name, string $locale): array
+    {
+        $attrs = (array) ($this->types[$name]['options']['attrs'] ?? []);
+        $own   = $this->translations['attrs'][$name] ?? [];
+
+        if ($own instanceof Closure) {
+            $own = $own($locale, $name);
+        }
+
+        return is_array($own) ? array_merge($attrs, $own) : $attrs;
     }
 
     /**

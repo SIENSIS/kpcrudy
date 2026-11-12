@@ -189,6 +189,89 @@ final class CrudExtensionsTest extends CIUnitTestCase
     }
 
     // ------------------------------------------------------------------
+    // 1.3: where(Closure) and 'attrs' of translated fields
+    // ------------------------------------------------------------------
+
+    /**
+     * Items of the category "Caves" (2) or named Alpha, and only those at position 1: Beta.
+     * Alpha is at position 2, so it is visible only if the closure's OR escapes its brackets.
+     */
+    private function scoped(Crud $crud): Crud
+    {
+        return $crud->columns(['name'])->fields(['name', 'category_id'])
+            ->where('position', 1)
+            ->where(static fn (\CodeIgniter\Database\BaseBuilder $b) => $b
+                ->whereIn('kx_items.category_id', static fn (\CodeIgniter\Database\BaseBuilder $q) => $q->select('id')->from('kx_categories')->where('name', 'Caves'))
+                ->orWhere('kx_items.name', 'Alpha'));
+    }
+
+    public function testWhereClosureLimitsTheListAndKeepsItsOrInBrackets(): void
+    {
+        $html = $this->scoped($this->crud())->render();
+
+        $this->assertStringContainsString('Beta', $html);
+        $this->assertStringNotContainsString('Alpha', $html, 'the OR stays inside its brackets');
+        $this->assertStringNotContainsString('Gamma', $html);
+        $this->assertStringNotContainsString('Delta', $html);
+
+        // Search and export see the same scope
+        $this->assertStringNotContainsString('Gamma', $this->scoped($this->crud('items', 'GET', [], ['q' => 'Gam']))->render());
+        $csv = (string) $this->scoped($this->crud('items/export'))->render()->getBody();
+        $this->assertStringContainsString('Beta', $csv);
+        $this->assertStringNotContainsString('Gamma', $csv);
+    }
+
+    public function testWhereClosureProtectsShowEditDeleteAndBulkActions(): void
+    {
+        // Gamma (3) is outside the scope: forged requests change nothing
+        $this->assertStringNotContainsString('Gamma', (string) $this->scoped($this->crud('items/show/3'))->render()->getBody());
+        $this->scoped($this->crud('items/edit/3', 'POST', ['name' => 'Changed', 'category_id' => '2']))->render();
+        $this->scoped($this->crud('items/delete/3', 'POST'))->render();
+        $this->scoped($this->crud('items/bulk', 'POST', ['action' => 'delete', 'ids' => ['2', '3']]))->render();
+
+        $this->assertSame('Gamma', $this->db->table('kx_items')->where('id', 3)->get()->getRow()->name);
+        $this->assertSame(0, $this->db->table('kx_items')->where('id', 2)->countAllResults(), 'Beta (in scope) was deleted by the bulk action');
+    }
+
+    public function testASavedRecordMustStayInsideTheClosureScope(): void
+    {
+        // Moving Beta to "Castles" would take it out of the scope: the change is rolled back
+        $this->scoped($this->crud('items/edit/2', 'POST', ['name' => 'Beta', 'category_id' => '1']))->render();
+        $this->assertSame('2', (string) $this->db->table('kx_items')->where('id', 2)->get()->getRow()->category_id);
+
+        $this->scoped($this->crud('items/edit/2', 'POST', ['name' => 'Beta 2', 'category_id' => '2']))->render();
+        $this->assertSame('Beta 2', $this->db->table('kx_items')->where('id', 2)->get()->getRow()->name);
+    }
+
+    public function testAWhereClosureThatAddsNothingIsIgnored(): void
+    {
+        $crud = $this->crud()->columns(['name'])->where(static fn (\CodeIgniter\Database\BaseBuilder $b) => null);
+        $html = $crud->render();
+
+        foreach (['Alpha', 'Beta', 'Gamma', 'Delta'] as $name) {
+            $this->assertStringContainsString($name, $html);
+        }
+
+        $this->assertSame(1, $this->crud()->where(static fn ($b) => null)->describe()['whereCallbacks']);
+    }
+
+    public function testAttrsOfTranslatedFields(): void
+    {
+        $form = $this->translated($this->crud('items/add'), ['attrs' => ['title' => ['data-component' => 'app/editor', 'class' => 'ignored', 'name' => 'ignored']]])->render();
+
+        foreach (['en', 'ca'] as $locale) {
+            $this->assertMatchesRegularExpression('/<input[^>]*id="kp-tr-' . $locale . '-title"[^>]*class="form-control"[^>]*data-component="app&#x2F;editor"/', $form, "the {$locale} input keeps its attributes and gets the new one");
+        }
+
+        $this->assertStringNotContainsString('ignored', $form, 'attrs never replace the library\'s own attributes');
+
+        // A closure receives the locale (and the field)
+        $form = $this->translated($this->crud('items/add'), ['attrs' => ['title' => static fn (string $locale, string $field): array => ['data-source' => $field . '-' . $locale]]])->render();
+        $this->assertStringContainsString('data-source="title-ca"', $form);
+        $this->assertStringContainsString('data-source="title-en"', $form);
+    }
+
+    // ------------------------------------------------------------------
     // capture(), describe(), CLI request
     // ------------------------------------------------------------------
 
